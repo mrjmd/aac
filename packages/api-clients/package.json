@@ -1,0 +1,35 @@
+{
+  "name": "@aac/api-clients",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./pipedrive": "./dist/pipedrive.js",
+    "./quo": "./dist/quo.js",
+    "./quickbooks": "./dist/quickbooks.js",
+    "./searchbug": "./dist/searchbug.js",
+    "./gemini": "./dist/gemini.js",
+    "./google-calendar": "./dist/google-calendar.js",
+    "./google-ads": "./dist/google-ads.js",
+    "./google-analytics": "./dist/google-analytics.js",
+    "./google-search-console": "./dist/google-search-console.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@aac/shared-utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@aac/tsconfig": "workspace:*",
+    "typescript": "^5.8",
+    "vitest": "^3"
+  }
+}

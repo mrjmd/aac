@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+.astro/
+.turbo/
+out/
+
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage/
+test-results/
+playwright-report/
+
+# Debug
+npm-debug.log*
+pnpm-debug.log*
+
+# SQLite (if used by marketing engine)
+*.db
+*.db-shm
+*.db-wal
+
+# Claude
+.claude/

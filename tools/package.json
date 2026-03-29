@@ -1,0 +1,15 @@
+{
+  "name": "@aac/tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Operational scripts — thin wrappers over @aac/api-clients",
+  "dependencies": {
+    "@aac/api-clients": "workspace:*",
+    "@aac/shared-utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@aac/tsconfig": "workspace:*",
+    "typescript": "^5.8"
+  }
+}

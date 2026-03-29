@@ -1,0 +1,27 @@
+{
+  "name": "@aac/shared-utils",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./phone": "./dist/phone.js",
+    "./redis": "./dist/redis.js",
+    "./logger": "./dist/logger.js",
+    "./types": "./dist/types.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@aac/tsconfig": "workspace:*",
+    "typescript": "^5.8",
+    "vitest": "^3"
+  }
+}
