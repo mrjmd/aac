@@ -64,3 +64,11 @@ export interface Heartbeat {
   status: 'healthy' | 'degraded' | 'down';
   details?: Record<string, unknown>;
 }
+
+/** QuickBooks OAuth tokens stored in Redis. */
+export interface QBOAuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  realmId: string;
+}

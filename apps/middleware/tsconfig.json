@@ -1,0 +1,11 @@
+{
+  "extends": "@aac/tsconfig/node.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": ".",
+    "module": "nodenext",
+    "moduleResolution": "nodenext"
+  },
+  "include": ["api/**/*.ts", "lib/**/*.ts"],
+  "exclude": ["node_modules", "dist", "**/__tests__/**"]
+}

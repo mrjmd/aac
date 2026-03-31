@@ -36,7 +36,9 @@ drafting quotes, creating calendar placeholders.
 
 ## Framework
 
-Next.js 14 deployed on Vercel as serverless functions.
+Plain Vercel Serverless Functions — no framework. Each webhook handler is a
+standalone TypeScript file in `api/` deployed as an independent Lambda.
+No Next.js, no React, no framework overhead.
 
 ## Related
 

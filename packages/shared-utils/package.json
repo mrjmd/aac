@@ -19,6 +19,9 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "libphonenumber-js": "^1.10.54"
+  },
   "devDependencies": {
     "@aac/tsconfig": "workspace:*",
     "typescript": "^5.8",
