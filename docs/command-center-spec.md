@@ -1,0 +1,296 @@
+# Command Center — Specification
+
+**Status:** Brainstormed 2026-03-31, not yet built
+**Location:** `apps/command-center/`
+**Framework:** Next.js 15 (App Router, React Server Components)
+**Auth:** Simple password (single user, upgrade path for multi-user later)
+**Design:** Desktop-first, responsive to mobile. Shared Tailwind design tokens with storefront via `packages/ui`.
+
+---
+
+## Vision
+
+The Command Center is the operational cockpit for running AAC. It's the one
+place Matt opens every morning to understand the state of the business. It
+consolidates data from QuickBooks, Pipedrive, Google Calendar, Google Analytics,
+Google Ads, the middleware health system, and the marketing engine into a single
+dashboard with configurable cards.
+
+It is NOT just a middleware health dashboard. It is a business management tool
+that happens to also show system health.
+
+---
+
+## Dashboard Cards (Day One — All Present)
+
+Each card shows a simple summary (green/yellow/red + key numbers) on the main
+dashboard. Clicking a card navigates to a detail page with full data, filters,
+and history.
+
+### 1. Business Pulse
+
+**The most important card.** Answers: "Is the business healthy right now?"
+
+| Metric | Source | Detail |
+|--------|--------|--------|
+| Cash flow (last 30 days) | QuickBooks | Income vs expenses trend |
+| Outstanding invoices | QuickBooks | Count + total $ of unpaid invoices |
+| Stale estimates | Pipedrive | Deals in "Estimate Sent" stage > X days |
+| Jobs scheduled (next 7 days) | Google Calendar | Count of upcoming jobs |
+| Jobs scheduled (next 30 days) | Google Calendar | Count + pipeline view |
+
+**Status logic:**
+- Green: Positive cash flow, no invoices > 30 days overdue, estimates moving
+- Yellow: Any invoice > 30 days, or estimate stale > 14 days
+- Red: Negative cash flow trend, or overdue invoices > $X threshold
+
+**Detail page:** Full financial dashboard with date range filters, invoice list
+with aging, estimate pipeline funnel, cash flow chart.
+
+### 2. Smart To-Do List
+
+**The killer feature.** A to-do list with two sources:
+
+1. **Manual items** — Matt adds tasks directly (title, due date, notes)
+2. **Auto-generated items** — AI detects commitments from call transcripts and
+   SMS messages, creates to-do items with appropriate due dates
+
+**Auto-detection examples:**
+- "I'll schedule you for Thursday" → To-do: "Schedule job for [person]", due Thursday
+- "Let me send you that estimate" → To-do: "Send estimate to [person]", due today
+- "I'll follow up in two weeks" → To-do: "Follow up with [person]", due +14 days
+- "I'll get back to you Monday" → To-do: "Get back to [person]", due next Monday
+
+**Recurring tasks (pre-populated):**
+- Quarterly: Budget analysis and projections review
+- Monthly: Cost inventory and optimization check
+- Monthly: Review solicitation follow-up status
+- As-needed: Respond to new Google reviews
+
+**Storage:** Redis (same Upstash instance). Key schema in `@aac/shared-utils/redis`.
+
+**Data model:**
+```
+{
+  id: string,
+  title: string,
+  description?: string,
+  dueDate?: string (ISO),
+  source: 'manual' | 'ai-detected' | 'recurring' | 'system',
+  sourceContext?: {
+    personId?: number,     // Pipedrive person
+    personName?: string,
+    transcriptExcerpt?: string,
+    confidence?: 'high' | 'medium' | 'low'
+  },
+  status: 'pending' | 'completed' | 'dismissed',
+  createdAt: string,
+  completedAt?: string
+}
+```
+
+**Card summary:** Count of pending items, count overdue, next due item.
+**Detail page:** Full to-do list with filters (pending/completed/all, manual/auto),
+ability to add/edit/complete/dismiss items. AI-detected items show the source
+transcript excerpt and confidence level.
+
+### 3. New Leads (Last 24h)
+
+**Answers:** "Did any new business come in overnight?"
+
+| Metric | Source |
+|--------|--------|
+| Google Ads leads | Middleware health endpoint (webhook counts) + Pipedrive recent persons |
+| Inbound calls | Quo webhook activity (middleware health counts) |
+| New Pipedrive contacts | Pipedrive API (recent persons, sorted by created date) |
+
+**Card summary:** Total new leads count, breakdown by source.
+**Detail page:** List of recent leads with name, phone, source, deal stage,
+link to Pipedrive.
+
+### 4. Website / SEO / Ads
+
+**Answers:** "Is the website healthy and are ads performing?"
+
+| Metric | Source |
+|--------|--------|
+| Website uptime/health | Vercel (or external ping) |
+| Traffic trend (7d vs prior 7d) | Google Analytics 4 |
+| Top landing pages | Google Analytics 4 |
+| Ad spend / conversions / CPA | Google Ads |
+| Search Console impressions / clicks | Google Search Console |
+| Lighthouse scores | Stored from CI runs |
+
+**Status logic:**
+- Green: Traffic up or stable, ad CPA within target, no Lighthouse regressions
+- Yellow: Traffic down >10%, CPA above target
+- Red: Website down, ad account issues, major Lighthouse regression
+
+**Card summary:** Green/yellow/red + key numbers (sessions, ad spend, leads).
+**Detail page:** Full analytics dashboard with date range selectors, charts,
+comparison periods.
+
+### 5. Middleware Health
+
+**Answers:** "Is the integration layer running?"
+
+| Metric | Source |
+|--------|--------|
+| Heartbeat status | Redis (`health:middleware:ts`) |
+| Webhook counts (24h) | Middleware health endpoint |
+| Last processed per source | Middleware health endpoint |
+| Recent errors | Middleware health endpoint |
+
+**Status logic:**
+- Green: Heartbeat < 6 min old, all sources processing, no errors
+- Yellow: Heartbeat 6-15 min old, or errors in last hour
+- Red: Heartbeat > 15 min or missing, or persistent errors
+
+**Card summary:** Green/yellow/red + "X events processed today".
+**Detail page:** Full health metrics, error log, per-source breakdown.
+
+### 6. Marketing Campaigns
+
+**Answers:** "How are campaigns performing?"
+
+| Metric | Source |
+|--------|--------|
+| Active campaigns | Redis (campaign state) |
+| Messages sent / responses / opt-outs | Redis (campaign stats) |
+| Response rate | Derived |
+
+**Status logic:**
+- Green: Active campaigns running, response rate healthy
+- Yellow: No active campaigns, or response rate declining
+- Red: Campaign errors, high opt-out rate
+
+**Card summary:** Green/yellow/red + active campaign count + overall response rate.
+**Detail page:** Campaign list with stats, drill into individual campaigns.
+
+**Note:** This card lights up once the Marketing Engine (Phase 4) is built.
+Until then, it reads whatever campaign data exists in Redis from aac-slim.
+
+### 7. Important Dates
+
+**Answers:** "What's coming up that I can't miss?"
+
+| Category | Examples |
+|----------|----------|
+| Business renewals | ASHI certification, insurance, domain registrations, licenses |
+| Partnership events | Key dates for partnership leads |
+| Recurring tasks | Quarterly budget review, monthly cost analysis |
+| Seasonal prep | Pre-season marketing pushes, equipment maintenance |
+
+**Source:** Pipedrive deals (a "Business Admin" pipeline or custom fields),
+Google Calendar, or stored directly in Redis/DB.
+
+**Card summary:** Next 3 upcoming items with days-until-due. Red highlight
+for anything < 7 days.
+**Detail page:** Calendar view with all upcoming dates, ability to add new ones.
+
+---
+
+## Architecture
+
+```
+apps/command-center/
+  app/
+    layout.tsx            Root layout (sidebar nav, auth check)
+    page.tsx              Dashboard (card grid)
+    todos/page.tsx        Smart to-do list detail
+    leads/page.tsx        Lead activity detail
+    financials/page.tsx   Business pulse detail
+    analytics/page.tsx    Website/SEO/Ads detail
+    health/page.tsx       Middleware health detail
+    campaigns/page.tsx    Marketing campaigns detail
+    calendar/page.tsx     Important dates detail
+    settings/page.tsx     Card config (show/hide, reorder)
+    api/
+      todos/route.ts      CRUD for to-do items
+      health/route.ts     Proxy to middleware health endpoint
+      ...
+```
+
+### Data Flow
+
+The Command Center is primarily a **read-only aggregator**. It reads from:
+- **Redis** — Middleware heartbeat, webhook counts, campaign stats, to-do items
+- **Pipedrive API** — Recent persons, deals, pipeline stages (via `@aac/api-clients`)
+- **QuickBooks API** — Invoices, payments, cash flow (via `@aac/api-clients`)
+- **Google Calendar API** — Scheduled jobs (via `@aac/api-clients`, once extracted)
+- **Google Analytics API** — Traffic, conversions (via `@aac/api-clients`, once extracted)
+- **Google Ads API** — Spend, CPA, leads (via `@aac/api-clients`, once extracted)
+
+The only writes it makes:
+- To-do CRUD (Redis)
+- Card configuration (Redis or localStorage)
+- Heartbeat (its own health key in Redis)
+
+### Smart To-Do: AI Commitment Detection
+
+The commitment detection pipeline:
+
+1. **Quo webhook** (middleware) already processes inbound messages and transcripts
+   through Gemini for entity extraction
+2. **Expand the Gemini prompt** to also detect commitments/promises:
+   - "I'll schedule you for..." → extract date, action, person
+   - "Let me send you..." → extract action, person
+   - "I'll follow up in..." → extract timeframe, person
+3. **Write detected commitments to Redis** as to-do items with `source: 'ai-detected'`
+4. **Command Center reads and displays** them in the to-do list with source context
+
+This means the middleware Quo webhook gains a second AI analysis pass. The entity
+extraction (name, address, email) stays as-is. The commitment detection is a new
+prompt that runs on the same text.
+
+---
+
+## Tech Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Framework | Next.js 15 | Dashboard is 70%+ interactive; App Router layouts suit dashboard navigation |
+| UI library | shadcn/ui + Tailwind | Accessible components, easy to customize, shared tokens with storefront |
+| Design tokens | `packages/ui` (shared) | Brand coherence between storefront and command center |
+| Auth | Simple password | Single user for now. Stored as hashed env var. Upgrade path to proper auth later. |
+| To-do storage | Redis | Same Upstash instance. No new infrastructure. |
+| Commitment detection | Expand Quo webhook | Already processes transcripts. Add second Gemini prompt for commitment extraction. |
+| Card config | Redis or localStorage | User preferences for card visibility and order. |
+| Refresh strategy | ISR + client polling | Server-rendered initial load, client-side polling (30s) for live data. |
+
+---
+
+## Dependencies on Other Phases
+
+| Dependency | Status | Impact |
+|------------|--------|--------|
+| `@aac/api-clients` Pipedrive + QB | Done | Business Pulse, Leads, To-Do auto-detection |
+| `@aac/api-clients` Gemini | Done | Commitment detection |
+| Middleware deployed | Not yet | Health card, webhook counts, auto to-do items |
+| `@aac/api-clients` Google Calendar | Not built | Jobs scheduled counts |
+| `@aac/api-clients` Google Analytics | Not built | Website/SEO card |
+| `@aac/api-clients` Google Ads | Not built | Ads performance card |
+| Marketing Engine (Phase 4) | Not built | Campaign stats card |
+
+**Day-one without dependencies:** Business Pulse (QB + Pipedrive), Smart To-Do
+(manual only until commitment detection ships), New Leads (Pipedrive), Middleware
+Health (once middleware is deployed), Important Dates (manual or Pipedrive).
+
+**Cards that light up later:** Website/SEO/Ads (needs Google client extraction),
+Marketing Campaigns (needs Phase 4), Smart To-Do auto items (needs commitment
+detection in Quo webhook).
+
+---
+
+## MVP Build Order
+
+1. **Scaffold** — Next.js 15 app, auth, layout with sidebar, card grid
+2. **Business Pulse card** — QB outstanding invoices + Pipedrive stale estimates
+3. **Smart To-Do card** — Manual CRUD (add/edit/complete/dismiss), stored in Redis
+4. **New Leads card** — Recent Pipedrive persons
+5. **Middleware Health card** — Read from middleware `/api/health`
+6. **Important Dates card** — Manual entry + Pipedrive pipeline for renewals
+7. **Card configuration** — Show/hide, reorder, persist preference
+8. **Commitment detection** — Expand Quo webhook Gemini prompt, auto-create to-dos
+9. **Website/SEO/Ads card** — Requires Google client extraction (Phase 0.11-0.14)
+10. **Marketing Campaigns card** — Lights up when Phase 4 ships
