@@ -39,9 +39,21 @@ and history.
 | Jobs scheduled (next 7 days) | Google Calendar | Count of upcoming jobs |
 | Jobs scheduled (next 30 days) | Google Calendar | Count + pipeline view |
 
+| Approved estimates (needs scheduling) | QuickBooks | Count + total $ ready to convert |
+
+**Approved estimates deserve special treatment.** When a QB estimate status
+changes to "Accepted", this should:
+1. Show prominently on the Business Pulse card (these are money in the bank)
+2. Auto-create a to-do item: "Schedule job for [customer name] — estimate #X ($Y)"
+3. The to-do stays until the job appears on Google Calendar
+
+Approval signals can also come via text/email ("Hey, we want to get this
+scheduled") — the AI commitment detection should catch these and flag them
+even before the QB estimate status changes.
+
 **Status logic:**
 - Green: Positive cash flow, no invoices > 30 days overdue, estimates moving
-- Yellow: Any invoice > 30 days, or estimate stale > 14 days
+- Yellow: Any invoice > 30 days, or estimate stale > 14 days, or approved estimate unscheduled > 48h
 - Red: Negative cash flow trend, or overdue invoices > $X threshold
 
 **Detail page:** Full financial dashboard with date range filters, invoice list
@@ -118,7 +130,7 @@ link to Pipedrive.
 | Traffic trend (7d vs prior 7d) | Google Analytics 4 |
 | Top landing pages | Google Analytics 4 |
 | Ad spend / conversions / CPA | Google Ads |
-| Search Console impressions / clicks | Google Search Console |
+| Search Console impressions / clicks / position | Google Search Console |
 | Lighthouse scores | Stored from CI runs |
 
 **Status logic:**
@@ -128,7 +140,8 @@ link to Pipedrive.
 
 **Card summary:** Green/yellow/red + key numbers (sessions, ad spend, leads).
 **Detail page:** Full analytics dashboard with date range selectors, charts,
-comparison periods.
+comparison periods. Includes Search Console data (impressions, clicks, average
+position, top queries, top pages).
 
 ### 5. Middleware Health
 
@@ -190,6 +203,85 @@ for anything < 7 days.
 
 ---
 
+## Deep-Dive Features (Beyond Day-One Cards)
+
+These are detail-page features and cross-cutting capabilities that don't fit
+neatly into a single card but are core to the Command Center's value.
+
+### Full-Funnel Attribution
+
+**The question:** "That $3,000 job we completed — what originally brought
+that customer to us?"
+
+This traces the complete user journey from first touch to paid invoice:
+
+```
+Traffic Source → Website Visit → Call/Text → Pipedrive Lead → Estimate → Job → Invoice → Payment
+     ↑                ↑              ↑            ↑              ↑         ↑         ↑
+  Google Ad       UTM params     Quo webhook   PD webhook     PD deal    QB est    QB invoice
+  Facebook        GA4 session    Call/SMS log   Person created  Stage     Approved   Paid
+  BBB listing     Landing page   Activity       Contact linked  Moved     Scheduled  Collected
+  GBP             Referral path
+  Organic search
+```
+
+**Data sources for attribution:**
+- **UTM parameters** — Already being added to Facebook, BBB, Google Business
+  Profile, and other referral sources. Tracked in GA4.
+- **GA4 sessions** — Landing page, source/medium, campaign, referral path
+- **Quo call/SMS logs** — Which phone number (CT vs MA) received the contact,
+  correlated with the session that preceded it
+- **Pipedrive** — Person creation → deal → estimate → won/lost
+- **QuickBooks** — Estimate accepted → invoice → payment collected
+
+**Attribution model:**
+- First-touch: What originally brought them to us?
+- The referral chain already exists in Pipedrive (the "Referred by" field
+  traversal from the attribution engine in aac-slim)
+- Correlate Pipedrive person phone with Quo activity timestamps, then match
+  to GA4 sessions within a time window
+
+**Branch-specific:** Full attribution currently works for Massachusetts
+(website + Google Ads + calls/texts all trackable). Connecticut can track
+calls/texts but not necessarily the website-to-call journey yet.
+
+**Detail page:** `attribution/page.tsx` — Per-job attribution view showing
+the full funnel. Filterable by date range, source, branch. Aggregated views
+showing which channels drive the most revenue (not just leads, but actual
+completed paid jobs).
+
+**Existing work:** The aac-astro codebase has analytics scripts that already
+pull GA4 and Search Console data. The aac-slim attribution engine traces
+Pipedrive referral chains to QuickBooks invoices. These need to be unified
+into a single view.
+
+### Email/Gmail Monitoring
+
+**The question:** "Are there emails I need to deal with?"
+
+Gmail is a secondary lead channel — occasional leads come in via email, and
+business correspondence happens there too.
+
+**Capabilities:**
+- Surface emails flagged as important or from known contacts
+- Detect lead-like emails (someone asking for an estimate, service inquiry)
+- Auto-create to-do items for emails that need a response
+- Correlate email leads with Pipedrive (does this person already exist?)
+
+**Data source:** Gmail API (read-only). Requires OAuth with Gmail scope.
+
+**Integration approach:** This is a new data source not yet in `@aac/api-clients`.
+Needs a `GmailClient` extraction (or inclusion in the Google OAuth shared auth).
+Could be implemented as:
+- A periodic poll (every 15 min) that checks for new important/unread emails
+- A Gmail push notification (webhook via Google Cloud Pub/Sub) for real-time
+
+**Card integration:** Important emails surface as items in the Smart To-Do
+list with `source: 'email'`. The card summary on the dashboard could show
+"X unread important emails" as part of the to-do count or as its own indicator.
+
+---
+
 ## Architecture
 
 ```
@@ -200,7 +292,8 @@ apps/command-center/
     todos/page.tsx        Smart to-do list detail
     leads/page.tsx        Lead activity detail
     financials/page.tsx   Business pulse detail
-    analytics/page.tsx    Website/SEO/Ads detail
+    analytics/page.tsx    Website/SEO/Ads + Search Console detail
+    attribution/page.tsx  Full-funnel attribution (source → job → payment)
     health/page.tsx       Middleware health detail
     campaigns/page.tsx    Marketing campaigns detail
     calendar/page.tsx     Important dates detail
@@ -220,6 +313,8 @@ The Command Center is primarily a **read-only aggregator**. It reads from:
 - **Google Calendar API** — Scheduled jobs (via `@aac/api-clients`, once extracted)
 - **Google Analytics API** — Traffic, conversions (via `@aac/api-clients`, once extracted)
 - **Google Ads API** — Spend, CPA, leads (via `@aac/api-clients`, once extracted)
+- **Google Search Console API** — Impressions, clicks, positions (via `@aac/api-clients`, once extracted)
+- **Gmail API** — Important/unread emails, lead detection (via `@aac/api-clients`, once built)
 
 The only writes it makes:
 - To-do CRUD (Redis)
@@ -270,7 +365,10 @@ prompt that runs on the same text.
 | `@aac/api-clients` Google Calendar | Not built | Jobs scheduled counts |
 | `@aac/api-clients` Google Analytics | Not built | Website/SEO card |
 | `@aac/api-clients` Google Ads | Not built | Ads performance card |
+| `@aac/api-clients` Google Search Console | Not built | Search Console data in analytics card |
+| `@aac/api-clients` Gmail | Not built | Email monitoring, lead detection, to-do auto-creation |
 | Marketing Engine (Phase 4) | Not built | Campaign stats card |
+| Attribution engine rebuild | Not built | Full-funnel attribution (source → job → payment) |
 
 **Day-one without dependencies:** Business Pulse (QB + Pipedrive), Smart To-Do
 (manual only until commitment detection ships), New Leads (Pipedrive), Middleware
@@ -293,4 +391,6 @@ detection in Quo webhook).
 7. **Card configuration** — Show/hide, reorder, persist preference
 8. **Commitment detection** — Expand Quo webhook Gemini prompt, auto-create to-dos
 9. **Website/SEO/Ads card** — Requires Google client extraction (Phase 0.11-0.14)
-10. **Marketing Campaigns card** — Lights up when Phase 4 ships
+10. **Email monitoring** — Gmail API integration, surface important emails as to-dos
+11. **Full-funnel attribution** — Unify GA4 + Pipedrive + QuickBooks into source-to-payment journey
+12. **Marketing Campaigns card** — Lights up when Phase 4 ships
