@@ -1,4 +1,6 @@
 {
+  "buildCommand": "cd ../.. && pnpm turbo build --filter=@aac/middleware",
+  "outputDirectory": ".",
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 30,
