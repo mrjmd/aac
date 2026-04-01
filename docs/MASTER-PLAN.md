@@ -336,87 +336,370 @@ aac-astro patterns) WITHOUT touching either production system.
 
 ---
 
-## Phase 1: Command Center
+## Phase 1: Command Center (Operational Cockpit)
 
-**Goal:** Build the analytics/observability dashboard as the first real consumer
-of the shared packages. Validates the package architecture.
+**Goal:** Build the single place Matt opens every morning to understand the
+state of the business. Not just middleware health — full business management
+dashboard with 7 configurable card categories.
 
 **Risk level:** Low. Greenfield app, no production migration.
 
-### 1.0 — Vision & Scope Definition
+**Full spec:** `docs/command-center-spec.md`
 
-- [ ] `[DISCUSS]` **What does Matt check every morning?** This determines day-one features.
-- [ ] `[DISCUSS]` **What decisions need a dashboard?** (Approve quotes? Review campaign results? Check renewal dates?)
-- [ ] `[DISCUSS]` **What "Approve" actions matter?** The doc mentions approving automated drafts — what does this actually look like in practice?
-- [ ] `[DISCUSS]` **Auth model:** Single user (like marketing engine) or multi-user? Password-based or something else?
-- [ ] `[DISCUSS]` **Mobile-first or desktop?** Is this checked on a phone in the morning or on a laptop?
-- [ ] Define day-one feature set (proposed below, needs validation):
-  1. Middleware heartbeat monitor (green/red from Redis)
-  2. Webhook audit trail (last 50 events from Redis stream)
-  3. Campaign pulse (stats from Redis, if marketing engine exists yet)
-  4. Business renewals (ASHI, insurance, domain expirations from Pipedrive)
-  5. Recent lead activity (latest Pipedrive persons/deals)
-- [ ] `[DISCUSS]` What else belongs on day-one? What can wait?
-- [ ] Write a `docs/command-center-spec.md` capturing decisions
+### 1.0 — Vision & Scope Definition ✅ COMPLETE (2026-03-31)
 
-### 1.1 — App Scaffold
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **What does Matt check every morning?** All of: business health (cash flow, invoices, estimates, scheduled jobs), to-do list, new leads, website/SEO/ads, middleware health, campaign stats, upcoming dates.
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Auth model:** Simple password (single user). Upgrade path to multi-user later.
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Mobile-first or desktop?** Desktop-first, responsive to mobile. Both need to work.
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Framework:** Next.js 15 (App Router). Dashboard is 70%+ interactive, suits React. Shared design tokens with storefront via `packages/ui`.
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Design system:** Tailwind + shadcn/ui. Shared Tailwind preset in `packages/ui`.
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **To-do storage:** Redis (same Upstash instance).
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **AI commitment detection:** Expand existing Quo webhook Gemini prompt.
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Card system:** Show/hide + reorder. Not full drag-and-drop builder.
+- [x] Define day-one feature set: All 7 card categories present (Business Pulse, Smart To-Do, New Leads, Website/SEO/Ads, Middleware Health, Marketing Campaigns, Important Dates).
+- [x] Additional scope: Full-funnel attribution, Gmail monitoring, GSC data, approved estimate auto-flagging.
+- [x] Write `docs/command-center-spec.md` capturing all decisions.
+
+### 1.1 — Prerequisite: Complete Remaining Shared Package Clients
+
+These API clients are already scaffolded in `@aac/api-clients` but need
+implementation before the Command Center can use them. Source code exists
+in the legacy codebases.
+
+#### 1.1a — Google OAuth Shared Auth
+
+- [ ] Read aac-astro `scripts/lib/project-import-core.js` — extract the `authorize()` function (handles CLI, CI, local OAuth, service account)
+- [ ] Create `packages/shared-utils/src/google-auth.ts` (or a separate `packages/google-auth` package — decide based on size)
+- [ ] Support OAuth2 with refresh token (interactive/stored credentials)
+- [ ] Support service account auth (CI environments)
+- [ ] Export `createGoogleAuth(config)` factory that returns authenticated client
+- [ ] Token persistence via callbacks (same pattern as QuickBooks client)
+- [ ] Write tests
+- [ ] Verify build passes
+
+#### 1.1b — Google Analytics Client
+
+- [ ] Read aac-astro `scripts/ga4-report.js` (222 lines) — extract the GA4 Data API query patterns
+- [ ] Read aac-astro `api/analytics-health.ts` (285 lines) — extract health check patterns
+- [ ] Read aac-astro `scripts/monthly-report.js` (461 lines) — extract the 13 parallel GA4 queries for comprehensive reporting
+- [ ] Complete `packages/api-clients/src/google-analytics.ts`:
+  - [ ] `runReport(propertyId, request)` — core GA4 Data API wrapper
+  - [ ] `getTrafficSummary(propertyId, dateRange)` — sessions, users, bounce rate
+  - [ ] `getConversionEvents(propertyId, dateRange)` — phone_call_click, text_message_click counts
+  - [ ] `getTrafficSources(propertyId, dateRange)` — source/medium breakdown
+  - [ ] `getLandingPagePerformance(propertyId, dateRange)` — page-level metrics
+- [ ] Constructor takes Google auth client from shared auth
+- [ ] Write tests (mock fetch)
+- [ ] Verify build passes
+
+#### 1.1c — Google Search Console Client
+
+- [ ] Read aac-astro `scripts/gsc-report.js` (172 lines) — extract search analytics query pattern
+- [ ] Complete `packages/api-clients/src/google-search-console.ts`:
+  - [ ] `queryPerformance(siteUrl, request)` — core search analytics API wrapper
+  - [ ] `getTopQueries(siteUrl, dateRange)` — clicks, impressions, CTR, position
+  - [ ] `getTopPages(siteUrl, dateRange)` — page-level search performance
+  - [ ] `getSitemapStatus(siteUrl)` — sitemap health
+- [ ] Constructor takes Google auth client
+- [ ] Write tests
+- [ ] Verify build passes
+
+#### 1.1d — Google Calendar Client
+
+- [ ] Read aac-astro `scripts/lib/project-import-core.js` — extract event query and filtering logic
+- [ ] Complete `packages/api-clients/src/google-calendar.ts`:
+  - [ ] `listEvents(calendarId, dateRange)` — fetch events with filtering
+  - [ ] `getUpcomingJobs(calendarId, days)` — events filtered by job color/keywords
+  - [ ] `countJobsInRange(calendarId, startDate, endDate)` — for "jobs next week/month" cards
+- [ ] Constructor takes Google auth client
+- [ ] Write tests
+- [ ] Verify build passes
+
+#### 1.1e — Google Ads Client
+
+- [ ] Read aac-astro `scripts/lib/google-ads-client.js` (133 lines) — already extracted pattern
+- [ ] Complete `packages/api-clients/src/google-ads.ts`:
+  - [ ] `executeGaql(customerId, query)` — core GAQL query via REST streaming API
+  - [ ] `getCampaignPerformance(customerId, dateRange)` — spend, conversions, CPA
+  - [ ] `getKeywordPerformance(customerId, dateRange)` — keyword-level metrics
+- [ ] Constructor takes Google auth client + developer token + manager account ID
+- [ ] Write tests
+- [ ] Verify build passes
+
+#### 1.1f — Gmail Client (NEW — not in any legacy codebase)
+
+- [ ] Design GmailConfig: `{ auth: GoogleAuth }` (uses shared Google OAuth)
+- [ ] Create `packages/api-clients/src/gmail.ts`:
+  - [ ] `getRecentImportant(maxResults)` — fetch recent important/unread emails
+  - [ ] `getUnreadCount()` — count of unread important emails
+  - [ ] `getMessage(messageId)` — full message content
+  - [ ] `getThread(threadId)` — conversation thread
+- [ ] Add to `packages/api-clients/src/index.ts` barrel export
+- [ ] Add to `packages/api-clients/package.json` exports map
+- [ ] Write tests
+- [ ] Verify build passes
+
+#### 1.1g — Buffer Client (from aac-astro)
+
+- [ ] Read aac-astro `scripts/lib/buffer-client.js` (313 lines) — GraphQL API wrapper
+- [ ] Complete `packages/api-clients/src/buffer.ts` (already partially scaffolded):
+  - [ ] `getOrganizations()` — account structure
+  - [ ] `getChannels()` — connected social platforms
+  - [ ] `createPost(data)` — schedule a post
+  - [ ] `getScheduledPosts(channelId)` — pending posts
+- [ ] Include rate limiting logic (200ms min delay, exponential backoff on 429)
+- [ ] Write tests
+- [ ] Verify build passes
+
+#### 1.1h — Integration Verification
+
+- [ ] All new/completed clients build: `pnpm turbo build`
+- [ ] All tests pass: `pnpm turbo test`
+- [ ] Type-check passes: `pnpm turbo typecheck`
+
+### 1.2 — Prerequisite: Shared Design System
+
+- [ ] Create `packages/ui/` package
+- [ ] Shared Tailwind preset (colors, typography, spacing, border-radius matching AAC brand)
+- [ ] Export preset for consumption by both `apps/storefront` (Astro) and `apps/command-center` (Next.js)
+- [ ] Base component primitives using shadcn/ui (Button, Card, Badge, Input, etc.)
+- [ ] Status indicator component (green/yellow/red dot + label)
+- [ ] Dashboard card wrapper component (title, status dot, summary content, click-to-expand)
+- [ ] Verify build passes
+
+### 1.3 — App Scaffold
 
 - [ ] Initialize `apps/command-center` as Next.js 15 App Router project
-- [ ] Add dependencies: `next`, `react`, `react-dom`, `@aac/api-clients`, `@aac/shared-utils`, `@upstash/redis`
+- [ ] Add dependencies: `next@15`, `react`, `react-dom`, `@aac/api-clients`, `@aac/shared-utils`, `@aac/ui`, `@upstash/redis`, `tailwindcss`, `@tailwindcss/typography`
 - [ ] Set up tsconfig extending `@aac/tsconfig/nextjs.json`
-- [ ] Create basic layout with navigation
-- [ ] Create health check API route (`/api/health`)
+- [ ] Configure Tailwind with shared preset from `@aac/ui`
+- [ ] Create root layout with sidebar navigation (7 sections matching cards)
+- [ ] Create simple password auth (hashed env var, cookie session)
+- [ ] Create login page
+- [ ] Create `/api/health` route (own heartbeat)
+- [ ] Create placeholder dashboard page with empty card grid
 - [ ] Verify: `pnpm turbo build` includes command-center
 - [ ] Verify: dev server starts and renders
 
-### 1.2 — Middleware Heartbeat Monitor
+### 1.4 — Card: Business Pulse
 
-- [ ] Create a dashboard card component that reads `health:middleware:ts` from Redis
-- [ ] Display green/yellow/red status:
-  - Green: timestamp < 6 minutes old
-  - Yellow: timestamp 6-15 minutes old
-  - Red: timestamp > 15 minutes or key missing
-- [ ] Show last heartbeat timestamp
-- [ ] `[DISCUSS]` Should the command center also write its own heartbeat? (For future self-monitoring)
+**Data sources:** QuickBooks (invoices, estimates, cash flow) + Google Calendar (scheduled jobs) + Pipedrive (deal pipeline)
 
-### 1.3 — Webhook Audit Trail
+- [ ] Create `app/api/financials/route.ts` — server-side data aggregation:
+  - [ ] Query QB for outstanding invoices (unpaid, with aging)
+  - [ ] Query QB for recent payments (last 30 days cash flow)
+  - [ ] Query Pipedrive for deals in "Estimate Sent" stage (stale estimate detection)
+  - [ ] Query Pipedrive for deals in "Estimate Accepted/Approved" stage — **high priority flag**
+  - [ ] Query Google Calendar for job count (next 7 days + next 30 days)
+- [ ] Create Business Pulse card component:
+  - [ ] Cash flow trend (positive/negative indicator)
+  - [ ] Outstanding invoices count + total $
+  - [ ] Stale estimates count (> 14 days in "Estimate Sent")
+  - [ ] **Approved estimates needing scheduling** (count + total $, highlighted)
+  - [ ] Jobs scheduled next 7 / next 30 days
+  - [ ] Green/yellow/red status based on thresholds
+- [ ] Create `/financials` detail page:
+  - [ ] Invoice list with aging (0-30, 30-60, 60-90, 90+ days)
+  - [ ] Estimate pipeline funnel
+  - [ ] Cash flow chart (date range selectable)
+  - [ ] Approved estimates list with "Schedule" action links
+- [ ] Auto-create to-do when estimate status changes to "Accepted":
+  - [ ] Add Redis key schema for approved estimate tracking
+  - [ ] Middleware or polling: detect QB estimate status changes
+  - [ ] Create to-do item: "Schedule job for [customer] — Estimate #X ($Y)"
 
-- [ ] Read from `logs:webhooks` Redis stream (XRANGE/XREVRANGE)
-- [ ] Display last 50 webhook events with:
-  - Source (Pipedrive, Quo, Google Ads)
-  - Event type
-  - Timestamp
-  - Processing status
-- [ ] `[DISCUSS]` Does aac-slim currently write to this stream? If not, this is a feature we need to add to the middleware during Phase 2.
-- [ ] Auto-refresh on interval (30 seconds?)
+### 1.5 — Card: Smart To-Do List
 
-### 1.4 — Business Renewals / Important Dates
+**Data sources:** Redis (to-do items), future: Gemini commitment detection from Quo webhook
 
-- [ ] Use `@aac/api-clients` PipedriveClient to query deals from a "Business Admin" board
-- [ ] `[DISCUSS]` How are renewal dates currently stored in Pipedrive? Is there an actual "Business Admin" pipeline/board, or does this need to be set up?
-- [ ] Display upcoming renewals (ASHI, insurance, domains) with days-until-due
-- [ ] Highlight items < 30 days out
+- [ ] Add Redis key schema for to-dos in `@aac/shared-utils/redis`:
+  - [ ] `keys.todo(todoId)` — individual to-do item
+  - [ ] `keys.todoList` — sorted set of to-do IDs by due date
+  - [ ] `keys.todoRecurring` — recurring task definitions
+- [ ] Create `app/api/todos/route.ts` — CRUD API:
+  - [ ] GET — list all pending to-dos, sorted by due date
+  - [ ] POST — create new to-do (manual)
+  - [ ] PATCH — update to-do (edit, complete, dismiss)
+  - [ ] DELETE — remove to-do
+- [ ] Create Smart To-Do card component:
+  - [ ] Count of pending items + count overdue
+  - [ ] Next 3 due items shown inline
+  - [ ] Red highlight for overdue items
+- [ ] Create `/todos` detail page:
+  - [ ] Full to-do list with filters (pending/completed/all, manual/auto/recurring)
+  - [ ] Add new to-do form (title, due date, notes)
+  - [ ] Edit/complete/dismiss actions on each item
+  - [ ] AI-detected items show source transcript excerpt + confidence badge
+- [ ] Pre-populate recurring tasks:
+  - [ ] Quarterly: Budget analysis and projections review
+  - [ ] Monthly: Cost inventory and optimization check
+  - [ ] Monthly: Review solicitation follow-up status
+  - [ ] As-needed: Respond to new Google reviews
+- [ ] (Phase 1.9) Wire up auto-generated to-dos from Gemini commitment detection
 
-### 1.5 — Recent Lead Activity
+### 1.6 — Card: New Leads
 
-- [ ] Use PipedriveClient to fetch recent persons/deals
-- [ ] Display: name, phone, source, deal status, date
-- [ ] Link to Pipedrive (external link)
+**Data sources:** Pipedrive (recent persons/deals), middleware health (webhook counts)
 
-### 1.6 — Deployment
+- [ ] Create `app/api/leads/route.ts`:
+  - [ ] Fetch recent Pipedrive persons (last 24h, sorted by created date)
+  - [ ] Fetch middleware webhook counts (Google Ads leads today)
+  - [ ] Combine into lead activity summary
+- [ ] Create New Leads card component:
+  - [ ] Total new leads (24h)
+  - [ ] Breakdown by source (Google Ads, inbound call, walk-in, referral)
+- [ ] Create `/leads` detail page:
+  - [ ] List of recent leads: name, phone, source, deal stage, date
+  - [ ] Link to Pipedrive person (external)
+  - [ ] Date range filter
+
+### 1.7 — Card: Website / SEO / Ads
+
+**Data sources:** Google Analytics, Google Search Console, Google Ads
+**Depends on:** 1.1b (GA4 client), 1.1c (GSC client), 1.1e (Ads client)
+
+- [ ] Create `app/api/analytics/route.ts`:
+  - [ ] GA4: sessions, users, bounce rate (7d vs prior 7d trend)
+  - [ ] GA4: conversion events (phone_call_click, text_message_click)
+  - [ ] GSC: impressions, clicks, avg position, top queries
+  - [ ] Google Ads: spend, conversions, CPA
+- [ ] Create Website/SEO/Ads card component:
+  - [ ] Green/yellow/red status
+  - [ ] Key numbers: sessions, ad spend, conversions
+  - [ ] Trend arrows (up/down vs prior period)
+- [ ] Create `/analytics` detail page:
+  - [ ] Traffic chart with date range selector
+  - [ ] Source/medium breakdown table
+  - [ ] Landing page performance
+  - [ ] Search Console: top queries, top pages, position trends
+  - [ ] Google Ads: campaign performance, keyword breakdown, CPA trend
+  - [ ] Comparison periods (this week vs last, this month vs last)
+
+### 1.8 — Card: Middleware Health
+
+**Data sources:** Redis (heartbeat, webhook counts, errors from middleware `/api/health`)
+
+- [ ] Create Middleware Health card component:
+  - [ ] Green/yellow/red based on heartbeat age + error count
+  - [ ] "X events processed today" summary
+- [ ] Create `/health` detail page:
+  - [ ] Per-source webhook counts (pipedrive, quo, google-ads)
+  - [ ] Last processed timestamps
+  - [ ] Error log (last 50)
+  - [ ] Sync mapping counts (PD↔Quo, PD↔QB, Phone→PD)
+
+### 1.9 — Card: Marketing Campaigns
+
+**Data sources:** Redis (campaign state + stats written by marketing engine or aac-slim)
+
+- [ ] Create Marketing Campaigns card component:
+  - [ ] Green/yellow/red status
+  - [ ] Active campaign count + overall response rate
+- [ ] Create `/campaigns` detail page:
+  - [ ] Campaign list with stats per campaign
+  - [ ] Drill into individual campaign (sent, delivered, responses, opt-outs)
+- [ ] Note: This card shows data from Redis regardless of whether campaigns
+  are managed by aac-slim or the future marketing engine
+
+### 1.10 — Card: Important Dates
+
+**Data sources:** Pipedrive (business admin pipeline), Google Calendar, Redis (manual entries)
+
+- [ ] Create `app/api/dates/route.ts`:
+  - [ ] Query Pipedrive for business admin/renewal deals
+  - [ ] Query Google Calendar for partnership events
+  - [ ] Query Redis for manually added dates
+- [ ] Create Important Dates card component:
+  - [ ] Next 3 upcoming items with days-until-due
+  - [ ] Red highlight for < 7 days
+- [ ] Create `/calendar` detail page:
+  - [ ] Calendar view of all upcoming dates
+  - [ ] Add new date form (title, date, category, recurrence)
+  - [ ] Categories: business renewal, partnership, seasonal, custom
+
+### 1.11 — Card Configuration System
+
+- [ ] Create settings page (`/settings`):
+  - [ ] Toggle cards visible/hidden
+  - [ ] Reorder cards (move up/down)
+- [ ] Persist card config in Redis (per-user key, future-proof for multi-user)
+- [ ] Dashboard reads config and renders cards accordingly
+- [ ] Default config shows all 7 cards in logical order
+
+### 1.12 — AI Commitment Detection (Smart To-Do Auto-Generation)
+
+**Depends on:** Middleware deployed (Phase 2), To-Do system (1.5)
+
+This expands the existing Quo webhook Gemini prompt to detect commitments.
+
+- [ ] Design commitment extraction prompt:
+  - [ ] Detect scheduling promises ("I'll schedule you for Thursday")
+  - [ ] Detect follow-up promises ("I'll get back to you in two weeks")
+  - [ ] Detect action promises ("Let me send you that estimate")
+  - [ ] Extract: action, person name, due date/timeframe, confidence
+- [ ] Add commitment detection to Quo webhook (`apps/middleware/api/webhooks/quo.ts`):
+  - [ ] Second Gemini call after entity extraction (same text input)
+  - [ ] Parse structured response into to-do item data
+  - [ ] Write to-do item to Redis with `source: 'ai-detected'` and source context
+- [ ] Add to-do key schema to `@aac/shared-utils/redis`
+- [ ] Test with sample transcripts and messages
+- [ ] Verify to-dos appear in Command Center dashboard
+
+### 1.13 — Full-Funnel Attribution Page
+
+**Depends on:** 1.1b (GA4 client), QB + Pipedrive clients (done)
+**References:** aac-slim `src/lib/attribution.ts` (295 lines) for Pipedrive referral chain traversal
+
+- [ ] Rebuild attribution engine logic:
+  - [ ] Extract and adapt `runAttribution()` from aac-slim attribution.ts
+  - [ ] Add `getPaidInvoices`, `getInvoice` methods back to QuickBooksClient
+  - [ ] Add `getPersonReferredBy`, `getPipedriveUser`, `getPersonOwnerId` methods back to PipedriveClient
+  - [ ] These were stripped during middleware extraction — add them back as they're needed by Command Center
+- [ ] Create `app/api/attribution/route.ts`:
+  - [ ] Accept date range parameter
+  - [ ] Fetch paid QB invoices → trace each to Pipedrive person → walk referral chain → find salesperson
+  - [ ] Correlate with GA4 session data (match Pipedrive person phone → Quo call timestamp → GA4 session within time window)
+  - [ ] Include UTM source attribution (Facebook, BBB, GBP, organic)
+- [ ] Create `/attribution` detail page:
+  - [ ] Per-job attribution view (full funnel: source → visit → call → lead → estimate → job → payment)
+  - [ ] Aggregated channel ROI (which sources drive completed paid jobs, not just leads)
+  - [ ] Date range filter
+  - [ ] Branch filter (MA vs CT)
+
+### 1.14 — Gmail Monitoring
+
+**Depends on:** 1.1f (Gmail client)
+
+- [ ] Create `app/api/email/route.ts`:
+  - [ ] Fetch recent important/unread emails
+  - [ ] Detect lead-like emails (service inquiries, estimate requests)
+  - [ ] Correlate email senders with existing Pipedrive contacts
+- [ ] Surface important emails as to-do items (`source: 'email'`)
+- [ ] Add email indicator to Smart To-Do card (or as its own mini-indicator)
+- [ ] Create email detail view (list of important emails, click to open in Gmail)
+
+### 1.15 — Deployment
 
 - [ ] Create Vercel project `aac-command-center`
 - [ ] Configure root directory to `apps/command-center`
-- [ ] Set environment variables (Redis URL/token, Pipedrive API key)
+- [ ] Set environment variables:
+  - [ ] Redis URL/token (same Upstash as middleware)
+  - [ ] Pipedrive API key
+  - [ ] QuickBooks OAuth credentials
+  - [ ] Google OAuth credentials (for Calendar, Analytics, Ads, GSC, Gmail)
+  - [ ] Simple auth password (hashed)
+  - [ ] Middleware health endpoint URL
 - [ ] Deploy and verify
-- [ ] `[DISCUSS]` Custom domain? (e.g., `dashboard.attackacrack.com` or `cmd.attackacrack.com`)
+- [ ] Custom domain (e.g., `dashboard.attackacrack.com`)
 
-### 1.7 — Styling & Polish
+### 1.16 — Polish & Responsiveness
 
-- [ ] `[DISCUSS]` Design system: Tailwind + shadcn/ui? Or something simpler?
-- [ ] Responsive layout (if mobile is a priority)
-- [ ] Dark mode? (or just one mode)
-- [ ] Loading states, error states, empty states
+- [ ] Loading states for each card (skeleton loaders)
+- [ ] Error states (card shows error message, doesn't break dashboard)
+- [ ] Empty states (card shows helpful message when no data)
+- [ ] Mobile responsive layout (cards stack vertically, sidebar collapses to hamburger)
+- [ ] Auto-refresh on interval (30s for health, 5m for financials)
+- [ ] Dark mode (optional, if easy with shadcn)
 
 ---
 
