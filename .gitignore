@@ -40,5 +40,9 @@ pnpm-debug.log*
 *.db-shm
 *.db-wal
 
+# HR / Candidate docs
+docs/candidate-review-*
+docs/indeed-candidates-*
+
 # Claude
 .claude/
