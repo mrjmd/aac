@@ -227,14 +227,36 @@ function extractRemotePhone(
 }
 
 /**
- * Read raw body from request stream (body parsing is disabled for HMAC verification)
+ * Read raw body from request (body parsing is disabled for HMAC verification)
+ *
+ * With bodyParser: false, Vercel may provide the body as a Buffer on req.body,
+ * or leave it as a readable stream. We handle both cases.
  */
 async function readRawBody(req: VercelRequest): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+  // When bodyParser is false, Vercel typically provides raw body as Buffer
+  if (Buffer.isBuffer(req.body)) {
+    return req.body.toString('utf-8');
   }
-  return Buffer.concat(chunks).toString();
+
+  // If body is a string already
+  if (typeof req.body === 'string') {
+    return req.body;
+  }
+
+  // Fallback: read from stream (may work on some runtimes)
+  return new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+    req.on('error', reject);
+    // If stream already ended with no data, req.body might be parsed JSON
+    // Give it a short timeout then fall back to re-serialization
+    setTimeout(() => {
+      if (chunks.length === 0 && req.body) {
+        resolve(JSON.stringify(req.body));
+      }
+    }, 50);
+  });
 }
 
 /**
