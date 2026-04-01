@@ -22,7 +22,7 @@ an API client from `@aac/api-clients` and calls its methods.
 ## What Does NOT Belong Here
 
 - Web servers or API endpoints (those go in `apps/`)
-- Build-time validation scripts (those stay in `apps/storefront`)
+- Build-time validation scripts (those stay in `apps/website`)
 - Campaign business logic (that goes in `apps/marketing`)
 - UI code of any kind
 

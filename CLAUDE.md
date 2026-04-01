@@ -8,7 +8,7 @@ start of every session.
 ```
 apps/
   middleware/        Pillar 1: Operations Brain (Next.js 14) [SACROSANCT]
-  storefront/        Pillar 2: Digital Storefront (Astro 5)
+  website/           Pillar 2: Public Website (Astro 5)
   marketing/         Pillar 3: Marketing Engine (Content Production)
   command-center/    Pillar 4: Analytics/BI Dashboard (Next.js 15)
 packages/
@@ -88,6 +88,6 @@ pnpm turbo typecheck      # Type-check everything
 ## Legacy Codebases (Archived, Read-Only Reference)
 
 - `../aac-slim/` — Original middleware (production, being replaced by apps/middleware)
-- `../aac-astro/` — Original storefront (production, being replaced by apps/storefront)
+- `../aac-astro/` — Original website (production, being replaced by apps/website)
 - `../aac-marketing-engine/` — Marketing engine experiment (specs are the value)
 - `../attackacrack/` — Original all-in-one attempt (archived, reference only)

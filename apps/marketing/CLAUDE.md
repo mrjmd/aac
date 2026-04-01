@@ -29,7 +29,7 @@ functions:
 ## What Does NOT Belong Here
 
 - Webhook handling for CRM sync (→ `apps/middleware/`)
-- Public website content (→ `apps/storefront/`)
+- Public website content (→ `apps/website/`)
 - Analytics dashboards (→ `apps/command-center/`)
 - One-off reporting scripts (→ `tools/`)
 

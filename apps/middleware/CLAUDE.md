@@ -31,7 +31,7 @@ drafting quotes, creating calendar placeholders.
 - SMS campaign management (→ `apps/marketing/`)
 - Social media posting (→ `apps/marketing/` or `tools/`)
 - Analytics dashboards (→ `apps/command-center/`)
-- SEO content (→ `apps/storefront/`)
+- SEO content (→ `apps/website/`)
 - Operational scripts (→ `tools/`)
 
 ## Framework

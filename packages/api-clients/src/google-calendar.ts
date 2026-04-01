@@ -2,7 +2,7 @@
  * Google Calendar client — OAuth-based event management.
  *
  * TODO: Extract from aac-astro/scripts/lib/project-import-core.js
- * during Phase 3 (storefront migration).
+ * during Phase 3 (website migration).
  */
 
 export interface GoogleCalendarConfig {

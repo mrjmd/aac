@@ -10,7 +10,7 @@ We use **Turborepo with pnpm workspaces** for strict dependency isolation. The d
 /
 ├── apps/
 │   ├── middleware/        # Pillar 1: Operations Brain (Next.js 14 - aac-slim) [SACROSANCT]
-│   ├── storefront/        # Pillar 2: Astro Site (Astro 5 - aac-astro)
+│   ├── website/        # Pillar 2: Astro Site (Astro 5 - aac-astro)
 │   ├── marketing/         # Pillar 3: Marketing Engine (Content Production App)
 │   └── command-center/    # Pillar 4: Analytics/BI (Next.js 15 App Router)
 ├── packages/
@@ -84,7 +84,7 @@ This package exports **Stateful Clients**. They **MUST NOT** read `process.env` 
 
 **Business Meta-Data:** Important renewal dates (ASHI, insurance, domains) are stored as deal dates in a "Business Admin" board in Pipedrive. Command Center alerts 30 days before expiration.
 
-**Content Sync:** A Vercel Cron job in `apps/storefront` uses `@aac/api-clients` Google Calendar client to fetch project photos from the last 7 days and updates the site's "Latest Work" section.
+**Content Sync:** A Vercel Cron job in `apps/website` uses `@aac/api-clients` Google Calendar client to fetch project photos from the last 7 days and updates the site's "Latest Work" section.
 
 ## 4. Governance & Guardrails
 
@@ -102,7 +102,7 @@ Every directory has its own `CLAUDE.md` to scope-lock the AI:
 
 ## 5. Script Categorization (The "Tools" Rule)
 
-- **Build-time?** (e.g., sitemap generation) → Stay inside `apps/storefront`.
+- **Build-time?** (e.g., sitemap generation) → Stay inside `apps/website`.
 - **On-Demand/Cron?** (e.g., GA4 reports, Ads management, Buffer posting) → Move to `tools/`.
 - **Logic inside Tools:** Tools should be "thin." All actual API interaction logic must be extracted to `@aac/api-clients` so the Middleware or Command Center could theoretically trigger the same logic later.
 - **Workspace membership:** `tools/` has its own `package.json` and is listed in the pnpm workspace config (`pnpm-workspace.yaml`), allowing it to import from `@aac/api-clients` and `@aac/shared-utils` like any other workspace member.
@@ -140,11 +140,11 @@ This validates that the shared packages actually work in a real app without touc
 
 ### Phase 3: Migrate Storefront (Most complex, last to move)
 
-1. **Copy aac-astro** into `apps/storefront`.
+1. **Copy aac-astro** into `apps/website`.
 2. Re-plumb the CI/CD pipeline: adapt the GitHub Actions `quality.yml`, pre-commit hooks, and Lighthouse gates to work within the Turborepo structure.
-3. **Categorize and move the 43+ scripts:** Build-time scripts stay in `apps/storefront`, operational/cron scripts move to `tools/`.
-4. Refactor any direct API calls in the storefront to use `@aac/api-clients`.
-5. **Create a new Vercel project** for the storefront within the monorepo. Test against staging domain.
+3. **Categorize and move the 43+ scripts:** Build-time scripts stay in `apps/website`, operational/cron scripts move to `tools/`.
+4. Refactor any direct API calls in the website to use `@aac/api-clients`.
+5. **Create a new Vercel project** for the website within the monorepo. Test against staging domain.
 6. **DNS cutover** from the old Vercel project to the new one.
 7. Archive the standalone aac-astro repo after 7 days of stability.
 

@@ -30,7 +30,7 @@ Shows system health, webhook audit trails, campaign stats, and provides
 ## What Does NOT Belong Here
 
 - Webhook handling (→ `apps/middleware/`)
-- Content management (→ `apps/storefront/` or `apps/marketing/`)
+- Content management (→ `apps/website/` or `apps/marketing/`)
 - Campaign sending (→ `apps/marketing/`)
 - Operational scripts (→ `tools/`)
 

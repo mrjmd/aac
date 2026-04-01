@@ -2,7 +2,7 @@
  * Google Search Console client — Query performance and CTR data.
  *
  * TODO: Extract from aac-astro/scripts/gsc-report.js
- * during Phase 3 (storefront migration).
+ * during Phase 3 (website migration).
  */
 
 export interface GoogleSearchConsoleConfig {

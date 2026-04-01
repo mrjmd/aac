@@ -192,9 +192,9 @@ Shared utils:
 
 **Business Meta-Data:** Important renewal dates (ASHI, insurance, domains) are stored as deal dates in a "Business Admin" board in Pipedrive. Command Center alerts 30 days before expiration.
 
-**Content Sync:** A Vercel Cron job in the storefront uses `@aac/api-clients` Google Calendar client to fetch project photos from the last 7 days and updates the site's "Latest Work" section.
+**Content Sync:** A Vercel Cron job in the website uses `@aac/api-clients` Google Calendar client to fetch project photos from the last 7 days and updates the site's "Latest Work" section.
 
-**Lead Flow (Storefront → Pipedrive):** The storefront's `/api/leads.ts` endpoint uses `@aac/api-clients` Pipedrive client directly. Leads are created in Pipedrive, which fires a webhook to Middleware for further processing (Quo sync, entity extraction). The storefront does NOT call the middleware — it calls Pipedrive, and the middleware reacts to the Pipedrive event.
+**Lead Flow (Storefront → Pipedrive):** The website's `/api/leads.ts` endpoint uses `@aac/api-clients` Pipedrive client directly. Leads are created in Pipedrive, which fires a webhook to Middleware for further processing (Quo sync, entity extraction). The website does NOT call the middleware — it calls Pipedrive, and the middleware reacts to the Pipedrive event.
 
 ## 5. Governance & Guardrails
 
@@ -204,7 +204,7 @@ Each repository has its own `CLAUDE.md` at the root that scope-locks the AI:
 
 - **`aac-shared`:** "You are in the shared core. No breaking changes to function signatures without checking all consumers. Full Vitest coverage required. `strict: true` everywhere."
 - **`aac-slim`:** "You are in the sacrosanct operations brain. Minimal changes only. Every change must be unit tested. No UI code. Import API clients from `@aac/api-clients` — never implement direct API calls."
-- **`aac-astro`:** "You are in the public storefront. SEO validation is non-negotiable. Do not add operational scripts here — they belong in aac-tools. Import API clients from `@aac/api-clients`."
+- **`aac-astro`:** "You are in the public website. SEO validation is non-negotiable. Do not add operational scripts here — they belong in aac-tools. Import API clients from `@aac/api-clients`."
 - **`aac-command-center`:** "You are in the read-only dashboard. No writes to external systems except explicit 'Approve' actions. Import from `@aac/api-clients` and `@aac/shared-utils`."
 - **`aac-marketing-engine`:** "You are in the content production app. Campaign results must be written to shared Redis. Import API clients from `@aac/api-clients`."
 - **`aac-tools`:** "Scripts must be thin wrappers. All API logic lives in `@aac/api-clients`. If you're writing more than 20 lines, you're doing it wrong."
@@ -231,7 +231,7 @@ A bad deploy of the Marketing Engine cannot possibly affect the Middleware. They
 
 ### Independent Velocity
 
-Each repo can move at its own pace. The storefront can stay on Astro 5 while the command center uses Next.js 15. There's no "upgrade the whole monorepo" pressure. Version pinning is explicit in each repo's `package.json`.
+Each repo can move at its own pace. The website can stay on Astro 5 while the command center uses Next.js 15. There's no "upgrade the whole monorepo" pressure. Version pinning is explicit in each repo's `package.json`.
 
 ### Simpler Vercel Configuration
 
@@ -249,7 +249,7 @@ When you open `aac-slim` in an AI session, there is literally no Marketing Engin
 
 ### Version Drift
 
-If `@aac/api-clients` publishes v2.0.0, each consumer repo updates on its own schedule. The middleware might be on v2.0.0 while the storefront is still on v1.3.2. This means the same Pipedrive client might behave differently across apps until everyone upgrades. Renovate/Dependabot mitigates this but doesn't eliminate it.
+If `@aac/api-clients` publishes v2.0.0, each consumer repo updates on its own schedule. The middleware might be on v2.0.0 while the website is still on v1.3.2. This means the same Pipedrive client might behave differently across apps until everyone upgrades. Renovate/Dependabot mitigates this but doesn't eliminate it.
 
 ### Shared Package Development Friction
 
@@ -334,7 +334,7 @@ This is **less risky than the monorepo approach** because you're updating the ex
 Choose multi-repo if:
 
 - **Blast radius isolation** is your top priority (a bad change in one system can never affect another).
-- **You want zero migration risk** on the middleware and storefront (they update in-place, no re-pointing webhooks or DNS).
+- **You want zero migration risk** on the middleware and website (they update in-place, no re-pointing webhooks or DNS).
 - **You don't want to learn Turborepo** and want each repo to be simple and self-contained.
 - **The "AI can't smush across repos" boundary** feels stronger to you than CLAUDE.md rules.
 

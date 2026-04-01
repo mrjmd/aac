@@ -2,7 +2,7 @@
  * Google Analytics Data API client — Service Account reporting.
  *
  * TODO: Extract from aac-astro/scripts/ga4-report.js and related scripts
- * during Phase 3 (storefront migration).
+ * during Phase 3 (website migration).
  */
 
 export interface GoogleAnalyticsConfig {

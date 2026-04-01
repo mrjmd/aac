@@ -1,6 +1,6 @@
-# Storefront — The Digital Storefront
+# Website — The Public-Facing Website
 
-You are working in `apps/storefront/`, the public-facing website for Attack A Crack.
+You are working in `apps/website/`, the public-facing website for Attack A Crack.
 
 ## What This Is
 
@@ -37,6 +37,6 @@ Astro 5 with Tailwind CSS v4, deployed on Vercel.
 
 ## Related
 
-- Source storefront: `../../aac-astro/` (standalone repo, production)
+- Source website: `../../aac-astro/` (standalone repo, production)
 - See `../../packages/api-clients/` for shared API clients.
 - See `../../docs/meta-architecture.md` for the full system architecture.

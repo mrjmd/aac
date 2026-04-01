@@ -4,7 +4,7 @@
 **Location:** `apps/command-center/`
 **Framework:** Next.js 15 (App Router, React Server Components)
 **Auth:** Simple password (single user, upgrade path for multi-user later)
-**Design:** Desktop-first, responsive to mobile. Shared Tailwind design tokens with storefront via `packages/ui`.
+**Design:** Desktop-first, responsive to mobile. Shared Tailwind design tokens with website via `packages/ui`.
 
 ---
 
@@ -346,8 +346,8 @@ prompt that runs on the same text.
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Framework | Next.js 15 | Dashboard is 70%+ interactive; App Router layouts suit dashboard navigation |
-| UI library | shadcn/ui + Tailwind | Accessible components, easy to customize, shared tokens with storefront |
-| Design tokens | `packages/ui` (shared) | Brand coherence between storefront and command center |
+| UI library | shadcn/ui + Tailwind | Accessible components, easy to customize, shared tokens with website |
+| Design tokens | `packages/ui` (shared) | Brand coherence between website and command center |
 | Auth | Simple password | Single user for now. Stored as hashed env var. Upgrade path to proper auth later. |
 | To-do storage | Redis | Same Upstash instance. No new infrastructure. |
 | Commitment detection | Expand Quo webhook | Already processes transcripts. Add second Gemini prompt for commitment extraction. |

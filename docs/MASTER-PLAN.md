@@ -16,7 +16,7 @@ noted inline.
 1. [Phase 0: Shared Package Extraction](#phase-0-shared-package-extraction)
 2. [Phase 1: Command Center (Greenfield)](#phase-1-command-center)
 3. [Phase 2: Shadow Middleware Migration](#phase-2-shadow-middleware-migration)
-4. [Phase 3: Storefront Migration](#phase-3-storefront-migration)
+4. [Phase 3: Website Migration](#phase-3-website-migration)
 5. [Phase 4: Marketing Engine (Greenfield from Spec)](#phase-4-marketing-engine)
 6. [Cross-Phase: Tools Migration](#cross-phase-tools-migration)
 7. [Ongoing: Infrastructure & Governance](#ongoing-infrastructure--governance)
@@ -119,7 +119,7 @@ aac-astro patterns) WITHOUT touching either production system.
 ### 0.6 — @aac/api-clients: Pipedrive Client ✅ COMPLETE (2026-03-31)
 
 - [ ] Read aac-slim `src/clients/pipedrive.ts` (537 lines)
-- [x] Read aac-astro `api/leads.ts` — understand the storefront's simpler Pipedrive usage (create person only)
+- [x] Read aac-astro `api/leads.ts` — understand the website's simpler Pipedrive usage (create person only)
 - [x] Read aac-slim `src/lib/env.ts` — extract Pipedrive config shape
 - [x] Design PipedriveClient constructor config:
   ```typescript
@@ -137,9 +137,9 @@ aac-astro patterns) WITHOUT touching either production system.
 - [x] Refactor: replace all `process.env` reads with `this.config.*`
 - [x] Refactor: replace any direct `fetch()` with a private `this.request()` method that handles base URL, auth token, error handling, and logging
 - [x] Preserve all existing methods:
-  - [x] `searchPersonByPhone(phone)` — used by middleware (Quo webhook) AND storefront (lead dedup)
+  - [x] `searchPersonByPhone(phone)` — used by middleware (Quo webhook) AND website (lead dedup)
   - [x] `searchPersonByName(name)`
-  - [x] `createPerson(data)` — used by middleware AND storefront
+  - [x] `createPerson(data)` — used by middleware AND website
   - [x] `updatePerson(id, data)` — used by middleware (incremental updates)
   - [x] `getPerson(id)`
   - [ ] `createDeal(data)` — deferred (not used by simplified middleware)
@@ -365,7 +365,7 @@ dashboard with 7 configurable card categories.
 - [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **What does Matt check every morning?** All of: business health (cash flow, invoices, estimates, scheduled jobs), to-do list, new leads, website/SEO/ads, middleware health, campaign stats, upcoming dates.
 - [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Auth model:** Simple password (single user). Upgrade path to multi-user later.
 - [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Mobile-first or desktop?** Desktop-first, responsive to mobile. Both need to work.
-- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Framework:** Next.js 15 (App Router). Dashboard is 70%+ interactive, suits React. Shared design tokens with storefront via `packages/ui`.
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Framework:** Next.js 15 (App Router). Dashboard is 70%+ interactive, suits React. Shared design tokens with website via `packages/ui`.
 - [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Design system:** Tailwind + shadcn/ui. Shared Tailwind preset in `packages/ui`.
 - [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **To-do storage:** Redis (same Upstash instance).
 - [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **AI commitment detection:** Expand existing Quo webhook Gemini prompt.
@@ -415,7 +415,7 @@ Dates (Pipedrive + manual). This is a solid MVP.
 
 - [ ] Create `packages/ui/` package
 - [ ] Shared Tailwind preset (colors, typography, spacing, border-radius matching AAC brand)
-- [ ] Export preset for consumption by both `apps/storefront` (Astro) and `apps/command-center` (Next.js)
+- [ ] Export preset for consumption by both `apps/website` (Astro) and `apps/command-center` (Next.js)
 - [ ] Base component primitives using shadcn/ui (Button, Card, Badge, Input, etc.)
 - [ ] Status indicator component (green/yellow/red dot + label)
 - [ ] Dashboard card wrapper component (title, status dot, summary content, click-to-expand)
@@ -538,8 +538,11 @@ Already has results format in `.lighthouse-audit-results.json`.
 - [ ] Move `lighthouse-audit.js` to `tools/lighthouse/audit.ts`
 - [ ] Refactor to write results to Redis instead of local JSON file:
   - [ ] Add Redis key: `keys.lighthouseLatest` — most recent audit results
-  - [ ] Add Redis key: `keys.lighthousePrevious` — prior audit (for diff/regression detection)
-  - [ ] On each run: copy `latest` to `previous`, write new results to `latest`
+  - [ ] Add Redis key: `keys.lighthouseHistory(date)` — historical audit keyed by date
+  - [ ] Add Redis sorted set: `keys.lighthouseRuns` — sorted set of run timestamps for querying history
+  - [ ] On each run: write to `latest`, also append to history (with date key), add to sorted set
+  - [ ] History retention: keep all runs (no TTL) — data is small and valuable for charting trends
+  - [ ] Previous run comparison: read the second-most-recent entry from the sorted set for diff
 - [ ] Add configurable page list (start with fixed set, expand later)
 - [ ] Add regression detection:
   - [ ] Compare current scores vs previous run
@@ -556,6 +559,8 @@ Already has results format in `.lighthouse-audit-results.json`.
   - [ ] Green/yellow/red based on score thresholds (green > 90, yellow > 70, red < 70)
   - [ ] Shows regression arrows (up/down vs previous run)
   - [ ] Detail page shows per-page breakdown, failing audits, CWV metrics
+  - [ ] Historical trend charts: score over time (per category), CWV metrics over time
+  - [ ] Date range selector for historical view
 - [ ] Note: Lighthouse requires Chrome — can't run in Vercel serverless. Must run in GitHub Actions or a machine with a browser.
 
 ### 1.8 — Card: Middleware Health
@@ -814,7 +819,7 @@ to plain Vercel function (`export default async function handler(req: VercelRequ
 
 ## Phase 3: Storefront Migration
 
-**Goal:** Move aac-astro into `apps/storefront`, extract operational scripts
+**Goal:** Move aac-astro into `apps/website`, extract operational scripts
 to `tools/`, re-plumb CI/CD.
 
 **Risk level:** Medium-High. Complex CI/CD pipeline, 320+ content pieces,
@@ -833,7 +838,7 @@ live production site. DNS cutover is the scariest moment.
 
 ### 3.1 — Copy Astro Site
 
-- [ ] Copy aac-astro source into `apps/storefront/`:
+- [ ] Copy aac-astro source into `apps/website/`:
   - `src/` (pages, components, content, layouts, utils, plugins, styles)
   - `public/` (images — this is 255MB, `[DISCUSS]` do we want this in git?)
   - `api/` (Vercel serverless functions — leads.ts, analytics-health.ts)
@@ -846,7 +851,7 @@ live production site. DNS cutover is the scariest moment.
   - `scripts/.credentials/` (these go to monorepo root or env vars)
   - `node_modules/`, `dist/`, `.astro/`
   - `docs/` (stays in archived repo for reference)
-- [ ] Update `apps/storefront/package.json`:
+- [ ] Update `apps/website/package.json`:
   - Add `@aac/api-clients` and `@aac/shared-utils` as workspace dependencies
   - Remove `googleapis` and `@google/generative-ai` (only used by extracted scripts)
 
@@ -854,7 +859,7 @@ live production site. DNS cutover is the scariest moment.
 
 - [ ] `api/leads.ts`: Replace direct Pipedrive fetch with `@aac/api-clients` PipedriveClient
 - [ ] `api/analytics-health.ts`: Replace direct GA4 fetch with `@aac/api-clients` GoogleAnalyticsClient
-- [ ] Any content import cron that stays in storefront: use `@aac/api-clients` GoogleCalendarClient
+- [ ] Any content import cron that stays in website: use `@aac/api-clients` GoogleCalendarClient
 
 ### 3.3 — Extract Scripts to tools/
 
@@ -877,10 +882,10 @@ live production site. DNS cutover is the scariest moment.
 - [ ] Adapt `.github/workflows/quality.yml` for monorepo structure:
   - Update working directory references
   - Update `npm run validate` to work within Turborepo
-  - Ensure build step uses `pnpm turbo build --filter=@aac/storefront`
+  - Ensure build step uses `pnpm turbo build --filter=@aac/website`
 - [ ] Adapt pre-commit hooks:
   - Validation scripts need updated paths
-  - `npm run validate` → `pnpm --filter @aac/storefront run validate`
+  - `npm run validate` → `pnpm --filter @aac/website run validate`
 - [ ] Adapt Lighthouse CI (`lighthouserc.cjs`):
   - Update URLs if staging domain changes
   - Verify thresholds still work
@@ -890,10 +895,10 @@ live production site. DNS cutover is the scariest moment.
 
 ### 3.5 — Vercel Deployment
 
-- [ ] Create new Vercel project for storefront within monorepo
-- [ ] Configure root directory to `apps/storefront`
+- [ ] Create new Vercel project for website within monorepo
+- [ ] Configure root directory to `apps/website`
 - [ ] Set all environment variables (mirror from current aac-astro Vercel project)
-- [ ] Configure Vercel's "Ignored Build Step" to only rebuild when storefront files change
+- [ ] Configure Vercel's "Ignored Build Step" to only rebuild when website files change
 - [ ] Deploy to staging domain and verify:
   - [ ] Homepage renders correctly
   - [ ] Blog posts render
@@ -1101,7 +1106,7 @@ refactored as thin wrappers over `@aac/api-clients`.
 
 - [ ] `aac-command-center` Vercel project (Phase 1)
 - [ ] `aac-monorepo-middleware` Vercel project (Phase 2)
-- [ ] `aac-storefront` Vercel project (Phase 3)
+- [ ] `aac-website` Vercel project (Phase 3)
 - [ ] `aac-marketing` Vercel project (Phase 4)
 - [ ] Each project: root directory, build command, env vars, domain
 

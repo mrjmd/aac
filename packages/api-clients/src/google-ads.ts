@@ -3,7 +3,7 @@
  * Requires Developer Token + MCC access.
  *
  * TODO: Extract from aac-astro/scripts/google-ads-*.js
- * during Phase 3 (storefront migration).
+ * during Phase 3 (website migration).
  */
 
 export interface GoogleAdsConfig {
