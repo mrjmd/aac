@@ -46,3 +46,4 @@ docs/indeed-candidates-*
 
 # Claude
 .claude/
+.vercel

@@ -14,7 +14,14 @@ noted inline.
 ## Table of Contents
 
 1. [Phase 0: Shared Package Extraction](#phase-0-shared-package-extraction)
-2. [Phase 1: Command Center (Greenfield)](#phase-1-command-center)
+2. [Phase 1: Command Center (Operational Cockpit)](#phase-1-command-center-operational-cockpit)
+   - [1A: Foundation](#phase-1a--foundation) — Design system + app scaffold
+   - [1B: Middleware Health](#phase-1b--card-middleware-health-first-card) — First card (Redis only)
+   - [1C: Smart To-Do](#phase-1c--card-smart-to-do-list-second-card) — Second card (Redis + CRUD)
+   - [1D: Business Pulse](#phase-1d--card-business-pulse-third-card) — Third card (QB + Pipedrive)
+   - [1E: Remaining Cards](#phase-1e--remaining-cards-build-as-needed) — New Leads, Campaigns, Dates, Analytics
+   - [1F: Enhancements](#phase-1f--enhancements-after-core-cards-work) — Config, AI detection, Attribution, Gmail
+   - [1G: Deploy & Polish](#phase-1g--deploy--polish) — Full production setup
 3. [Phase 2: Shadow Middleware Migration](#phase-2-shadow-middleware-migration)
 4. [Phase 3: Website Migration](#phase-3-website-migration)
 5. [Phase 4: Marketing Engine (Greenfield from Spec)](#phase-4-marketing-engine)
@@ -354,11 +361,15 @@ aac-astro patterns) WITHOUT touching either production system.
 
 **Goal:** Build the single place Matt opens every morning to understand the
 state of the business. Not just middleware health — full business management
-dashboard with 7 configurable card categories.
+dashboard with configurable card categories.
 
 **Risk level:** Low. Greenfield app, no production migration.
 
 **Full spec:** `docs/command-center-spec.md`
+
+**Build philosophy:** Ship incrementally. Scaffold the app, then build one
+card at a time — each card pulls in only the clients it needs. No upfront
+client blitz. A working dashboard with 3 real cards beats 7 half-built ones.
 
 ### 1.0 — Vision & Scope Definition ✅ COMPLETE (2026-03-31)
 
@@ -373,96 +384,88 @@ dashboard with 7 configurable card categories.
 - [x] Define day-one feature set: All 7 card categories present (Business Pulse, Smart To-Do, New Leads, Website/SEO/Ads, Middleware Health, Marketing Campaigns, Important Dates).
 - [x] Additional scope: Full-funnel attribution, Gmail monitoring, GSC data, approved estimate auto-flagging.
 - [x] Write `docs/command-center-spec.md` capturing all decisions.
+- [x] `[DECIDED 2026-04-01]` **Build order:** Incremental, card-by-card. Foundation → Middleware Health → Smart To-Do → Business Pulse → remaining cards as needed. API clients built just-in-time per card, not upfront.
 
-### 1.1 — Prerequisite: Complete Remaining Shared Package Clients
+### 1.1 — Client Dependencies (Just-In-Time)
 
-These API clients are already scaffolded in `@aac/api-clients` but need
-implementation before the Command Center can use them. Source code exists
-in the legacy codebases.
+API clients are built only when a card needs them. No upfront prerequisite phase.
 
-#### 1.1 — Dependencies
+| Card | Clients needed | Status |
+|------|---------------|--------|
+| Middleware Health | None (Redis only) | **Ready now** |
+| Smart To-Do | None for MVP (Redis only), Gemini for AI detection | **Ready now** |
+| Business Pulse | QuickBooksClient, PipedriveClient | **Ready now** (both done) |
+| Business Pulse (jobs) | Google Calendar Client, Google OAuth | Build when adding job counts |
+| New Leads | PipedriveClient | Ready (done) |
+| Marketing Campaigns | None (Redis only) | Ready |
+| Important Dates | PipedriveClient (done), Google Calendar Client | Build Calendar when needed |
+| Website/SEO/Ads | GA4, GSC, Google Ads clients, Google OAuth | Build when starting this card |
+| Full-Funnel Attribution | GA4 Client, QB + Pipedrive (done) | Build GA4 when starting |
+| Gmail Monitoring | Gmail Client, Google OAuth | Build when starting |
 
-The Command Center depends on shared package clients that are already defined
-as tasks in Phase 0. These must be completed before the cards that use them:
+**Remaining Phase 0 client tasks (deferred, not blocking):**
+0.11 Google Calendar, 0.12 Google Ads, 0.13 GA4, 0.14 GSC, 0.15 Buffer,
+0.16b Gmail (new), 0.17 Google OAuth. Each gets built when its card is ready.
 
-| Card | Depends on Phase 0 task | Status |
-|------|------------------------|--------|
-| Business Pulse | 0.6 PipedriveClient, 0.8 QuickBooksClient | ✅ Done |
-| Business Pulse (jobs) | 0.11 Google Calendar Client, 0.17 Google OAuth | Not started |
-| Smart To-Do | None (Redis only for MVP) | Ready |
-| New Leads | 0.6 PipedriveClient | ✅ Done |
-| Website/SEO/Ads | 0.13 GA4 Client, 0.14 GSC Client, 0.12 Google Ads Client, 0.17 Google OAuth | Not started |
-| Middleware Health | None (reads Redis directly) | Ready |
-| Marketing Campaigns | None (reads Redis directly) | Ready |
-| Important Dates | 0.6 PipedriveClient, 0.11 Google Calendar Client | Partially ready |
-| Full-Funnel Attribution | 0.13 GA4 Client, 0.6 + 0.8 (done) | Partially ready |
-| Gmail Monitoring | 0.16b Gmail Client (NEW), 0.17 Google OAuth | Not started |
+---
 
-**Phase 0 tasks still needed before full Command Center:**
-- 0.11 — Google Calendar Client
-- 0.12 — Google Ads Client
-- 0.13 — Google Analytics Client
-- 0.14 — Google Search Console Client
-- 0.15 — Buffer Client
-- 0.16b — Gmail Client (new — add to Phase 0)
-- 0.17 — Google OAuth Shared Auth
+### Phase 1A — Foundation
 
-**Cards that can ship without those:** Business Pulse (QB + Pipedrive parts),
-Smart To-Do, New Leads, Middleware Health, Marketing Campaigns, Important
-Dates (Pipedrive + manual). This is a solid MVP.
+#### 1.2 — Shared Design System ✅ COMPLETE (2026-04-01)
 
-### 1.2 — Prerequisite: Shared Design System
+- [x] Create `packages/ui/` package
+- [x] Shared Tailwind preset (colors, typography, spacing matching AAC brand) — `tokens.css` with @theme
+- [x] Export preset for consumption by apps — `@aac/ui/tokens.css`
+- [x] Status indicator component (green/yellow/red dot + label)
+- [x] Dashboard card wrapper component (title, status dot, content area, color-coded by status)
+- [x] `cn()` utility (clsx + tailwind-merge)
+- [x] Verify build passes
 
-- [ ] Create `packages/ui/` package
-- [ ] Shared Tailwind preset (colors, typography, spacing, border-radius matching AAC brand)
-- [ ] Export preset for consumption by both `apps/website` (Astro) and `apps/command-center` (Next.js)
-- [ ] Base component primitives using shadcn/ui (Button, Card, Badge, Input, etc.)
-- [ ] Status indicator component (green/yellow/red dot + label)
-- [ ] Dashboard card wrapper component (title, status dot, summary content, click-to-expand)
-- [ ] Verify build passes
+#### 1.3 — App Scaffold ✅ COMPLETE (2026-04-01)
 
-### 1.3 — App Scaffold
+- [x] Initialize `apps/command-center` as Next.js 15 App Router project
+- [x] Add dependencies: next@15, react@19, tailwindcss@4, lucide-react, @aac/ui, @aac/shared-utils, @aac/api-clients, @upstash/redis
+- [x] Set up tsconfig extending `@aac/tsconfig/nextjs.json`
+- [x] Configure Tailwind v4 with shared preset from `@aac/ui/tokens.css`
+- [x] Create root layout with route groups: `(auth)` and `(dashboard)`
+- [x] Create sidebar navigation with all card sections + sign out
+- [x] Create simple password auth (HMAC-signed cookie, 30-day session)
+- [x] Create login page and logout API route
+- [x] Create `/api/health` route (own heartbeat)
+- [x] Create placeholder dashboard page with card grid
+- [x] Self-hosted Inter + Space Grotesk fonts (copied from aac-astro)
+- [x] Verify: `pnpm turbo build` passes, dev server starts and renders
 
-- [ ] Initialize `apps/command-center` as Next.js 15 App Router project
-- [ ] Add dependencies: `next@15`, `react`, `react-dom`, `@aac/api-clients`, `@aac/shared-utils`, `@aac/ui`, `@upstash/redis`, `tailwindcss`, `@tailwindcss/typography`
-- [ ] Set up tsconfig extending `@aac/tsconfig/nextjs.json`
-- [ ] Configure Tailwind with shared preset from `@aac/ui`
-- [ ] Create root layout with sidebar navigation (7 sections matching cards)
-- [ ] Create simple password auth (hashed env var, cookie session)
-- [ ] Create login page
-- [ ] Create `/api/health` route (own heartbeat)
-- [ ] Create placeholder dashboard page with empty card grid
-- [ ] Verify: `pnpm turbo build` includes command-center
-- [ ] Verify: dev server starts and renders
+---
 
-### 1.4 — Card: Business Pulse
+### Phase 1B — Card: Middleware Health (first card) ✅ COMPLETE (2026-04-01)
 
-**Data sources:** QuickBooks (invoices, estimates, cash flow) + Google Calendar (scheduled jobs) + Pipedrive (deal pipeline)
+**Why first:** Zero new clients needed. All data already flows into Redis
+from the middleware. Fastest path to a real, working card on screen.
 
-- [ ] Create `app/api/financials/route.ts` — server-side data aggregation:
-  - [ ] Query QB for outstanding invoices (unpaid, with aging)
-  - [ ] Query QB for recent payments (last 30 days cash flow)
-  - [ ] Query Pipedrive for deals in "Estimate Sent" stage (stale estimate detection)
-  - [ ] Query Pipedrive for deals in "Estimate Accepted/Approved" stage — **high priority flag**
-  - [ ] Query Google Calendar for job count (next 7 days + next 30 days)
-- [ ] Create Business Pulse card component:
-  - [ ] Cash flow trend (positive/negative indicator)
-  - [ ] Outstanding invoices count + total $
-  - [ ] Stale estimates count (> 14 days in "Estimate Sent")
-  - [ ] **Approved estimates needing scheduling** (count + total $, highlighted)
-  - [ ] Jobs scheduled next 7 / next 30 days
-  - [ ] Green/yellow/red status based on thresholds
-- [ ] Create `/financials` detail page:
-  - [ ] Invoice list with aging (0-30, 30-60, 60-90, 90+ days)
-  - [ ] Estimate pipeline funnel
-  - [ ] Cash flow chart (date range selectable)
-  - [ ] Approved estimates list with "Schedule" action links
-- [ ] Auto-create to-do when estimate status changes to "Accepted":
-  - [ ] Add Redis key schema for approved estimate tracking
-  - [ ] Middleware or polling: detect QB estimate status changes
-  - [ ] Create to-do item: "Schedule job for [customer] — Estimate #X ($Y)"
+**Data sources:** Middleware `/api/health` endpoint (proxied server-side)
 
-### 1.5 — Card: Smart To-Do List
+- [x] Create `app/api/health/middleware/route.ts` — proxies middleware health endpoint
+- [x] Create shared status logic (`lib/middleware-status.ts`) — green/yellow/red based on:
+  - [x] Recency of last processed webhook (>30m = yellow, >1h = red)
+  - [x] Error count in last hour only (not total backlog)
+- [x] Create Middleware Health card component:
+  - [x] Color-coded status dot (green/yellow/red)
+  - [x] Total events today + "last event Xm ago"
+  - [x] Auto-polls every 30s
+- [x] Create `/health` detail page:
+  - [x] Per-source webhook counts (pipedrive, quo, google-ads) with last-processed timestamps
+  - [x] Sync mapping counts (PD↔Quo, PD↔QB, Phone→PD)
+  - [x] Error log (last 50) with source, message, details
+  - [x] Consistent status indicator using shared logic
+- [ ] Deploy to Vercel and verify with live Redis data
+
+---
+
+### Phase 1C — Card: Smart To-Do List (second card)
+
+**Why second:** Immediately useful for daily operations. Redis-only for MVP,
+AI commitment detection layers in later.
 
 **Data sources:** Redis (to-do items), future: Gemini commitment detection from Quo webhook
 
@@ -489,9 +492,48 @@ Dates (Pipedrive + manual). This is a solid MVP.
   - [ ] Monthly: Cost inventory and optimization check
   - [ ] Monthly: Review solicitation follow-up status
   - [ ] As-needed: Respond to new Google reviews
-- [ ] (Phase 1.9) Wire up auto-generated to-dos from Gemini commitment detection
 
-### 1.6 — Card: New Leads
+---
+
+### Phase 1D — Card: Business Pulse (third card)
+
+**Why third:** The most important card long-term, but needs the most data
+sources. QB + Pipedrive clients are already done, so the core works now.
+Google Calendar (scheduled jobs) can be added later.
+
+**Data sources:** QuickBooks (invoices, estimates, cash flow) + Pipedrive (deal pipeline). Google Calendar (scheduled jobs) added when 0.11 is built.
+
+- [ ] Create `app/api/financials/route.ts` — server-side data aggregation:
+  - [ ] Query QB for outstanding invoices (unpaid, with aging)
+  - [ ] Query QB for recent payments (last 30 days cash flow)
+  - [ ] Query Pipedrive for deals in "Estimate Sent" stage (stale estimate detection)
+  - [ ] Query Pipedrive for deals in "Estimate Accepted/Approved" stage — **high priority flag**
+  - [ ] ~~Query Google Calendar for job count~~ → deferred until 0.11 Google Calendar Client
+- [ ] Create Business Pulse card component:
+  - [ ] Cash flow trend (positive/negative indicator)
+  - [ ] Outstanding invoices count + total $
+  - [ ] Stale estimates count (> 14 days in "Estimate Sent")
+  - [ ] **Approved estimates needing scheduling** (count + total $, highlighted)
+  - [ ] Jobs scheduled next 7 / next 30 days — placeholder until Calendar client ready
+  - [ ] Green/yellow/red status based on thresholds
+- [ ] Create `/financials` detail page:
+  - [ ] Invoice list with aging (0-30, 30-60, 60-90, 90+ days)
+  - [ ] Estimate pipeline funnel
+  - [ ] Cash flow chart (date range selectable)
+  - [ ] Approved estimates list with "Schedule" action links
+- [ ] Auto-create to-do when estimate status changes to "Accepted":
+  - [ ] Add Redis key schema for approved estimate tracking
+  - [ ] Middleware or polling: detect QB estimate status changes
+  - [ ] Create to-do item: "Schedule job for [customer] — Estimate #X ($Y)"
+
+---
+
+### Phase 1E — Remaining Cards (build as needed)
+
+Each card below is independent. Build in any order based on what feels most
+useful at the time. API clients get built just-in-time per card.
+
+#### 1.5 — Card: New Leads
 
 **Data sources:** Pipedrive (recent persons/deals), middleware health (webhook counts)
 
@@ -507,11 +549,41 @@ Dates (Pipedrive + manual). This is a solid MVP.
   - [ ] Link to Pipedrive person (external)
   - [ ] Date range filter
 
-### 1.7 — Card: Website / SEO / Ads
+#### 1.6 — Card: Marketing Campaigns
+
+**Data sources:** Redis (campaign state + stats written by marketing engine or aac-slim)
+
+- [ ] Create Marketing Campaigns card component:
+  - [ ] Green/yellow/red status
+  - [ ] Active campaign count + overall response rate
+- [ ] Create `/campaigns` detail page:
+  - [ ] Campaign list with stats per campaign
+  - [ ] Drill into individual campaign (sent, delivered, responses, opt-outs)
+- [ ] Note: This card shows data from Redis regardless of whether campaigns
+  are managed by aac-slim or the future marketing engine
+
+#### 1.7 — Card: Important Dates
+
+**Data sources:** Pipedrive (business admin pipeline), Google Calendar, Redis (manual entries)
+
+- [ ] Create `app/api/dates/route.ts`:
+  - [ ] Query Pipedrive for business admin/renewal deals
+  - [ ] Query Google Calendar for partnership events (when 0.11 ready)
+  - [ ] Query Redis for manually added dates
+- [ ] Create Important Dates card component:
+  - [ ] Next 3 upcoming items with days-until-due
+  - [ ] Red highlight for < 7 days
+- [ ] Create `/calendar` detail page:
+  - [ ] Calendar view of all upcoming dates
+  - [ ] Add new date form (title, date, category, recurrence)
+  - [ ] Categories: business renewal, partnership, seasonal, custom
+
+#### 1.8 — Card: Website / SEO / Ads
 
 **Data sources:** Google Analytics, Google Search Console, Google Ads
-**Depends on:** 1.1b (GA4 client), 1.1c (GSC client), 1.1e (Ads client)
+**Requires first:** 0.12 Google Ads Client, 0.13 GA4 Client, 0.14 GSC Client, 0.17 Google OAuth
 
+- [ ] Build required Phase 0 clients (0.12, 0.13, 0.14, 0.17)
 - [ ] Create `app/api/analytics/route.ts`:
   - [ ] GA4: sessions, users, bounce rate (7d vs prior 7d trend)
   - [ ] GA4: conversion events (phone_call_click, text_message_click)
@@ -529,94 +601,40 @@ Dates (Pipedrive + manual). This is a solid MVP.
   - [ ] Google Ads: campaign performance, keyword breakdown, CPA trend
   - [ ] Comparison periods (this week vs last, this month vs last)
 
-### 1.7b — Lighthouse Cron Audit
+#### 1.8b — Lighthouse Cron Audit
 
 **Source:** aac-astro `scripts/lighthouse-audit.js` (367 lines) — runs 3
 Lighthouse audits per page, takes median scores, tracks CWV + failing audits.
-Already has results format in `.lighthouse-audit-results.json`.
 
 - [ ] Move `lighthouse-audit.js` to `tools/lighthouse/audit.ts`
 - [ ] Refactor to write results to Redis instead of local JSON file:
   - [ ] Add Redis key: `keys.lighthouseLatest` — most recent audit results
   - [ ] Add Redis key: `keys.lighthouseHistory(date)` — historical audit keyed by date
-  - [ ] Add Redis sorted set: `keys.lighthouseRuns` — sorted set of run timestamps for querying history
-  - [ ] On each run: write to `latest`, also append to history (with date key), add to sorted set
-  - [ ] History retention: keep all runs (no TTL) — data is small and valuable for charting trends
-  - [ ] Previous run comparison: read the second-most-recent entry from the sorted set for diff
-- [ ] Add configurable page list (start with fixed set, expand later)
-- [ ] Add regression detection:
-  - [ ] Compare current scores vs previous run
-  - [ ] Flag if any category drops > 5 points
-  - [ ] Flag if any CWV metric regresses significantly (LCP > 500ms increase, CLS > 0.05 increase)
-- [ ] Create cron job (GitHub Actions or Vercel Cron):
-  - [ ] Configurable schedule (start daily, eventually weekly)
-  - [ ] Runs `tools/lighthouse/audit.ts` against production URL
-  - [ ] Stores results in Redis
-  - [ ] Sends alert (SMS via Quo or email) on regressions
+  - [ ] Add Redis sorted set: `keys.lighthouseRuns` — sorted set of run timestamps
+  - [ ] History retention: keep all runs (no TTL)
+  - [ ] Previous run comparison for diff
+- [ ] Add regression detection (flag drops > 5 points, CWV regressions)
+- [ ] Create cron job (GitHub Actions — Lighthouse needs Chrome)
 - [ ] Command Center integration:
   - [ ] Website/SEO/Ads card reads `lighthouseLatest` from Redis
-  - [ ] Shows scores: Performance, A11y, Best Practices, SEO
-  - [ ] Green/yellow/red based on score thresholds (green > 90, yellow > 70, red < 70)
-  - [ ] Shows regression arrows (up/down vs previous run)
-  - [ ] Detail page shows per-page breakdown, failing audits, CWV metrics
-  - [ ] Historical trend charts: score over time (per category), CWV metrics over time
-  - [ ] Date range selector for historical view
-- [ ] Note: Lighthouse requires Chrome — can't run in Vercel serverless. Must run in GitHub Actions or a machine with a browser.
+  - [ ] Shows scores, regression arrows, detail page with history
 
-### 1.8 — Card: Middleware Health
+---
 
-**Data sources:** Redis (heartbeat, webhook counts, errors from middleware `/api/health`)
+### Phase 1F — Enhancements (after core cards work)
 
-- [ ] Create Middleware Health card component:
-  - [ ] Green/yellow/red based on heartbeat age + error count
-  - [ ] "X events processed today" summary
-- [ ] Create `/health` detail page:
-  - [ ] Per-source webhook counts (pipedrive, quo, google-ads)
-  - [ ] Last processed timestamps
-  - [ ] Error log (last 50)
-  - [ ] Sync mapping counts (PD↔Quo, PD↔QB, Phone→PD)
-
-### 1.9 — Card: Marketing Campaigns
-
-**Data sources:** Redis (campaign state + stats written by marketing engine or aac-slim)
-
-- [ ] Create Marketing Campaigns card component:
-  - [ ] Green/yellow/red status
-  - [ ] Active campaign count + overall response rate
-- [ ] Create `/campaigns` detail page:
-  - [ ] Campaign list with stats per campaign
-  - [ ] Drill into individual campaign (sent, delivered, responses, opt-outs)
-- [ ] Note: This card shows data from Redis regardless of whether campaigns
-  are managed by aac-slim or the future marketing engine
-
-### 1.10 — Card: Important Dates
-
-**Data sources:** Pipedrive (business admin pipeline), Google Calendar, Redis (manual entries)
-
-- [ ] Create `app/api/dates/route.ts`:
-  - [ ] Query Pipedrive for business admin/renewal deals
-  - [ ] Query Google Calendar for partnership events
-  - [ ] Query Redis for manually added dates
-- [ ] Create Important Dates card component:
-  - [ ] Next 3 upcoming items with days-until-due
-  - [ ] Red highlight for < 7 days
-- [ ] Create `/calendar` detail page:
-  - [ ] Calendar view of all upcoming dates
-  - [ ] Add new date form (title, date, category, recurrence)
-  - [ ] Categories: business renewal, partnership, seasonal, custom
-
-### 1.11 — Card Configuration System
+#### 1.9 — Card Configuration System
 
 - [ ] Create settings page (`/settings`):
   - [ ] Toggle cards visible/hidden
   - [ ] Reorder cards (move up/down)
 - [ ] Persist card config in Redis (per-user key, future-proof for multi-user)
 - [ ] Dashboard reads config and renders cards accordingly
-- [ ] Default config shows all 7 cards in logical order
+- [ ] Default config shows all cards in logical order
 
-### 1.12 — AI Commitment Detection (Smart To-Do Auto-Generation)
+#### 1.10 — AI Commitment Detection (Smart To-Do Auto-Generation)
 
-**Depends on:** Middleware deployed (Phase 2), To-Do system (1.5)
+**Depends on:** Middleware deployed, To-Do system (1C)
 
 This expands the existing Quo webhook Gemini prompt to detect commitments.
 
@@ -633,40 +651,42 @@ This expands the existing Quo webhook Gemini prompt to detect commitments.
 - [ ] Test with sample transcripts and messages
 - [ ] Verify to-dos appear in Command Center dashboard
 
-### 1.13 — Full-Funnel Attribution Page
+#### 1.11 — Full-Funnel Attribution Page
 
-**Depends on:** 1.1b (GA4 client), QB + Pipedrive clients (done)
-**References:** aac-slim `src/lib/attribution.ts` (295 lines) for Pipedrive referral chain traversal
+**Depends on:** GA4 client (built in 1.8), QB + Pipedrive clients (done)
+**References:** aac-slim `src/lib/attribution.ts` (295 lines)
 
 - [ ] Rebuild attribution engine logic:
   - [ ] Extract and adapt `runAttribution()` from aac-slim attribution.ts
   - [ ] Add `getPaidInvoices`, `getInvoice` methods back to QuickBooksClient
   - [ ] Add `getPersonReferredBy`, `getPipedriveUser`, `getPersonOwnerId` methods back to PipedriveClient
-  - [ ] These were stripped during middleware extraction — add them back as they're needed by Command Center
 - [ ] Create `app/api/attribution/route.ts`:
   - [ ] Accept date range parameter
-  - [ ] Fetch paid QB invoices → trace each to Pipedrive person → walk referral chain → find salesperson
-  - [ ] Correlate with GA4 session data (match Pipedrive person phone → Quo call timestamp → GA4 session within time window)
-  - [ ] Include UTM source attribution (Facebook, BBB, GBP, organic)
+  - [ ] Fetch paid QB invoices → trace to Pipedrive person → walk referral chain
+  - [ ] Correlate with GA4 session data
+  - [ ] Include UTM source attribution
 - [ ] Create `/attribution` detail page:
-  - [ ] Per-job attribution view (full funnel: source → visit → call → lead → estimate → job → payment)
-  - [ ] Aggregated channel ROI (which sources drive completed paid jobs, not just leads)
-  - [ ] Date range filter
-  - [ ] Branch filter (MA vs CT)
+  - [ ] Per-job attribution view (full funnel)
+  - [ ] Aggregated channel ROI
+  - [ ] Date range + branch filter (MA vs CT)
 
-### 1.14 — Gmail Monitoring
+#### 1.12 — Gmail Monitoring
 
-**Depends on:** 1.1f (Gmail client)
+**Depends on:** Gmail Client (0.16b), Google OAuth (0.17)
 
+- [ ] Build 0.16b Gmail Client + 0.17 Google OAuth (if not yet done)
 - [ ] Create `app/api/email/route.ts`:
   - [ ] Fetch recent important/unread emails
-  - [ ] Detect lead-like emails (service inquiries, estimate requests)
+  - [ ] Detect lead-like emails
   - [ ] Correlate email senders with existing Pipedrive contacts
 - [ ] Surface important emails as to-do items (`source: 'email'`)
-- [ ] Add email indicator to Smart To-Do card (or as its own mini-indicator)
-- [ ] Create email detail view (list of important emails, click to open in Gmail)
+- [ ] Create email detail view
 
-### 1.15 — Deployment
+---
+
+### Phase 1G — Deploy & Polish
+
+#### 1.13 — Deployment
 
 - [ ] Create Vercel project `aac-command-center`
 - [ ] Configure root directory to `apps/command-center`
@@ -674,13 +694,16 @@ This expands the existing Quo webhook Gemini prompt to detect commitments.
   - [ ] Redis URL/token (same Upstash as middleware)
   - [ ] Pipedrive API key
   - [ ] QuickBooks OAuth credentials
-  - [ ] Google OAuth credentials (for Calendar, Analytics, Ads, GSC, Gmail)
+  - [ ] Google OAuth credentials (as needed per card)
   - [ ] Simple auth password (hashed)
   - [ ] Middleware health endpoint URL
 - [ ] Deploy and verify
 - [ ] Custom domain (e.g., `dashboard.attackacrack.com`)
 
-### 1.16 — Polish & Responsiveness
+Note: First deploy happens as part of 1B (Middleware Health card). This
+section covers full production setup with all credentials.
+
+#### 1.14 — Polish & Responsiveness
 
 - [ ] Loading states for each card (skeleton loaders)
 - [ ] Error states (card shows error message, doesn't break dashboard)

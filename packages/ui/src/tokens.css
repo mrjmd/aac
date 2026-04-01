@@ -1,0 +1,19 @@
+/*
+ * AAC Shared Design Tokens
+ *
+ * Extracted from aac-astro. These are the canonical brand values.
+ * Import this file in any app's CSS after @import "tailwindcss".
+ *
+ * Usage: @import "@aac/ui/tokens.css";
+ */
+
+@theme {
+  /* Brand colors */
+  --color-aac-blue: #1e6fb8;
+  --color-aac-yellow: #f0c34b;
+  --color-aac-dark: #1a1a1a;
+
+  /* Typography */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+}
