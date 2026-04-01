@@ -10,10 +10,13 @@
  * Note: Creating an "Unknown Lead" in Pipedrive will trigger the
  * Pipedrive webhook, which syncs back to Quo. The Pipedrive webhook
  * uses loop prevention (system user ID) to avoid infinite loops.
+ *
+ * This handler uses Edge Runtime to access the Web API Request object,
+ * which provides .text() for reading the raw body needed for HMAC
+ * signature verification. The Node.js serverless runtime's bodyParser
+ * config was not reliably disabling parsing in this monorepo setup.
  */
 
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import crypto from 'crypto';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { createLogger } from '@aac/shared-utils/logger';
 import { GeminiClient } from '@aac/api-clients/gemini';
@@ -27,9 +30,8 @@ import {
 import { getEnv } from '../../lib/env.js';
 import { getPipedrive, getGemini } from '../../lib/clients.js';
 
-// Disable body parsing so we can read raw body for HMAC signature verification
 export const config = {
-  api: { bodyParser: false },
+  runtime: 'edge',
 };
 
 const log = createLogger('quo-webhook');
@@ -95,17 +97,17 @@ interface QuoWebhookPayload {
 }
 
 /**
- * Verify webhook signature from Quo/OpenPhone
+ * Verify webhook signature from Quo/OpenPhone using Web Crypto API
  *
  * Header format: hmac;1;<timestamp>;<base64-signature>
  * Signed data: <timestamp>.<json-payload>
  * Secret: base64-encoded, must decode to binary for HMAC
  */
-function verifySignature(
+async function verifySignature(
   payload: string,
   signatureHeader: string | undefined,
   secret: string
-): boolean {
+): Promise<boolean> {
   if (!signatureHeader) return false;
 
   // Parse header: hmac;1;timestamp;signature
@@ -126,22 +128,37 @@ function verifySignature(
   const signedData = `${timestamp}.${payload}`;
 
   // Decode secret from base64 to binary
-  const signingKey = Buffer.from(secret, 'base64');
+  const signingKeyBytes = Uint8Array.from(atob(secret), (c) => c.charCodeAt(0));
 
-  // Compute HMAC-SHA256 and encode as base64
-  const computedSignature = crypto
-    .createHmac('sha256', signingKey)
-    .update(signedData)
-    .digest('base64');
+  // Import key for Web Crypto API
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    signingKeyBytes,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
 
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(providedSignature),
-      Buffer.from(computedSignature)
-    );
-  } catch {
-    return false;
+  // Compute HMAC-SHA256
+  const signatureBytes = await crypto.subtle.sign(
+    'HMAC',
+    cryptoKey,
+    new TextEncoder().encode(signedData)
+  );
+
+  // Encode as base64
+  const computedSignature = btoa(
+    String.fromCharCode(...new Uint8Array(signatureBytes))
+  );
+
+  // Constant-time comparison
+  if (providedSignature.length !== computedSignature.length) return false;
+
+  let mismatch = 0;
+  for (let i = 0; i < providedSignature.length; i++) {
+    mismatch |= providedSignature.charCodeAt(i) ^ computedSignature.charCodeAt(i);
   }
+  return mismatch === 0;
 }
 
 // Minimum message length for AI processing (skip trivial messages)
@@ -227,44 +244,21 @@ function extractRemotePhone(
 }
 
 /**
- * Read raw body from request (body parsing is disabled for HMAC verification)
- *
- * With bodyParser: false, Vercel may provide the body as a Buffer on req.body,
- * or leave it as a readable stream. We handle both cases.
+ * Helper to create JSON responses (Edge Runtime uses Web API Response)
  */
-async function readRawBody(req: VercelRequest): Promise<string> {
-  // When bodyParser is false, Vercel typically provides raw body as Buffer
-  if (Buffer.isBuffer(req.body)) {
-    return req.body.toString('utf-8');
-  }
-
-  // If body is a string already
-  if (typeof req.body === 'string') {
-    return req.body;
-  }
-
-  // Fallback: read from stream (may work on some runtimes)
-  return new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-    req.on('error', reject);
-    // If stream already ended with no data, req.body might be parsed JSON
-    // Give it a short timeout then fall back to re-serialization
-    setTimeout(() => {
-      if (chunks.length === 0 && req.body) {
-        resolve(JSON.stringify(req.body));
-      }
-    }, 50);
+function jsonResponse(data: Record<string, unknown>, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
   });
 }
 
 /**
- * Main webhook handler
+ * Main webhook handler (Edge Runtime — uses Web API Request for raw body access)
  */
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+export default async function handler(request: Request) {
+  if (request.method !== 'POST') {
+    return jsonResponse({ error: 'Method not allowed' }, 405);
   }
 
   const env = getEnv();
@@ -272,54 +266,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // ============================================
   // SIGNATURE VERIFICATION
   // ============================================
-  // Read raw body for signature verification (body parsing is disabled)
-  const rawBody = await readRawBody(req);
-  const signature =
-    (req.headers['openphone-signature'] as string | undefined) || undefined;
+  // Read raw body using Web API — preserves exact bytes for HMAC
+  const rawBody = await request.text();
+  const signature = request.headers.get('openphone-signature') || undefined;
 
-  // DEBUG: Log body reading details to diagnose signature verification
-  log.info('Signature verification debug', {
-    bodyType: typeof req.body,
-    bodyIsBuffer: Buffer.isBuffer(req.body),
-    bodyIsNull: req.body === null,
-    rawBodyLength: rawBody.length,
-    rawBodyFirst80: rawBody.substring(0, 80),
-    rawBodyLast40: rawBody.substring(rawBody.length - 40),
-    hasSignature: !!signature,
-    signaturePrefix: signature?.substring(0, 40),
-    secretLength: env.quo.webhookSecret.length,
-    secretFirst4: env.quo.webhookSecret.substring(0, 4),
-  });
-
-  if (!verifySignature(rawBody, signature, env.quo.webhookSecret)) {
+  if (!(await verifySignature(rawBody, signature, env.quo.webhookSecret))) {
     // Fallback: try re-serialized body in case edge middleware consumed/re-encoded the raw body
     let fallbackPassed = false;
     try {
       const reserialized = JSON.stringify(JSON.parse(rawBody));
       if (reserialized !== rawBody) {
-        fallbackPassed = verifySignature(reserialized, signature, env.quo.webhookSecret);
+        fallbackPassed = await verifySignature(reserialized, signature, env.quo.webhookSecret);
       }
     } catch {
       // rawBody wasn't valid JSON, fallback not applicable
     }
 
     if (!fallbackPassed) {
-      // TEMPORARY: Return debug info to diagnose signature failure
-      return res.status(401).json({
-        error: 'Invalid signature',
-        debug: {
-          bodyType: typeof req.body,
-          bodyIsBuffer: Buffer.isBuffer(req.body),
-          bodyIsNull: req.body === null,
-          bodyIsUndefined: req.body === undefined,
-          rawBodyLength: rawBody.length,
-          rawBodyFirst80: rawBody.substring(0, 80),
-          hasSignature: !!signature,
-          signaturePrefix: signature?.substring(0, 40),
-          secretLength: env.quo.webhookSecret.length,
-          secretFirst4: env.quo.webhookSecret.substring(0, 4),
-        },
+      log.warn('Invalid webhook signature', {
+        bodyLength: rawBody.length,
+        hasSignature: !!signature,
+        signaturePrefix: signature?.substring(0, 30),
       });
+      return jsonResponse({ error: 'Invalid signature' }, 401);
     }
   }
 
@@ -328,7 +297,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     payload = JSON.parse(rawBody);
   } catch {
     log.warn('Invalid JSON payload');
-    return res.status(400).json({ error: 'Invalid JSON' });
+    return jsonResponse({ error: 'Invalid JSON' }, 400);
   }
 
   // Handle both wrapped and unwrapped payload formats
@@ -348,7 +317,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     log.warn('Invalid payload structure', {
       keys: Object.keys(rawPayload || {}),
     });
-    return res.status(400).json({ error: 'Invalid payload' });
+    return jsonResponse({ error: 'Invalid payload' }, 400);
   }
 
   // Validate event has required fields
@@ -358,7 +327,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       hasType: !!event?.type,
       hasData: !!event?.data,
     });
-    return res.status(400).json({ error: 'Invalid payload' });
+    return jsonResponse({ error: 'Invalid payload' }, 400);
   }
 
   const eventData = event.data.object;
@@ -380,7 +349,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   ];
   if (!allowedEvents.includes(event.type)) {
     log.debug('Ignoring event type', { type: event.type });
-    return res.status(200).json({ status: 'ignored', reason: 'event_type' });
+    return jsonResponse({ status: 'ignored', reason: 'event_type' });
   }
 
   try {
@@ -390,7 +359,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const isNew = await markEventProcessed('quo', event.id);
     if (!isNew) {
       log.info('Duplicate event ignored', { eventId: event.id });
-      return res.status(200).json({ status: 'ignored', reason: 'duplicate' });
+      return jsonResponse({ status: 'ignored', reason: 'duplicate' });
     }
 
     // ============================================
@@ -399,13 +368,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const rawPhone = extractRemotePhone(eventData);
     if (!rawPhone) {
       log.warn('Could not extract remote phone', { eventId: event.id });
-      return res.status(200).json({ status: 'skipped', reason: 'no_phone' });
+      return jsonResponse({ status: 'skipped', reason: 'no_phone' });
     }
 
     const e164Phone = normalizePhone(rawPhone);
     if (!e164Phone) {
       log.warn('Invalid phone number', { rawPhone });
-      return res.status(200).json({ status: 'skipped', reason: 'invalid_phone' });
+      return jsonResponse({ status: 'skipped', reason: 'invalid_phone' });
     }
 
     // ============================================
@@ -576,7 +545,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Track successful processing for health dashboard
     await trackWebhookProcessed('quo');
 
-    return res.status(200).json({
+    return jsonResponse({
       status: 'processed',
       pipedrivePersonId,
       eventType: event.type,
@@ -588,7 +557,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await logHealthError('quo', (error as Error).message, { eventId: event.id });
 
     // Return 200 to acknowledge receipt
-    return res.status(200).json({
+    return jsonResponse({
       status: 'error',
       message: 'Processing failed, logged for investigation',
     });
