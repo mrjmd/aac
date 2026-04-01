@@ -131,7 +131,8 @@ link to Pipedrive.
 | Top landing pages | Google Analytics 4 |
 | Ad spend / conversions / CPA | Google Ads |
 | Search Console impressions / clicks / position | Google Search Console |
-| Lighthouse scores | Stored from CI runs |
+| Lighthouse scores | Redis (from cron audit — `tools/lighthouse/`) |
+| Lighthouse regressions | Diff of current vs previous audit run |
 
 **Status logic:**
 - Green: Traffic up or stable, ad CPA within target, no Lighthouse regressions

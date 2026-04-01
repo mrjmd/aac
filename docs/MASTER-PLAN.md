@@ -529,6 +529,35 @@ Dates (Pipedrive + manual). This is a solid MVP.
   - [ ] Google Ads: campaign performance, keyword breakdown, CPA trend
   - [ ] Comparison periods (this week vs last, this month vs last)
 
+### 1.7b — Lighthouse Cron Audit
+
+**Source:** aac-astro `scripts/lighthouse-audit.js` (367 lines) — runs 3
+Lighthouse audits per page, takes median scores, tracks CWV + failing audits.
+Already has results format in `.lighthouse-audit-results.json`.
+
+- [ ] Move `lighthouse-audit.js` to `tools/lighthouse/audit.ts`
+- [ ] Refactor to write results to Redis instead of local JSON file:
+  - [ ] Add Redis key: `keys.lighthouseLatest` — most recent audit results
+  - [ ] Add Redis key: `keys.lighthousePrevious` — prior audit (for diff/regression detection)
+  - [ ] On each run: copy `latest` to `previous`, write new results to `latest`
+- [ ] Add configurable page list (start with fixed set, expand later)
+- [ ] Add regression detection:
+  - [ ] Compare current scores vs previous run
+  - [ ] Flag if any category drops > 5 points
+  - [ ] Flag if any CWV metric regresses significantly (LCP > 500ms increase, CLS > 0.05 increase)
+- [ ] Create cron job (GitHub Actions or Vercel Cron):
+  - [ ] Configurable schedule (start daily, eventually weekly)
+  - [ ] Runs `tools/lighthouse/audit.ts` against production URL
+  - [ ] Stores results in Redis
+  - [ ] Sends alert (SMS via Quo or email) on regressions
+- [ ] Command Center integration:
+  - [ ] Website/SEO/Ads card reads `lighthouseLatest` from Redis
+  - [ ] Shows scores: Performance, A11y, Best Practices, SEO
+  - [ ] Green/yellow/red based on score thresholds (green > 90, yellow > 70, red < 70)
+  - [ ] Shows regression arrows (up/down vs previous run)
+  - [ ] Detail page shows per-page breakdown, failing audits, CWV metrics
+- [ ] Note: Lighthouse requires Chrome — can't run in Vercel serverless. Must run in GitHub Actions or a machine with a browser.
+
 ### 1.8 — Card: Middleware Health
 
 **Data sources:** Redis (heartbeat, webhook counts, errors from middleware `/api/health`)
