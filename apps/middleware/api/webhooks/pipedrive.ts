@@ -416,6 +416,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ============================================
     // ENRICH QUO CONTACT: QB Link + Address
     // ============================================
+    log.info('Enrichment check', {
+      quoContactId,
+      qbCustomerId,
+      hasAddress: !!formattedAddress,
+      willEnrich: !!(quoContactId && (qbCustomerId || formattedAddress)),
+    });
+
     if (quoContactId && (qbCustomerId || formattedAddress)) {
       try {
         const customFields: Array<{ key: string; value: string }> = [];
@@ -444,6 +451,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         log.error('Quo custom field enrichment failed', error as Error, {
           quoId: quoContactId,
           pipedriveId: data.id,
+        });
+        // Surface this in the health endpoint so we can see it
+        await logHealthError('pipedrive', `Quo enrichment failed: ${(error as Error).message}`, {
+          quoId: quoContactId,
+          pipedriveId: String(data.id),
         });
       }
     }
