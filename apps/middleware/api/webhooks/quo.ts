@@ -11,12 +11,12 @@
  * Pipedrive webhook, which syncs back to Quo. The Pipedrive webhook
  * uses loop prevention (system user ID) to avoid infinite loops.
  *
- * This handler uses Edge Runtime to access the Web API Request object,
- * which provides .text() for reading the raw body needed for HMAC
- * signature verification. The Node.js serverless runtime's bodyParser
- * config was not reliably disabling parsing in this monorepo setup.
+ * Uses Web Standard API handler format (export POST) to get reliable
+ * raw body access via request.text() for HMAC signature verification.
+ * This matches how the old Next.js App Router handler worked.
  */
 
+import crypto from 'crypto';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { createLogger } from '@aac/shared-utils/logger';
 import { GeminiClient } from '@aac/api-clients/gemini';
@@ -29,10 +29,6 @@ import {
 } from '../../lib/redis.js';
 import { getEnv } from '../../lib/env.js';
 import { getPipedrive, getGemini } from '../../lib/clients.js';
-
-export const config = {
-  runtime: 'edge',
-};
 
 const log = createLogger('quo-webhook');
 
@@ -97,17 +93,17 @@ interface QuoWebhookPayload {
 }
 
 /**
- * Verify webhook signature from Quo/OpenPhone using Web Crypto API
+ * Verify webhook signature from Quo/OpenPhone
  *
  * Header format: hmac;1;<timestamp>;<base64-signature>
  * Signed data: <timestamp>.<json-payload>
  * Secret: base64-encoded, must decode to binary for HMAC
  */
-async function verifySignature(
+function verifySignature(
   payload: string,
   signatureHeader: string | undefined,
   secret: string
-): Promise<boolean> {
+): boolean {
   if (!signatureHeader) return false;
 
   // Parse header: hmac;1;timestamp;signature
@@ -128,37 +124,22 @@ async function verifySignature(
   const signedData = `${timestamp}.${payload}`;
 
   // Decode secret from base64 to binary
-  const signingKeyBytes = Uint8Array.from(atob(secret), (c) => c.charCodeAt(0));
+  const signingKey = Buffer.from(secret, 'base64');
 
-  // Import key for Web Crypto API
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    signingKeyBytes,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
+  // Compute HMAC-SHA256 and encode as base64
+  const computedSignature = crypto
+    .createHmac('sha256', signingKey)
+    .update(signedData)
+    .digest('base64');
 
-  // Compute HMAC-SHA256
-  const signatureBytes = await crypto.subtle.sign(
-    'HMAC',
-    cryptoKey,
-    new TextEncoder().encode(signedData)
-  );
-
-  // Encode as base64
-  const computedSignature = btoa(
-    String.fromCharCode(...new Uint8Array(signatureBytes))
-  );
-
-  // Constant-time comparison
-  if (providedSignature.length !== computedSignature.length) return false;
-
-  let mismatch = 0;
-  for (let i = 0; i < providedSignature.length; i++) {
-    mismatch |= providedSignature.charCodeAt(i) ^ computedSignature.charCodeAt(i);
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(providedSignature),
+      Buffer.from(computedSignature)
+    );
+  } catch {
+    return false;
   }
-  return mismatch === 0;
 }
 
 // Minimum message length for AI processing (skip trivial messages)
@@ -174,7 +155,6 @@ function extractTextForAI(
 ): string {
   // For transcripts, extract just the external caller's dialogue
   if (eventData.object === 'callTranscript' && eventData.dialogue) {
-    // Get only entries from external caller (no userId)
     const externalDialogue = eventData.dialogue
       .filter((entry) => !entry.userId)
       .map((entry) => entry.content)
@@ -188,29 +168,22 @@ function extractTextForAI(
 
 /**
  * Check if a message should be processed by AI for entity extraction
- * Rules: Only inbound messages/transcripts with sufficient content
  */
 function shouldProcessForAI(
   eventType: QuoEventType,
   eventData: QuoWebhookPayload['object']['data']['object']
 ): boolean {
-  // Only process inbound messages and transcripts
-  if (eventType === 'message.delivered') return false; // Outbound SMS
-  if (eventType === 'call.completed') return false; // Call without transcript
+  if (eventType === 'message.delivered') return false;
+  if (eventType === 'call.completed') return false;
 
-  // For transcripts, always process (external caller initiated)
   if (eventType === 'call.transcript.completed') {
-    // Check if we have dialogue from external caller
     if (eventData.dialogue) {
       const externalDialogue = eventData.dialogue.filter((entry) => !entry.userId);
       if (externalDialogue.length === 0) return false;
     }
   }
 
-  // Get the text content
   const text = extractTextForAI(eventData);
-
-  // Skip trivial content
   if (text.length < MIN_MESSAGE_LENGTH) return false;
 
   return true;
@@ -218,16 +191,11 @@ function shouldProcessForAI(
 
 /**
  * Extract the remote (external) phone number from the event data
- * For incoming: it's the "from" number
- * For outgoing: it's the "to" number
- * For transcripts: find dialogue entries without userId (external caller)
  */
 function extractRemotePhone(
   eventData: QuoWebhookPayload['object']['data']['object']
 ): string | null {
-  // For transcripts, extract from dialogue entries
   if (eventData.object === 'callTranscript' && eventData.dialogue) {
-    // Find an entry from the external caller (no userId = not internal user)
     const externalEntry = eventData.dialogue.find((entry) => !entry.userId);
     if (externalEntry) {
       return externalEntry.identifier || null;
@@ -235,7 +203,6 @@ function extractRemotePhone(
     return null;
   }
 
-  // For messages and calls, use from/to based on direction
   if (eventData.direction === 'incoming') {
     return eventData.from || null;
   } else {
@@ -244,9 +211,9 @@ function extractRemotePhone(
 }
 
 /**
- * Helper to create JSON responses (Edge Runtime uses Web API Response)
+ * Helper to create JSON responses
  */
-function jsonResponse(data: Record<string, unknown>, status = 200): Response {
+function json(data: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'Content-Type': 'application/json' },
@@ -254,29 +221,26 @@ function jsonResponse(data: Record<string, unknown>, status = 200): Response {
 }
 
 /**
- * Main webhook handler (Edge Runtime — uses Web API Request for raw body access)
+ * Web Standard API handler — export named POST function
+ * Uses request.text() for raw body access (same as Next.js App Router)
  */
-export default async function handler(request: Request) {
-  if (request.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed' }, 405);
-  }
-
+export async function POST(request: Request): Promise<Response> {
   const env = getEnv();
 
   // ============================================
   // SIGNATURE VERIFICATION
   // ============================================
-  // Read raw body using Web API — preserves exact bytes for HMAC
+  // request.text() gives us the raw body bytes — critical for HMAC
   const rawBody = await request.text();
   const signature = request.headers.get('openphone-signature') || undefined;
 
-  if (!(await verifySignature(rawBody, signature, env.quo.webhookSecret))) {
+  if (!verifySignature(rawBody, signature, env.quo.webhookSecret)) {
     // Fallback: try re-serialized body in case edge middleware consumed/re-encoded the raw body
     let fallbackPassed = false;
     try {
       const reserialized = JSON.stringify(JSON.parse(rawBody));
       if (reserialized !== rawBody) {
-        fallbackPassed = await verifySignature(reserialized, signature, env.quo.webhookSecret);
+        fallbackPassed = verifySignature(reserialized, signature, env.quo.webhookSecret);
       }
     } catch {
       // rawBody wasn't valid JSON, fallback not applicable
@@ -288,7 +252,7 @@ export default async function handler(request: Request) {
         hasSignature: !!signature,
         signaturePrefix: signature?.substring(0, 30),
       });
-      return jsonResponse({ error: 'Invalid signature' }, 401);
+      return json({ error: 'Invalid signature' }, 401);
     }
   }
 
@@ -297,37 +261,31 @@ export default async function handler(request: Request) {
     payload = JSON.parse(rawBody);
   } catch {
     log.warn('Invalid JSON payload');
-    return jsonResponse({ error: 'Invalid JSON' }, 400);
+    return json({ error: 'Invalid JSON' }, 400);
   }
 
   // Handle both wrapped and unwrapped payload formats
-  // Wrapped: { object: { id, type, data: { object: {...} } } }
-  // Unwrapped: { id, type, data: { object: {...} } }
   const rawPayload = payload as unknown as Record<string, unknown>;
 
-  // Detect format and normalize
   let event: QuoWebhookPayload['object'];
   if (rawPayload?.object && typeof rawPayload.object === 'object') {
-    // Wrapped format
     event = rawPayload.object as QuoWebhookPayload['object'];
   } else if (rawPayload?.id && rawPayload?.type) {
-    // Unwrapped format - payload IS the event
     event = rawPayload as unknown as QuoWebhookPayload['object'];
   } else {
     log.warn('Invalid payload structure', {
       keys: Object.keys(rawPayload || {}),
     });
-    return jsonResponse({ error: 'Invalid payload' }, 400);
+    return json({ error: 'Invalid payload' }, 400);
   }
 
-  // Validate event has required fields
   if (!event?.id || !event?.type || !event?.data?.object) {
     log.warn('Invalid event structure', {
       hasId: !!event?.id,
       hasType: !!event?.type,
       hasData: !!event?.data,
     });
-    return jsonResponse({ error: 'Invalid payload' }, 400);
+    return json({ error: 'Invalid payload' }, 400);
   }
 
   const eventData = event.data.object;
@@ -340,7 +298,6 @@ export default async function handler(request: Request) {
   // ============================================
   // FILTER EVENTS
   // ============================================
-  // Process calls, messages (both directions), and transcripts
   const allowedEvents: QuoEventType[] = [
     'call.completed',
     'message.received',
@@ -349,7 +306,7 @@ export default async function handler(request: Request) {
   ];
   if (!allowedEvents.includes(event.type)) {
     log.debug('Ignoring event type', { type: event.type });
-    return jsonResponse({ status: 'ignored', reason: 'event_type' });
+    return json({ status: 'ignored', reason: 'event_type' });
   }
 
   try {
@@ -359,7 +316,7 @@ export default async function handler(request: Request) {
     const isNew = await markEventProcessed('quo', event.id);
     if (!isNew) {
       log.info('Duplicate event ignored', { eventId: event.id });
-      return jsonResponse({ status: 'ignored', reason: 'duplicate' });
+      return json({ status: 'ignored', reason: 'duplicate' });
     }
 
     // ============================================
@@ -368,13 +325,13 @@ export default async function handler(request: Request) {
     const rawPhone = extractRemotePhone(eventData);
     if (!rawPhone) {
       log.warn('Could not extract remote phone', { eventId: event.id });
-      return jsonResponse({ status: 'skipped', reason: 'no_phone' });
+      return json({ status: 'skipped', reason: 'no_phone' });
     }
 
     const e164Phone = normalizePhone(rawPhone);
     if (!e164Phone) {
       log.warn('Invalid phone number', { rawPhone });
-      return jsonResponse({ status: 'skipped', reason: 'invalid_phone' });
+      return json({ status: 'skipped', reason: 'invalid_phone' });
     }
 
     // ============================================
@@ -383,7 +340,6 @@ export default async function handler(request: Request) {
     const pd = getPipedrive();
     let pipedrivePersonId: number | null = null;
 
-    // Check cache first
     const cachedId = await getPipedriveIdFromPhone(e164Phone);
     if (cachedId) {
       pipedrivePersonId = parseInt(cachedId, 10);
@@ -393,7 +349,6 @@ export default async function handler(request: Request) {
       });
     }
 
-    // If not cached, search Pipedrive
     if (!pipedrivePersonId) {
       const existingPerson = await pd.searchPersonByPhone(e164Phone);
 
@@ -407,7 +362,6 @@ export default async function handler(request: Request) {
       }
     }
 
-    // If still not found, create "Unknown Lead"
     if (!pipedrivePersonId) {
       log.info('Creating Unknown Lead', { phone: e164Phone });
 
@@ -468,7 +422,6 @@ export default async function handler(request: Request) {
     }
 
     if (event.type === 'call.transcript.completed') {
-      // Format transcript dialogue for activity note
       let transcript = '(no transcript)';
       if (eventData.dialogue && eventData.dialogue.length > 0) {
         transcript = eventData.dialogue
@@ -503,7 +456,6 @@ export default async function handler(request: Request) {
         const entities = await gemini.extractEntities(textContent);
 
         if (GeminiClient.hasUsefulEntities(entities)) {
-          // Build name from extracted entities
           let extractedName: string | undefined;
           if (entities!.fullName) {
             extractedName = entities!.fullName;
@@ -515,7 +467,6 @@ export default async function handler(request: Request) {
             extractedName = entities!.lastName;
           }
 
-          // Incrementally update Pipedrive (only add new fields)
           const updateResult = await pd.updatePersonIncremental(pipedrivePersonId, {
             name: extractedName,
             phone: e164Phone,
@@ -535,17 +486,15 @@ export default async function handler(request: Request) {
           }
         }
       } catch (error) {
-        // Don't fail the webhook if AI extraction fails
         log.error('AI entity extraction failed', error as Error, {
           personId: pipedrivePersonId,
         });
       }
     }
 
-    // Track successful processing for health dashboard
     await trackWebhookProcessed('quo');
 
-    return jsonResponse({
+    return json({
       status: 'processed',
       pipedrivePersonId,
       eventType: event.type,
@@ -553,11 +502,9 @@ export default async function handler(request: Request) {
   } catch (error) {
     log.error('Webhook processing failed', error as Error, { eventId: event.id });
 
-    // Log error for health dashboard
     await logHealthError('quo', (error as Error).message, { eventId: event.id });
 
-    // Return 200 to acknowledge receipt
-    return jsonResponse({
+    return json({
       status: 'error',
       message: 'Processing failed, logged for investigation',
     });
