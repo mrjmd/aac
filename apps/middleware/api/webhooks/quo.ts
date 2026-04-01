@@ -304,12 +304,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (!fallbackPassed) {
-      log.warn('Invalid webhook signature', {
-        bodyLength: rawBody.length,
-        hasSignature: !!signature,
-        signaturePrefix: signature?.substring(0, 30),
+      // TEMPORARY: Return debug info to diagnose signature failure
+      return res.status(401).json({
+        error: 'Invalid signature',
+        debug: {
+          bodyType: typeof req.body,
+          bodyIsBuffer: Buffer.isBuffer(req.body),
+          bodyIsNull: req.body === null,
+          bodyIsUndefined: req.body === undefined,
+          rawBodyLength: rawBody.length,
+          rawBodyFirst80: rawBody.substring(0, 80),
+          hasSignature: !!signature,
+          signaturePrefix: signature?.substring(0, 40),
+          secretLength: env.quo.webhookSecret.length,
+          secretFirst4: env.quo.webhookSecret.substring(0, 4),
+        },
       });
-      return res.status(401).json({ error: 'Invalid signature' });
     }
   }
 
