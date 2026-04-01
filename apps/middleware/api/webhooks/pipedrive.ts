@@ -416,11 +416,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ============================================
     // ENRICH QUO CONTACT: QB Link + Address
     // ============================================
-    // TEMPORARY: surface enrichment state in health errors for debugging
-    await logHealthError('pipedrive', `ENRICHMENT_DEBUG: quoId=${quoContactId}, qbId=${qbCustomerId}, hasAddr=${!!formattedAddress}, willEnrich=${!!(quoContactId && (qbCustomerId || formattedAddress))}`, {
-      pipedriveId: String(data.id),
-    });
-
     if (quoContactId && (qbCustomerId || formattedAddress)) {
       try {
         const customFields: Array<{ key: string; value: string }> = [];
