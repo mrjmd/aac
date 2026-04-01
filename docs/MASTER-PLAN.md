@@ -305,25 +305,39 @@ aac-astro patterns) WITHOUT touching either production system.
 - [ ] Write tests
 - [ ] Verify build passes
 
-### 0.16 — @aac/api-clients: Google Business Profile Client (NEW)
+### 0.16a — @aac/api-clients: Google Business Profile Client (NEW)
 
 - [ ] Read aac-astro `scripts/batch-post-gbp.js`
 - [ ] `[DISCUSS]` Is this used enough to warrant its own client, or should it just be a method on a broader "Google" auth helper?
 - [ ] Implement or defer based on discussion
 - [ ] Write tests if implemented
 
+### 0.16b — @aac/api-clients: Gmail Client (NEW)
+
+- [ ] Design GmailConfig: `{ auth: GoogleAuth }` (uses shared Google OAuth from 0.17)
+- [ ] Create `packages/api-clients/src/gmail.ts`:
+  - [ ] `getRecentImportant(maxResults)` — fetch recent important/unread emails
+  - [ ] `getUnreadCount()` — count of unread important emails
+  - [ ] `getMessage(messageId)` — full message content
+  - [ ] `getThread(threadId)` — conversation thread
+- [ ] Add to `packages/api-clients/src/index.ts` barrel export
+- [ ] Add to `packages/api-clients/package.json` exports map
+- [ ] Write tests
+- [ ] Verify build passes
+
 ### 0.17 — Google OAuth2 Shared Auth
 
-- [ ] `[DISCUSS]` This is the biggest cross-cutting concern. aac-astro has ONE shared OAuth2 token covering scopes for Calendar, Drive, Ads, Analytics, GSC, GBP. The Google clients above all need auth. Options:
-  - A `GoogleAuth` helper in `@aac/shared-utils` that handles OAuth2 flow, token storage, and refresh
-  - Each Google client manages its own auth internally
-  - A shared `@aac/google-auth` package (separate from api-clients and shared-utils)
-  - Recommendation: `@aac/shared-utils` exports a `createGoogleAuth(config)` factory that returns an authenticated `OAuth2Client` from `googleapis`. Each Google client's constructor accepts this client. Token storage is callback-based (same pattern as QB).
-- [ ] Design the auth helper API
-- [ ] Implement in shared-utils or a new package (based on discussion)
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` `@aac/shared-utils` exports a `createGoogleAuth(config)` factory. Each Google client's constructor accepts the auth client. Token storage is callback-based (same pattern as QB). Source: aac-astro `scripts/lib/project-import-core.js` `authorize()` function.
+- [ ] Read aac-astro `scripts/lib/project-import-core.js` — extract `authorize()` (handles CLI, CI, local OAuth, service account)
+- [ ] Create `packages/shared-utils/src/google-auth.ts`
+- [ ] Design config: accept OAuth2 credentials OR service account key
+- [ ] Export `createGoogleAuth(config)` factory returning authenticated client
+- [ ] Token persistence via callbacks (same pattern as QuickBooks client)
 - [ ] Handle both OAuth2 (interactive/refresh) and service account auth
 - [ ] Handle credential file resolution (env vars → local files → error)
 - [ ] Write tests
+- [ ] Add export to `packages/shared-utils/src/index.ts`
+- [ ] Verify build passes
 
 ### 0.18 — Phase 0 Integration Verification ✅ COMPLETE (2026-03-31)
 
@@ -366,96 +380,36 @@ These API clients are already scaffolded in `@aac/api-clients` but need
 implementation before the Command Center can use them. Source code exists
 in the legacy codebases.
 
-#### 1.1a — Google OAuth Shared Auth
+#### 1.1 — Dependencies
 
-- [ ] Read aac-astro `scripts/lib/project-import-core.js` — extract the `authorize()` function (handles CLI, CI, local OAuth, service account)
-- [ ] Create `packages/shared-utils/src/google-auth.ts` (or a separate `packages/google-auth` package — decide based on size)
-- [ ] Support OAuth2 with refresh token (interactive/stored credentials)
-- [ ] Support service account auth (CI environments)
-- [ ] Export `createGoogleAuth(config)` factory that returns authenticated client
-- [ ] Token persistence via callbacks (same pattern as QuickBooks client)
-- [ ] Write tests
-- [ ] Verify build passes
+The Command Center depends on shared package clients that are already defined
+as tasks in Phase 0. These must be completed before the cards that use them:
 
-#### 1.1b — Google Analytics Client
+| Card | Depends on Phase 0 task | Status |
+|------|------------------------|--------|
+| Business Pulse | 0.6 PipedriveClient, 0.8 QuickBooksClient | ✅ Done |
+| Business Pulse (jobs) | 0.11 Google Calendar Client, 0.17 Google OAuth | Not started |
+| Smart To-Do | None (Redis only for MVP) | Ready |
+| New Leads | 0.6 PipedriveClient | ✅ Done |
+| Website/SEO/Ads | 0.13 GA4 Client, 0.14 GSC Client, 0.12 Google Ads Client, 0.17 Google OAuth | Not started |
+| Middleware Health | None (reads Redis directly) | Ready |
+| Marketing Campaigns | None (reads Redis directly) | Ready |
+| Important Dates | 0.6 PipedriveClient, 0.11 Google Calendar Client | Partially ready |
+| Full-Funnel Attribution | 0.13 GA4 Client, 0.6 + 0.8 (done) | Partially ready |
+| Gmail Monitoring | 0.16b Gmail Client (NEW), 0.17 Google OAuth | Not started |
 
-- [ ] Read aac-astro `scripts/ga4-report.js` (222 lines) — extract the GA4 Data API query patterns
-- [ ] Read aac-astro `api/analytics-health.ts` (285 lines) — extract health check patterns
-- [ ] Read aac-astro `scripts/monthly-report.js` (461 lines) — extract the 13 parallel GA4 queries for comprehensive reporting
-- [ ] Complete `packages/api-clients/src/google-analytics.ts`:
-  - [ ] `runReport(propertyId, request)` — core GA4 Data API wrapper
-  - [ ] `getTrafficSummary(propertyId, dateRange)` — sessions, users, bounce rate
-  - [ ] `getConversionEvents(propertyId, dateRange)` — phone_call_click, text_message_click counts
-  - [ ] `getTrafficSources(propertyId, dateRange)` — source/medium breakdown
-  - [ ] `getLandingPagePerformance(propertyId, dateRange)` — page-level metrics
-- [ ] Constructor takes Google auth client from shared auth
-- [ ] Write tests (mock fetch)
-- [ ] Verify build passes
+**Phase 0 tasks still needed before full Command Center:**
+- 0.11 — Google Calendar Client
+- 0.12 — Google Ads Client
+- 0.13 — Google Analytics Client
+- 0.14 — Google Search Console Client
+- 0.15 — Buffer Client
+- 0.16b — Gmail Client (new — add to Phase 0)
+- 0.17 — Google OAuth Shared Auth
 
-#### 1.1c — Google Search Console Client
-
-- [ ] Read aac-astro `scripts/gsc-report.js` (172 lines) — extract search analytics query pattern
-- [ ] Complete `packages/api-clients/src/google-search-console.ts`:
-  - [ ] `queryPerformance(siteUrl, request)` — core search analytics API wrapper
-  - [ ] `getTopQueries(siteUrl, dateRange)` — clicks, impressions, CTR, position
-  - [ ] `getTopPages(siteUrl, dateRange)` — page-level search performance
-  - [ ] `getSitemapStatus(siteUrl)` — sitemap health
-- [ ] Constructor takes Google auth client
-- [ ] Write tests
-- [ ] Verify build passes
-
-#### 1.1d — Google Calendar Client
-
-- [ ] Read aac-astro `scripts/lib/project-import-core.js` — extract event query and filtering logic
-- [ ] Complete `packages/api-clients/src/google-calendar.ts`:
-  - [ ] `listEvents(calendarId, dateRange)` — fetch events with filtering
-  - [ ] `getUpcomingJobs(calendarId, days)` — events filtered by job color/keywords
-  - [ ] `countJobsInRange(calendarId, startDate, endDate)` — for "jobs next week/month" cards
-- [ ] Constructor takes Google auth client
-- [ ] Write tests
-- [ ] Verify build passes
-
-#### 1.1e — Google Ads Client
-
-- [ ] Read aac-astro `scripts/lib/google-ads-client.js` (133 lines) — already extracted pattern
-- [ ] Complete `packages/api-clients/src/google-ads.ts`:
-  - [ ] `executeGaql(customerId, query)` — core GAQL query via REST streaming API
-  - [ ] `getCampaignPerformance(customerId, dateRange)` — spend, conversions, CPA
-  - [ ] `getKeywordPerformance(customerId, dateRange)` — keyword-level metrics
-- [ ] Constructor takes Google auth client + developer token + manager account ID
-- [ ] Write tests
-- [ ] Verify build passes
-
-#### 1.1f — Gmail Client (NEW — not in any legacy codebase)
-
-- [ ] Design GmailConfig: `{ auth: GoogleAuth }` (uses shared Google OAuth)
-- [ ] Create `packages/api-clients/src/gmail.ts`:
-  - [ ] `getRecentImportant(maxResults)` — fetch recent important/unread emails
-  - [ ] `getUnreadCount()` — count of unread important emails
-  - [ ] `getMessage(messageId)` — full message content
-  - [ ] `getThread(threadId)` — conversation thread
-- [ ] Add to `packages/api-clients/src/index.ts` barrel export
-- [ ] Add to `packages/api-clients/package.json` exports map
-- [ ] Write tests
-- [ ] Verify build passes
-
-#### 1.1g — Buffer Client (from aac-astro)
-
-- [ ] Read aac-astro `scripts/lib/buffer-client.js` (313 lines) — GraphQL API wrapper
-- [ ] Complete `packages/api-clients/src/buffer.ts` (already partially scaffolded):
-  - [ ] `getOrganizations()` — account structure
-  - [ ] `getChannels()` — connected social platforms
-  - [ ] `createPost(data)` — schedule a post
-  - [ ] `getScheduledPosts(channelId)` — pending posts
-- [ ] Include rate limiting logic (200ms min delay, exponential backoff on 429)
-- [ ] Write tests
-- [ ] Verify build passes
-
-#### 1.1h — Integration Verification
-
-- [ ] All new/completed clients build: `pnpm turbo build`
-- [ ] All tests pass: `pnpm turbo test`
-- [ ] Type-check passes: `pnpm turbo typecheck`
+**Cards that can ship without those:** Business Pulse (QB + Pipedrive parts),
+Smart To-Do, New Leads, Middleware Health, Marketing Campaigns, Important
+Dates (Pipedrive + manual). This is a solid MVP.
 
 ### 1.2 — Prerequisite: Shared Design System
 
