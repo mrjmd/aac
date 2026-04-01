@@ -1,6 +1,6 @@
 # Middleware — Operations Brain
 
-**Status:** Code complete, not yet deployed
+**Status:** Deployed to production (2026-04-01), in 7-day bake period
 **Location:** `apps/middleware/`
 **Runtime:** Plain Vercel Serverless Functions (no framework)
 **Predecessor:** `aac-slim` (standalone repo, currently running production)
@@ -156,16 +156,21 @@ Command Center ──reads──→ /api/health ──→ Metrics from Redis
 
 ---
 
-## What's Left Before Deployment
+## Deployment
 
-1. **Create Vercel project** — Point to `apps/middleware`, set root directory
-2. **Set environment variables** — Copy from aac-slim's Vercel project (see `.env.example`):
-   - Required: Pipedrive, Quo, QuickBooks, Redis, Alert Phone
-   - Optional: Google Ads webhook key, Gemini API key
-3. **Deploy and verify** — `GET /api/health` should return `{ status: "healthy" }`
-4. **Test with sample payloads** — Send test webhooks to each endpoint before going live
-5. **Swap webhook URLs** — Update Pipedrive, Quo, and Google Ads to point to new URLs
-6. **Monitor** — Watch health endpoint and Vercel logs for 7 days
+**Completed:** 2026-04-01
+**Production URL:** `https://aac-middleware-monorepo.vercel.app`
+**Vercel project:** `aac-middleware-monorepo`
+**Old middleware:** `aac-middleware` (still running as fallback, no webhooks pointing to it)
+
+### Cutover Notes
+
+- Quo webhook uses Web Standard API handler (`export POST`) instead of default
+  export, because Vercel's `bodyParser: false` config isn't respected in this
+  monorepo. This gives `request.text()` for raw body HMAC verification.
+- OpenPhone generates a unique webhook signing secret per URL. Secret must be
+  updated when the webhook URL changes.
+- Upstash Redis auto-serializes objects — don't double-serialize with JSON.stringify.
 
 ## Testing Strategy: Cutover Plan
 

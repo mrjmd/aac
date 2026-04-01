@@ -784,32 +784,46 @@ to plain Vercel function (`export default async function handler(req: VercelRequ
 - [x] Verify: `pnpm turbo typecheck` passes with zero errors
 - [x] Verify: `pnpm turbo test` passes — 100 tests total (41 shared-utils + 39 api-clients + 20 middleware)
 
-### 2.5 — Vercel Deployment
+### 2.5 — Vercel Deployment ✅ COMPLETE (2026-04-01)
 
-- [ ] Create new Vercel project: `aac-monorepo-middleware`
-- [ ] Configure root directory to `apps/middleware`
-- [ ] Set all environment variables (mirror from current aac-slim Vercel project, minus campaign-specific vars)
-- [ ] Deploy and verify health endpoint responds
-- [ ] Test each webhook endpoint with sample payloads
+- [x] Create new Vercel project: `aac-middleware-monorepo`
+- [x] Configure root directory to `apps/middleware`
+- [x] Set all environment variables (15 vars copied from aac-slim via Vercel CLI)
+- [x] Deploy and verify health endpoint responds
+- [x] Test each webhook endpoint with sample payloads
+- [x] Fix: Vercel `bodyParser: false` not respected in monorepo — switched Quo
+  webhook to Web Standard API handler (`export async function POST(request: Request)`)
+  for raw body access needed by HMAC signature verification
+- [x] Fix: OpenPhone webhook secret is per-URL — updated `QUO_WEBHOOK_SECRET`
+  with new secret from OpenPhone dashboard
+- [x] Fix: QB token storage was double-serializing with `JSON.stringify` —
+  switched to Upstash auto-serialization (pass object directly to `redis.set`)
 
-### 2.6 — The Switch
+### 2.6 — The Switch ✅ COMPLETE (2026-04-01)
 
-- [ ] Verify monorepo middleware is deployed and responding to health checks
-- [ ] Swap webhook URLs in OpenPhone/Quo to point to new middleware URL
-- [ ] Swap webhook URLs in Pipedrive to point to new middleware URL
-- [ ] Swap webhook URL in Google Ads to point to new middleware URL
-- [ ] Monitor Command Center dashboard for heartbeat and webhook flow
-- [ ] Keep old aac-slim Vercel project running (but no longer receiving webhooks)
+- [x] Verify monorepo middleware is deployed and responding to health checks
+- [x] Swap webhook URLs in OpenPhone/Quo to point to new middleware URL
+- [x] Swap webhook URLs in Pipedrive to point to new middleware URL
+- [x] Swap webhook URL in Google Ads to point to new middleware URL
+- [x] Re-authorize QuickBooks OAuth via new middleware URL
+- [x] Add new redirect URI to Intuit Developer Portal
+- [x] End-to-end test: inbound SMS → Pipedrive person created → activity logged →
+  AI entity extraction → name updated → QB customer synced → QB link + address
+  enriched back to Quo contact
+- [x] Keep old aac-slim Vercel project running (but no longer receiving webhooks)
+- [x] Rollback reference doc saved: `docs/middleware-cutover-rollback.md`
 
-### 2.7 — Bake Period (7 days)
+**Production URL:** `https://aac-middleware-monorepo.vercel.app`
 
-- [ ] Day 1: Active monitoring — check every few hours
-- [ ] Day 2-3: Normal monitoring — check daily
-- [ ] Day 4-7: Passive monitoring — check Command Center dashboard
+### 2.7 — Bake Period (7 days) — IN PROGRESS (started 2026-04-01)
+
+- [ ] Day 1 (Apr 1): Active monitoring — check every few hours
+- [ ] Day 2-3 (Apr 2-3): Normal monitoring — check daily
+- [ ] Day 4-7 (Apr 4-7): Passive monitoring — check health endpoint
 - [ ] Verify: no missed webhooks, no dedup failures, no sync errors
 - [ ] If issues: roll back by re-pointing webhook URLs to old aac-slim
 
-### 2.8 — Decommission
+### 2.8 — Decommission (after 2026-04-08)
 
 - [ ] Archive aac-slim repo as read-only
 - [ ] Delete old Vercel project (or keep for reference, no cost if no traffic)
