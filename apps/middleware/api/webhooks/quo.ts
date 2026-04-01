@@ -277,6 +277,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const signature =
     (req.headers['openphone-signature'] as string | undefined) || undefined;
 
+  // DEBUG: Log body reading details to diagnose signature verification
+  log.info('Signature verification debug', {
+    bodyType: typeof req.body,
+    bodyIsBuffer: Buffer.isBuffer(req.body),
+    bodyIsNull: req.body === null,
+    rawBodyLength: rawBody.length,
+    rawBodyFirst80: rawBody.substring(0, 80),
+    rawBodyLast40: rawBody.substring(rawBody.length - 40),
+    hasSignature: !!signature,
+    signaturePrefix: signature?.substring(0, 40),
+    secretLength: env.quo.webhookSecret.length,
+    secretFirst4: env.quo.webhookSecret.substring(0, 4),
+  });
+
   if (!verifySignature(rawBody, signature, env.quo.webhookSecret)) {
     // Fallback: try re-serialized body in case edge middleware consumed/re-encoded the raw body
     let fallbackPassed = false;
