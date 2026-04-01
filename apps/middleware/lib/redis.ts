@@ -143,21 +143,16 @@ export async function wasCreatedByMiddleware(pipedriveId: string): Promise<boole
 
 export async function storeQBTokens(tokens: QBOAuthTokens): Promise<void> {
   const redis = getRedis();
-  await redis.set(keys.qbOAuthTokens, JSON.stringify(tokens));
+  // Pass object directly — Upstash auto-serializes/deserializes JSON
+  await redis.set(keys.qbOAuthTokens, tokens);
   log.debug('Stored QB OAuth tokens');
 }
 
 export async function getQBTokens(): Promise<QBOAuthTokens | null> {
   const redis = getRedis();
-  const raw = await redis.get<string>(keys.qbOAuthTokens);
-  if (!raw) return null;
-
-  try {
-    return JSON.parse(raw) as QBOAuthTokens;
-  } catch {
-    log.error('Failed to parse QB tokens', new Error('Invalid JSON in Redis'));
-    return null;
-  }
+  // Upstash auto-deserializes, so we get the object directly
+  const data = await redis.get<QBOAuthTokens>(keys.qbOAuthTokens);
+  return data || null;
 }
 
 // ── Health & Observability ───────────────────────────────────────────
