@@ -381,9 +381,38 @@ export async function POST(request: Request): Promise<Response> {
     // ============================================
     if (event.type === 'call.completed') {
       const direction = eventData.direction === 'incoming' ? 'Inbound' : 'Outbound';
-      const duration = eventData.duration || 0;
+
+      // Compute call duration: prefer eventData.duration, fall back to
+      // answeredAt→createdAt delta (createdAt is call end time per OpenPhone)
+      let duration = eventData.duration || 0;
+      if (!duration && eventData.answeredAt && eventData.createdAt) {
+        const answered = new Date(eventData.answeredAt).getTime();
+        const ended = new Date(eventData.createdAt).getTime();
+        if (answered > 0 && ended > answered) {
+          duration = Math.round((ended - answered) / 1000);
+        }
+      }
+
+      log.info('Call duration debug', {
+        rawDuration: eventData.duration,
+        answeredAt: eventData.answeredAt,
+        createdAt: eventData.createdAt,
+        computedDuration: duration,
+      });
+
+      // Determine which AAC line handled the call (for attribution filtering)
+      const aacLine = eventData.direction === 'incoming' ? eventData.to : eventData.from;
+
+      const durationMin = Math.floor(duration / 60);
+      const durationSec = duration % 60;
 
       let note = `${direction} call`;
+      if (aacLine) {
+        note += `\nLine: ${aacLine}`;
+      }
+      if (duration > 0) {
+        note += `\nDuration: ${durationMin}m ${durationSec}s`;
+      }
       if (eventData.recordingUrl) {
         note += `\n\nRecording: ${eventData.recordingUrl}`;
       }
@@ -392,7 +421,7 @@ export async function POST(request: Request): Promise<Response> {
       }
 
       await pd.logActivity(pipedrivePersonId, 'call', {
-        subject: `${direction} Call (${Math.round(duration / 60)}m ${duration % 60}s)`,
+        subject: `${direction} Call (${durationMin}m ${durationSec}s)`,
         note,
         duration,
       });
@@ -410,9 +439,16 @@ export async function POST(request: Request): Promise<Response> {
 
       const direction = event.type === 'message.received' ? 'Received' : 'Sent';
 
+      // Determine which AAC line handled the message (for attribution filtering)
+      const smsLine = event.type === 'message.received' ? eventData.to : eventData.from;
+      let smsNote = `Full message:\n\n${messageBody}`;
+      if (smsLine) {
+        smsNote += `\n\nLine: ${smsLine}`;
+      }
+
       await pd.logActivity(pipedrivePersonId, 'sms', {
         subject: `SMS ${direction}: "${truncatedBody}"`,
-        note: `Full message:\n\n${messageBody}`,
+        note: smsNote,
       });
 
       log.info('Logged SMS activity', {

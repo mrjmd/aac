@@ -208,10 +208,15 @@ Things we know we want this middleware to do but haven't built yet:
 
 ### Near-term (rebuild from aac-slim)
 
-- [ ] **Attribution engine** — Trace QuickBooks invoice payments back through
-  Pipedrive referral chains to calculate salesperson commissions. Was in aac-slim
-  as `attribution.ts`. Needs: `getPaidInvoices`, `getInvoice` on QB client,
-  `getPersonReferredBy`, `getPipedriveUser`, `getPersonOwnerId` on Pipedrive client.
+- [ ] **Attribution engine** — Full-funnel attribution correlating website visits
+  (GA4) → phone clicks → actual calls (Quo) → CRM leads (Pipedrive) → revenue
+  (QuickBooks). Middleware owns the correlation logic and writes results to
+  Pipedrive (the single source of truth for per-deal attribution). Includes:
+  - GA4 ↔ Quo call timestamp correlation (validate false positive rate first)
+  - QuickBooks lifecycle → Pipedrive deal stage sync (quote → invoice → paid)
+  - Referral chain traversal for commission attribution
+  - GCLID passthrough for Google Ads offline conversion import (OCI)
+  See MASTER-PLAN §1.11 for full breakdown and validation plan.
 - [ ] **Send safety layer** — DNC check before any outbound message. Was flagged
   as CRITICAL in aac-slim's TODO. Prevents sending to numbers on suppression lists.
 - [ ] **Dead letter queue** — Store failed webhook events for retry/investigation.
@@ -224,15 +229,20 @@ Things we know we want this middleware to do but haven't built yet:
 - [ ] **Inbound message event stream** — Publish inbound Quo messages to a Redis
   stream so the marketing app can subscribe for campaign response tracking
   (see MASTER-PLAN Phase 4.4).
-- [ ] **QuickBooks invoice webhook** — Receive QB invoice/payment events to
-  trigger attribution calculations automatically.
+- [ ] **QuickBooks lifecycle sync** — Receive QB invoice/payment events to:
+  (a) update Pipedrive deal stages automatically (quote→invoice = "Job Complete",
+  paid = "Won/Closed" with revenue amount), and (b) trigger attribution
+  calculations. This is the primary mechanism for closing the revenue loop.
 - [ ] **Smoke test endpoint** — `GET /api/smoke` that makes a lightweight call
   to each external API to verify connectivity.
 
 ### Long-term (expansion)
 
-- [ ] **Calendar integration** — Create Google Calendar events when Pipedrive
-  deals reach "Estimate Scheduled" stage.
+- [ ] **Calendar integration** — Bidirectional: (a) create Google Calendar events
+  when Pipedrive deals reach "Estimate Scheduled" stage, and (b) detect when a
+  job is added to the calendar and update the Pipedrive deal stage to "Scheduled."
+  The calendar→Pipedrive direction is needed for full deal lifecycle tracking
+  in attribution (see MASTER-PLAN §1.11).
 - [ ] **Estimate drafting** — Auto-generate QuickBooks estimates from Pipedrive
   deal data.
 - [ ] **Multi-channel activity logging** — Log email, chat, and other

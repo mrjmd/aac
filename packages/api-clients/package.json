@@ -25,7 +25,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@aac/shared-utils": "workspace:*"
+    "@aac/shared-utils": "workspace:*",
+    "googleapis": "^171.4.0"
   },
   "devDependencies": {
     "@aac/tsconfig": "workspace:*",

@@ -45,6 +45,11 @@ export interface PipedriveActivity {
   subject: string;
   person_id: number;
   done: boolean;
+  add_time: string;          // "2026-04-01 14:30:00"
+  duration: string;          // "00:04:30" (HH:MM:SS)
+  note: string | null;
+  due_date: string | null;
+  due_time: string | null;
 }
 
 interface SearchResult {
@@ -308,25 +313,47 @@ export class PipedriveClient {
 
   // ── Activity logging ────────────────────────────────────────────
 
+  /**
+   * Log a completed activity (call or SMS) on a person.
+   *
+   * Note: Pipedrive does not have a native 'sms' activity type — it only
+   * recognizes 'call'. SMS activities are logged as type 'call' and
+   * distinguished by subject prefix ('SMS Received:', 'SMS Sent:').
+   *
+   * Duration must be provided in seconds; it is converted to Pipedrive's
+   * required HH:MM format internally.
+   */
   async logActivity(
     personId: number,
     type: 'call' | 'sms',
     details: {
       subject: string;
       note?: string;
+      /** Call duration in seconds (converted to HH:MM for Pipedrive) */
       duration?: number;
     }
   ): Promise<PipedriveActivity> {
     log.info('Logging activity', { personId, type, subject: details.subject });
 
+    // Pipedrive only recognizes 'call' as a built-in type, not 'sms'
+    const pdType = 'call';
+
+    // Convert duration from seconds to Pipedrive's HH:MM format
+    let pdDuration: string | undefined;
+    if (details.duration && details.duration > 0) {
+      const hours = Math.floor(details.duration / 3600);
+      const minutes = Math.floor((details.duration % 3600) / 60);
+      pdDuration = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    }
+
     const activity = await this.request<PipedriveActivity>('/activities', {
       method: 'POST',
       body: JSON.stringify({
-        type,
+        type: pdType,
         subject: details.subject,
         person_id: personId,
         note: details.note,
-        duration: details.duration,
+        duration: pdDuration,
         done: true,
       }),
     });
@@ -357,6 +384,40 @@ export class PipedriveClient {
 
     log.info('Created task', { activityId: activity.id, personId });
     return activity;
+  }
+
+  // ── Activity queries ─────────────────────────────────────────────
+
+  /**
+   * List activities with optional filters.
+   *
+   * Note: Pipedrive limits to 500 per page. Use `start` for pagination.
+   * The caller is responsible for paginating if more results are needed.
+   */
+  async listActivities(filters?: {
+    type?: string;          // 'call', 'sms', 'task'
+    startDate?: string;     // YYYY-MM-DD
+    endDate?: string;       // YYYY-MM-DD
+    done?: boolean;
+    limit?: number;         // max 500, default 100
+    start?: number;         // pagination offset
+  }): Promise<PipedriveActivity[]> {
+    const params = new URLSearchParams();
+
+    if (filters?.type) params.set('type', filters.type);
+    if (filters?.startDate) params.set('start_date', filters.startDate);
+    if (filters?.endDate) params.set('end_date', filters.endDate);
+    if (filters?.done !== undefined) params.set('done', filters.done ? '1' : '0');
+    if (filters?.limit) params.set('limit', String(filters.limit));
+    if (filters?.start) params.set('start', String(filters.start));
+
+    const query = params.toString();
+    const endpoint = `/activities${query ? `?${query}` : ''}`;
+
+    log.debug('Listing activities', { filters });
+
+    const result = await this.request<PipedriveActivity[]>(endpoint);
+    return result || [];
   }
 
   // ── Custom fields ───────────────────────────────────────────────

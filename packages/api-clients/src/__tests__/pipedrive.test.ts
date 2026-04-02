@@ -81,7 +81,7 @@ describe('PipedriveClient', () => {
   });
 
   describe('logActivity', () => {
-    it('logs an activity with correct type', async () => {
+    it('logs an activity with correct type and duration format', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(mockResponse({ id: 10, type: 'call', subject: 'Test', person_id: 1, done: true }));
 
@@ -91,8 +91,28 @@ describe('PipedriveClient', () => {
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.type).toBe('call');
       expect(body.person_id).toBe(1);
-      expect(body.duration).toBe(120);
+      expect(body.duration).toBe('00:02'); // 120 seconds = HH:MM format
       expect(body.done).toBe(true);
+    });
+
+    it('always sends type call even when passed sms', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ id: 12, type: 'call', subject: 'SMS', person_id: 1, done: true }));
+
+      await client.logActivity(1, 'sms', { subject: 'SMS Received: "hello"' });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.type).toBe('call'); // Pipedrive has no native sms type
+    });
+
+    it('omits duration when zero or undefined', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ id: 13, type: 'call', subject: 'Test', person_id: 1, done: true }));
+
+      await client.logActivity(1, 'call', { subject: 'Inbound call' });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.duration).toBeUndefined();
     });
   });
 
@@ -107,6 +127,58 @@ describe('PipedriveClient', () => {
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.done).toBe(false);
       expect(body.type).toBe('task');
+    });
+  });
+
+  describe('listActivities', () => {
+    it('lists activities with filters', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse([
+        {
+          id: 20, type: 'call', subject: 'Inbound Call (2m 30s)',
+          person_id: 1, done: true, add_time: '2026-04-01 14:30:00',
+          duration: '00:02:30', note: 'Inbound call', due_date: null, due_time: null,
+        },
+      ]));
+
+      const result = await client.listActivities({
+        type: 'call',
+        startDate: '2026-03-15',
+        endDate: '2026-04-01',
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0].type).toBe('call');
+      expect(result[0].add_time).toBe('2026-04-01 14:30:00');
+
+      const url = mockFetch.mock.calls[0][0] as string;
+      expect(url).toContain('type=call');
+      expect(url).toContain('start_date=2026-03-15');
+      expect(url).toContain('end_date=2026-04-01');
+    });
+
+    it('lists activities without filters', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse([
+        { id: 21, type: 'sms', subject: 'SMS Received', person_id: 2, done: true,
+          add_time: '2026-04-01 10:00:00', duration: '00:00:00', note: null,
+          due_date: null, due_time: null },
+      ]));
+
+      const result = await client.listActivities();
+
+      expect(result).toHaveLength(1);
+      const url = mockFetch.mock.calls[0][0] as string;
+      expect(url).toContain('/activities');
+      expect(url).not.toContain('type=');
+    });
+
+    it('returns empty array when no activities', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse(null));
+
+      const result = await client.listActivities({ type: 'call' });
+      expect(result).toEqual([]);
     });
   });
 

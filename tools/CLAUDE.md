@@ -19,6 +19,16 @@ an API client from `@aac/api-clients` and calls its methods.
 - **Each script is standalone.** No script should import from another script.
   Shared logic goes in packages.
 
+## Directory Structure
+
+- **`src/`** — Evergreen operational tools. Scripts here are maintained,
+  documented, and expected to be run repeatedly over time (e.g., reporting,
+  data migration, keyword management).
+- **`src/scratch/`** — Temporary, exploratory, one-off scripts. Fair game
+  for deletion at any time. Use this for test scripts, data investigations,
+  and prototypes that validate an approach before building the real thing.
+  No expectation of maintenance or longevity.
+
 ## What Does NOT Belong Here
 
 - Web servers or API endpoints (those go in `apps/`)

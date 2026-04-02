@@ -252,11 +252,10 @@ aac-astro patterns) WITHOUT touching either production system.
     serviceAccountKey: object;
   }
   ```
-- [ ] `[DISCUSS]` The `googleapis` npm package is heavy (171KB). aac-slim doesn't use it. Do we:
-  - Use `googleapis` (what aac-astro uses) — heavier but handles auth complexity
-  - Use raw `fetch()` (what aac-slim uses for its APIs) — lighter but more manual auth
-  - Recommendation: Use `googleapis` for Google APIs. The auth complexity is real and the library handles token refresh, service accounts, etc.
-- [ ] Add `googleapis` as dependency of `@aac/api-clients`
+- [x] ~~`[DISCUSS]`~~ **RESOLVED (2026-04-02):** Using `googleapis` package for all Google API
+  clients. Auth complexity (service accounts, OAuth2, token refresh) justifies the weight.
+  Shared across Analytics, Calendar, Ads, and GSC clients.
+- [x] Add `googleapis` as dependency of `@aac/api-clients` (done 2026-04-02)
 - [ ] Implement: `listEvents(calendarId, dateRange)`, `getEvent(calendarId, eventId)`
 - [ ] Implement: photo download via Google Drive (currently in project-import-core.js)
 - [ ] Write tests
@@ -280,22 +279,34 @@ aac-astro patterns) WITHOUT touching either production system.
 - [ ] Write tests
 - [ ] Verify build passes
 
-### 0.13 — @aac/api-clients: Google Analytics Client
+### 0.13 — @aac/api-clients: Google Analytics Client (PARTIAL — 2026-04-02)
 
-- [ ] Read aac-astro `api/analytics-health.ts` — Vercel cron health check
-- [ ] Read aac-astro analytics scripts — `ga4-report.js`, etc.
-- [ ] Note: Uses raw fetch to `analyticsdata.googleapis.com/v1beta`
-- [ ] `[DISCUSS]` Should this use `googleapis` package's analytics library or raw fetch?
-- [ ] Implement: `runReport(propertyId, request)` — wraps the Data API
-- [ ] Write tests
-- [ ] Verify build passes
+- [x] Read aac-astro analytics scripts — `ga4-report.js`, `conversion-journeys.js`
+- [x] ~~`[DISCUSS]`~~ **RESOLVED (2026-04-02):** Uses `googleapis` package (not raw fetch).
+  Auth complexity, token refresh, and shared usage across Calendar/Ads/GSC clients
+  justifies the dependency. Added `googleapis@^171.4.0` to `@aac/api-clients`.
+- [x] Implement: `runReport(request)` — wraps `analyticsdata.properties.runReport()`
+  with typed `GA4ReportRequest`/`GA4ReportResponse` interfaces
+- [x] Implement: `parseRows(response)` — convenience helper converting parallel
+  dimension/metric arrays into flat objects (extracted from aac-astro pattern)
+- [x] Write tests (7 tests: request passthrough, empty response, errors, auth scopes, parseRows)
+- [x] Verify build passes
+- [ ] Read aac-astro `api/analytics-health.ts` — Vercel cron health check (deferred)
+- [ ] Full client expansion (batch reports, realtime, etc.) — deferred to Phase 3
 
-### 0.14 — @aac/api-clients: Google Search Console Client
+Note: Minimal extraction for GA4↔Pipedrive correlation test script. Only
+`runReport()` and `parseRows()` implemented. Full expansion when website
+migration begins.
 
-- [ ] Read aac-astro `scripts/gsc-report.js` and related scripts
-- [ ] Implement: `queryPerformance(siteUrl, request)`
-- [ ] Write tests
-- [ ] Verify build passes
+### 0.14 — @aac/api-clients: Google Search Console Client (PARTIAL — 2026-04-02)
+
+- [x] Read aac-astro `scripts/gsc-report.js` — extracted query pattern
+- [x] Implement: `queryPerformance(request)` — wraps `searchanalytics.query()`
+  with typed `GSCQueryRequest`/`GSCQueryResponse` interfaces, dimension filter support
+- [x] OAuth2 + service account auth (same pattern as GA4 client)
+- [x] Verify build passes
+- [ ] Write tests (deferred — client works, used in attribution investigation)
+- [ ] Full client expansion (sitemaps.list, etc.) — deferred to Phase 3
 
 ### 0.15 — @aac/api-clients: Buffer Client (NEW — not in aac-slim)
 
@@ -651,24 +662,156 @@ This expands the existing Quo webhook Gemini prompt to detect commitments.
 - [ ] Test with sample transcripts and messages
 - [ ] Verify to-dos appear in Command Center dashboard
 
-#### 1.11 — Full-Funnel Attribution Page
+#### 1.11 — Full-Funnel Attribution System
 
 **Depends on:** GA4 client (built in 1.8), QB + Pipedrive clients (done)
 **References:** aac-slim `src/lib/attribution.ts` (295 lines)
 
+##### Architecture Decision: Pipedrive as Attribution Source of Truth
+
+**Decision (2026-04-02):** Pipedrive is the single source of truth for
+per-deal attribution data. Middleware correlates data from GA4, Quo, and
+QuickBooks, then writes the result as custom fields and activities on the
+Pipedrive deal. Command Center reads from Pipedrive (and Redis for cached
+aggregates) to display attribution. This avoids the end-to-end user journey
+being scattered across multiple systems with no single place to query it.
+
+**Resolved:** DISCUSS item #23 — Attribution engine lives in middleware
+(correlation + writes) with Command Center as the read/display layer.
+
+##### The Full Attribution Chain
+
+```
+VISITOR ARRIVES → BROWSES → CLICKS PHONE/TEXT → ACTUAL CALL → LEAD IN CRM → PAYING JOB
+     ✅              ✅           ✅               ✅              ✅            ❌
+  (GA4 client_id)  (page_type,   (click event    (Quo webhook    (Pipedrive     (QuickBooks
+   in aac-astro)    scroll depth)  w/ location)   → Pipedrive)    auto-create)   lifecycle)
+```
+
+**What's live today:**
+- GA4 tracking: client_id, phone_call_click, text_message_click events with
+  page_path, phone_region (CT/MA), click_location, page_type
+- Quo webhooks: call.completed, message.received → auto-create Pipedrive
+  contacts, log activities with duration/transcripts
+- AI entity extraction: Gemini extracts name/email/address from transcripts
+- Reporting scripts: conversion-journeys.js in aac-astro reconstructs
+  multi-session journeys from GA4 data
+
+##### Sub-task A: GA4 → Quo Call Correlation
+
+**The problem:** A GA4 `phone_call_click` event proves someone clicked a phone
+number on the website. A Quo `call.completed` webhook proves someone actually
+called. Correlating these two events bridges "clicked" to "called."
+
+**Correlation signals:**
+- Timestamp proximity (click → call within ~5 minute window)
+- Phone line match (CT 860-573-8760 vs MA 617-668-1677)
+- Caller phone number (Quo knows who called; may match existing Pipedrive contact)
+
+**Validation results (2026-04-02):** ✅ APPROACH VALIDATED
+
+Correlation test script built (`tools/src/scratch/test-call-correlation.ts`)
+and run against 12 days of real data (3/21–4/02). Results:
+
+- **57% match rate at 5-minute window** (4 of 7 MA call clicks matched)
+- All matches were under 4 minutes (people click and call immediately)
+- Matched leads: Paul Nock (3.1 min), Matt/+6172089397 (1.6 min),
+  Helen Timental (3.7 min), Nate Moore (2.5 min)
+- 3 unmatched clicks were all before 6:36 AM Eastern (early morning GBP
+  visitors who tapped but didn't call)
+- Zero false positives at 5-minute window
+
+**Critical timezone findings:**
+- GA4 property was set to **Pacific time** (not Eastern). Changed to
+  America/New_York on 2026-04-02. Historical data before this date uses
+  Pacific timezone (add 3h for Eastern).
+- Pipedrive `add_time` is **UTC** (confirmed by comparing to known call times).
+- Pipedrive call timestamps are **call END time**, not start. Subtract
+  duration to get actual call start.
+
+**Conclusion:** Timestamp correlation is sufficient for this volume level.
+No need for session token passthrough. The 5-minute window is tight enough
+to avoid false positives at AAC's call volume.
+
+**Remaining issues:**
+- Pipedrive SMS activities not queryable by type (mixed into `call` bucket)
+- Call duration field returning 0 for all activities (investigate)
+- Edward's line (339-217-5091) not filterable in historical data (webhook
+  now includes `Line:` field for future data)
+
+- [x] Build correlation test script (tools/src/scratch/)
+- [x] Run against 2-4 weeks of real data
+- [x] Evaluate false positive rate at different time windows
+- [x] ~~Decide approach~~ → Timestamp correlation validated, 5-min window works
+
+##### Sub-task B: QuickBooks Lifecycle → Pipedrive Deal Stages
+
+**The problem:** Revenue attribution requires knowing when a lead became a
+paying job. The actual business lifecycle is tracked across QuickBooks and
+Google Calendar, but Pipedrive deals don't reflect this lifecycle today.
+
+**Real-world lifecycle and system mapping:**
+
+| Business Event | Source System | Pipedrive Deal Stage |
+|----------------|--------------|---------------------|
+| Quote created | QuickBooks (estimate) | "Quoted" |
+| Job scheduled | Google Calendar (closed job event) | "Scheduled" |
+| Quote → Invoice | QuickBooks (invoice created) | "Job Complete" |
+| Invoice paid | QuickBooks (payment received) | "Won / Closed" |
+
+**Implementation priority:**
+1. **QuickBooks → Pipedrive** (high priority): QB invoice webhooks already
+   flow into middleware. When an invoice is created (quote converted), update
+   the Pipedrive deal stage. When paid, mark won with revenue amount. This
+   gives us 3 of 4 lifecycle transitions without new infrastructure.
+2. **Google Calendar → Pipedrive** (future): Requires Calendar webhook or
+   polling job — new infrastructure. The "Scheduled" stage is useful but not
+   essential for revenue attribution. Build when calendar integration matures.
+
+- [ ] Add QB estimate/invoice lifecycle detection to middleware webhook handler
+- [ ] Create Pipedrive deal stage update logic in middleware
+- [ ] Add `getPaidInvoices`, `getInvoice` methods back to QuickBooksClient
+- [ ] Map QB invoice → Pipedrive deal (via customer phone/email match)
+- [ ] Write revenue amount to Pipedrive deal when invoice is paid
+- [ ] Future: Google Calendar webhook for "Scheduled" stage transition
+
+##### Sub-task C: GCLID Capture & Offline Conversion Import (OCI)
+
+**The problem:** Google Ads optimizes for clicks, not revenue. Feeding actual
+revenue data back to Google Ads lets Smart Bidding optimize for $5K jobs
+instead of tire-kicker clicks.
+
+**Pipeline (not yet built, documented in aac-astro GOOGLE-ADS-STRATEGY.md):**
+1. CAPTURE: aac-astro JS reads `?gclid=` from URL, stores in localStorage
+2. PASS: GCLID included in GA4 phone_call_click event parameters
+3. CRM: GCLID stored on Pipedrive deal custom field
+4. CLOSE: Deal marked won with revenue (via Sub-task B above)
+5. UPLOAD: Batch script uploads closed-won deals + GCLIDs to Google Ads OCI API
+
+**Timeline:** GCLID capture is trivial (5 lines of JS in aac-astro, separate
+task). OCI upload script deferred until conversion volume justifies it
+(~30 conversions/month, estimated Month 3-4).
+
+- [ ] GCLID capture in aac-astro Layout.astro (separate task, not in this repo)
+- [ ] Add "Google Click ID" custom field to Pipedrive
+- [ ] Add "Landing Page" custom field to Pipedrive
+- [ ] Build OCI upload script (when volume justifies)
+
+##### Sub-task D: Attribution Engine & Command Center Page
+
 - [ ] Rebuild attribution engine logic:
   - [ ] Extract and adapt `runAttribution()` from aac-slim attribution.ts
-  - [ ] Add `getPaidInvoices`, `getInvoice` methods back to QuickBooksClient
   - [ ] Add `getPersonReferredBy`, `getPipedriveUser`, `getPersonOwnerId` methods back to PipedriveClient
-- [ ] Create `app/api/attribution/route.ts`:
+- [ ] Create `app/api/attribution/route.ts` (Command Center):
   - [ ] Accept date range parameter
-  - [ ] Fetch paid QB invoices → trace to Pipedrive person → walk referral chain
-  - [ ] Correlate with GA4 session data
-  - [ ] Include UTM source attribution
-- [ ] Create `/attribution` detail page:
-  - [ ] Per-job attribution view (full funnel)
-  - [ ] Aggregated channel ROI
+  - [ ] Read correlated attribution data from Pipedrive (source of truth)
+  - [ ] Include UTM source attribution from GA4 session data
+  - [ ] Cache aggregates in Redis for dashboard performance
+- [ ] Create `/attribution` detail page (Command Center):
+  - [ ] Per-job attribution view (full funnel: visit → click → call → lead → quote → job → paid)
+  - [ ] Aggregated channel ROI (organic, paid, referral, direct)
   - [ ] Date range + branch filter (MA vs CT)
+  - [ ] Revenue by landing page, by source/medium
 
 #### 1.12 — Gmail Monitoring
 
@@ -1176,7 +1319,7 @@ These need resolution before or during the relevant phase:
 5. Custom Pipedrive field keys: config or runtime discovery?
 6. Gemini client: one class or two? Where does prompt engineering live?
 7. Google OAuth2 shared auth: shared-utils, separate package, or per-client?
-8. `googleapis` npm package: use it or raw fetch?
+8. ~~`googleapis` npm package: use it or raw fetch?~~ **RESOLVED (2026-04-02):** Using `googleapis` for all Google API clients. Auth complexity justifies the dependency weight.
 9. Google Business Profile: own client or not?
 10. Shared types granularity: minimal or full?
 11. Suppression lists: shared-utils or marketing-specific?
@@ -1195,7 +1338,7 @@ These need resolution before or during the relevant phase:
 20. Quo webhook split: how to separate operational vs. marketing logic?
 21. Campaign routes: straight to marketing or temporary in middleware?
 22. UI pages: where do they go?
-23. Attribution engine: middleware-specific or shared?
+23. ~~Attribution engine: middleware-specific or shared?~~ **RESOLVED (2026-04-02):** Middleware owns correlation + writes (it receives the webhooks). Command Center owns display. Pipedrive is the single source of truth for per-deal attribution data.
 24. Sandbox environments available?
 
 ### Phase 4 (Marketing)
