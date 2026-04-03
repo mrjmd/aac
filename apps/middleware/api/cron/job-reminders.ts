@@ -18,6 +18,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
+import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { getCalendar, getPipedrive, getQuo } from '../../lib/clients.js';
 import { getEnv } from '../../lib/env.js';
 import { verifyCronAuth } from '../../lib/cron.js';
@@ -230,7 +231,9 @@ async function processReminder(
     }
 
     // Try to find the Pipedrive person
-    // First check for PipedriveID in description, then fall back to name search
+    // First check for PipedriveID in description, then fall back to name search.
+    // Always use getPerson() for the full record — search results have a
+    // different shape (phone may be a string, not an array).
     let person = null;
     const pipedriveId = extractPipedriveId(event.description);
 
@@ -239,7 +242,11 @@ async function processReminder(
     }
 
     if (!person) {
-      person = await pipedrive.searchPersonByName(event.summary);
+      const searchResult = await pipedrive.searchPersonByName(event.summary);
+      if (searchResult) {
+        // Re-fetch full person record by ID for consistent shape
+        person = await pipedrive.getPerson(searchResult.id);
+      }
     }
 
     if (!person) {
@@ -250,8 +257,8 @@ async function processReminder(
       return { ...baseResult, personName: null, phone: null, status: 'skipped_no_person' };
     }
 
-    // Get primary phone number
-    const primaryPhone = person.phone.find((p) => p.primary)?.value || person.phone[0]?.value;
+    // Get primary phone number using the static helper
+    const primaryPhone = PipedriveClient.getPrimaryPhone(person);
     if (!primaryPhone) {
       log.warn('Pipedrive person has no phone number', {
         eventId: event.id,

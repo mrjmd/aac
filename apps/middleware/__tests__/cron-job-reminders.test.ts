@@ -103,6 +103,7 @@ describe('cron/job-reminders', () => {
   it('dry run finds events and matches persons without sending', async () => {
     mockListEvents.mockResolvedValue([sampleEvent]);
     mockSearchPersonByName.mockResolvedValue(samplePerson);
+    mockGetPerson.mockResolvedValue(samplePerson);
 
     const res = makeRes();
     await handler(makeReq({ dry: 'true' }), res);
@@ -121,6 +122,7 @@ describe('cron/job-reminders', () => {
   it('sends SMS in non-dry mode', async () => {
     mockListEvents.mockResolvedValue([sampleEvent]);
     mockSearchPersonByName.mockResolvedValue(samplePerson);
+    mockGetPerson.mockResolvedValue(samplePerson);
 
     const res = makeRes();
     await handler(makeReq(), res);
@@ -146,7 +148,8 @@ describe('cron/job-reminders', () => {
 
   it('skips person with no phone number', async () => {
     mockListEvents.mockResolvedValue([sampleEvent]);
-    mockSearchPersonByName.mockResolvedValue({
+    mockSearchPersonByName.mockResolvedValue(samplePerson);
+    mockGetPerson.mockResolvedValue({
       ...samplePerson,
       phone: [],
     });
@@ -162,6 +165,7 @@ describe('cron/job-reminders', () => {
     const event2 = { ...sampleEvent, id: 'evt-2' }; // Same summary (name)
     mockListEvents.mockResolvedValue([sampleEvent, event2]);
     mockSearchPersonByName.mockResolvedValue(samplePerson);
+    mockGetPerson.mockResolvedValue(samplePerson);
 
     const res = makeRes();
     await handler(makeReq({ dry: 'true' }), res);
@@ -194,7 +198,8 @@ describe('cron/job-reminders', () => {
       description: 'Foundation repair\nPipedriveID: 999',
     };
     mockListEvents.mockResolvedValue([eventWithBadId]);
-    mockGetPerson.mockResolvedValue(null); // ID lookup fails
+    // First call (by PipedriveID 999) fails, second call (re-fetch after name search) succeeds
+    mockGetPerson.mockResolvedValueOnce(null).mockResolvedValueOnce(samplePerson);
     mockSearchPersonByName.mockResolvedValue(samplePerson);
 
     const res = makeRes();
