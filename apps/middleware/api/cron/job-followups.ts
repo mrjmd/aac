@@ -81,20 +81,32 @@ function guessRegion(location: string): string {
 }
 
 /**
- * Get the date range for "N days ago" in Eastern time.
+ * Get a date range in Eastern time.
+ * If dateOverride is provided (YYYY-MM-DD), use that date directly.
+ * Otherwise, calculate N days ago from today.
  */
-function getPastDateRange(daysAgo: number): { timeMin: string; timeMax: string } {
-  const now = new Date();
-  const eastern = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  eastern.setDate(eastern.getDate() - daysAgo);
+function getDateRange(daysAgo: number, dateOverride?: string): { timeMin: string; timeMax: string; dateLabel: string } {
+  let year: number, month: string, day: string;
 
-  const year = eastern.getFullYear();
-  const month = String(eastern.getMonth() + 1).padStart(2, '0');
-  const day = String(eastern.getDate()).padStart(2, '0');
+  if (dateOverride && /^\d{4}-\d{2}-\d{2}$/.test(dateOverride)) {
+    const parts = dateOverride.split('-');
+    year = parseInt(parts[0], 10);
+    month = parts[1];
+    day = parts[2];
+  } else {
+    const now = new Date();
+    const eastern = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    eastern.setDate(eastern.getDate() - daysAgo);
+    year = eastern.getFullYear();
+    month = String(eastern.getMonth() + 1).padStart(2, '0');
+    day = String(eastern.getDate()).padStart(2, '0');
+  }
 
+  const dateLabel = `${year}-${month}-${day}`;
   return {
-    timeMin: `${year}-${month}-${day}T00:00:00-04:00`,
-    timeMax: `${year}-${month}-${day}T23:59:59-04:00`,
+    timeMin: `${dateLabel}T00:00:00-04:00`,
+    timeMax: `${dateLabel}T23:59:59-04:00`,
+    dateLabel,
   };
 }
 
@@ -107,6 +119,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const isDryRun = req.query.dry === 'true';
   const delayDays = parseInt(req.query.delay as string, 10) || DEFAULT_DELAY_DAYS;
+  const dateOverride = req.query.date as string | undefined;
   const results: FollowUpResult[] = [];
   let sent = 0;
   let skipped = 0;
@@ -117,9 +130,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const calendar = getCalendar();
     const pipedrive = getPipedrive();
 
-    const { timeMin, timeMax } = getPastDateRange(delayDays);
+    const { timeMin, timeMax, dateLabel } = getDateRange(delayDays, dateOverride);
 
-    log.info('Job follow-ups cron started', { isDryRun, delayDays, timeMin, timeMax });
+    log.info('Job follow-ups cron started', { isDryRun, delayDays, dateLabel, timeMin, timeMax });
 
     const events = await calendar.listEvents({
       timeMin,
@@ -150,7 +163,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({
       dryRun: isDryRun,
-      lookbackDate: timeMin.split('T')[0],
+      lookbackDate: dateLabel,
       delayDays,
       summary: { sent, skipped, errors, totalEvents: events.length },
       results,

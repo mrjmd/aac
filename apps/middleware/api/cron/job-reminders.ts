@@ -88,27 +88,32 @@ function extractPipedriveId(description: string | undefined): string | null {
 }
 
 /**
- * Get tomorrow's date range in ISO format (Eastern timezone).
+ * Get a date range in ISO format (Eastern timezone).
+ * If dateOverride is provided (YYYY-MM-DD), use that date.
+ * Otherwise, use tomorrow.
  */
-function getTomorrowRange(): { timeMin: string; timeMax: string } {
-  const now = new Date();
-  // Get tomorrow in Eastern time
-  const eastern = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  eastern.setDate(eastern.getDate() + 1);
-  eastern.setHours(0, 0, 0, 0);
-  const tomorrowStart = new Date(eastern);
-  eastern.setHours(23, 59, 59, 999);
-  const tomorrowEnd = new Date(eastern);
+function getDateRange(dateOverride?: string): { timeMin: string; timeMax: string; dateLabel: string } {
+  let year: number, month: string, day: string;
 
-  // Convert back to UTC ISO strings
-  // Use a fixed offset approach: construct the Eastern midnight directly
-  const year = tomorrowStart.getFullYear();
-  const month = String(tomorrowStart.getMonth() + 1).padStart(2, '0');
-  const day = String(tomorrowStart.getDate()).padStart(2, '0');
+  if (dateOverride && /^\d{4}-\d{2}-\d{2}$/.test(dateOverride)) {
+    const parts = dateOverride.split('-');
+    year = parseInt(parts[0], 10);
+    month = parts[1];
+    day = parts[2];
+  } else {
+    const now = new Date();
+    const eastern = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    eastern.setDate(eastern.getDate() + 1);
+    year = eastern.getFullYear();
+    month = String(eastern.getMonth() + 1).padStart(2, '0');
+    day = String(eastern.getDate()).padStart(2, '0');
+  }
 
+  const dateLabel = `${year}-${month}-${day}`;
   return {
-    timeMin: `${year}-${month}-${day}T00:00:00-04:00`,
-    timeMax: `${year}-${month}-${day}T23:59:59-04:00`,
+    timeMin: `${dateLabel}T00:00:00-04:00`,
+    timeMax: `${dateLabel}T23:59:59-04:00`,
+    dateLabel,
   };
 }
 
@@ -120,6 +125,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!verifyCronAuth(req, res)) return;
 
   const isDryRun = req.query.dry === 'true';
+  const dateOverride = req.query.date as string | undefined;
   const results: ReminderResult[] = [];
   let sent = 0;
   let skipped = 0;
@@ -130,9 +136,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const calendar = getCalendar();
     const pipedrive = getPipedrive();
 
-    const { timeMin, timeMax } = getTomorrowRange();
+    const { timeMin, timeMax, dateLabel } = getDateRange(dateOverride);
 
-    log.info('Job reminders cron started', { isDryRun, timeMin, timeMax });
+    log.info('Job reminders cron started', { isDryRun, dateLabel, timeMin, timeMax });
 
     // Fetch tomorrow's events with technician filtering
     const events = await calendar.listEvents({
@@ -184,7 +190,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({
       dryRun: isDryRun,
-      date: getTomorrowRange().timeMin.split('T')[0],
+      date: dateLabel,
       summary: { sent, skipped, errors, totalEvents: events.length },
       results,
     });
