@@ -11,10 +11,6 @@
     {
       "path": "/api/cron/job-reminders",
       "schedule": "0 12 * * *"
-    },
-    {
-      "path": "/api/cron/job-followups",
-      "schedule": "0 13 * * *"
     }
   ]
 }
