@@ -28,8 +28,18 @@ export interface EnvConfig {
     realmId: string;
     redirectUri: string;
   };
+  google: {
+    clientId: string | null;
+    clientSecret: string | null;
+    refreshToken: string | null;
+    calendarId: string;
+    technicianEmails: string[];
+  };
   notifications: {
     alertPhoneNumber: string;
+  };
+  cron: {
+    secret: string | null;
   };
   redis: {
     url: string;
@@ -74,8 +84,21 @@ export function getEnv(): EnvConfig {
       realmId: requireEnv('QUICKBOOKS_REALM_ID'),
       redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
     },
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID || null,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || null,
+      refreshToken: process.env.GOOGLE_REFRESH_TOKEN || null,
+      calendarId: process.env.GOOGLE_CALENDAR_ID || 'matt@attackacrack.com',
+      technicianEmails: (process.env.TECHNICIAN_EMAILS || 'mike@attackacrack.com,harrringtonm@gmail.com')
+        .split(',')
+        .map((e) => e.trim())
+        .filter(Boolean),
+    },
     notifications: {
       alertPhoneNumber: requireEnv('ALERT_PHONE_NUMBER'),
+    },
+    cron: {
+      secret: process.env.CRON_SECRET || null,
     },
     redis: {
       url: requireEnv('UPSTASH_REDIS_REST_URL'),

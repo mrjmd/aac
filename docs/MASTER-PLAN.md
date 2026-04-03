@@ -22,11 +22,20 @@ noted inline.
    - [1E: Remaining Cards](#phase-1e--remaining-cards-build-as-needed) — New Leads, Campaigns, Dates, Analytics
    - [1F: Enhancements](#phase-1f--enhancements-after-core-cards-work) — Config, AI detection, Attribution, Gmail
    - [1G: Deploy & Polish](#phase-1g--deploy--polish) — Full production setup
-3. [Phase 2: Shadow Middleware Migration](#phase-2-shadow-middleware-migration)
-4. [Phase 3: Website Migration](#phase-3-website-migration)
-5. [Phase 4: Marketing Engine (Greenfield from Spec)](#phase-4-marketing-engine)
-6. [Cross-Phase: Tools Migration](#cross-phase-tools-migration)
-7. [Ongoing: Infrastructure & Governance](#ongoing-infrastructure--governance)
+3. [Phase 2: Clean Middleware Extraction](#phase-2-clean-middleware-extraction)
+4. [Phase 2.5: Middleware Automation](#phase-25-middleware-automation--google-calendar--cron-jobs)
+   - [2.5A: Google Calendar Client](#25a--google-calendar-client-prerequisite)
+   - [2.5B: Cron Infrastructure](#25b--cron-infrastructure)
+   - [2.5C: Job Reminder Texts](#25c--job-reminder-texts-crawl)
+   - [2.5D: Post-Job Follow-Up Texts](#25d--post-job-follow-up-texts-crawl)
+   - [2.5E: Approval Detection](#25e--approval-detection-walk)
+   - [2.5F: Stub Calendar Event Creation](#25f--stub-calendar-event-creation-walk)
+   - [2.5G: Project Discovery & Staging](#25g--project-discovery--staging-walk)
+   - [2.5H: Scheduling Automation](#25h--scheduling-automation-run)
+5. [Phase 3: Storefront Migration](#phase-3-storefront-migration)
+6. [Phase 4: Marketing Engine (Greenfield from Spec)](#phase-4-marketing-engine)
+7. [Cross-Phase: Tools Migration](#cross-phase-tools-migration)
+8. [Ongoing: Infrastructure & Governance](#ongoing-infrastructure--governance)
 
 ---
 
@@ -235,7 +244,11 @@ aac-astro patterns) WITHOUT touching either production system.
 - [x] Write Vitest tests
 - [x] Verify build passes
 
-### 0.11 — @aac/api-clients: Google Calendar Client
+### 0.11 — @aac/api-clients: Google Calendar Client → **See Phase 2.5A**
+
+**Promoted to Phase 2.5A.** This client is the prerequisite for all middleware
+automation (reminders, follow-ups, project discovery, scheduling). Full task
+breakdown is in Phase 2.5A below.
 
 - [ ] Read aac-astro `scripts/lib/project-import-core.js` — understand the Calendar/Drive usage
 - [ ] `[DISCUSS]` Auth model: aac-astro uses a shared OAuth2 client with stored tokens in `scripts/.credentials/`. The shared client needs to support:
@@ -406,7 +419,7 @@ API clients are built only when a card needs them. No upfront prerequisite phase
 | Middleware Health | None (Redis only) | **Ready now** |
 | Smart To-Do | None for MVP (Redis only), Gemini for AI detection | **Ready now** |
 | Business Pulse | QuickBooksClient, PipedriveClient | **Ready now** (both done) |
-| Business Pulse (jobs) | Google Calendar Client, Google OAuth | Build when adding job counts |
+| Business Pulse (jobs) | Google Calendar Client, Google OAuth | **Phase 2.5A** (also unlocks reminders, follow-ups, scheduling) |
 | New Leads | PipedriveClient | Ready (done) |
 | Marketing Campaigns | None (Redis only) | Ready |
 | Important Dates | PipedriveClient (done), Google Calendar Client | Build Calendar when needed |
@@ -534,8 +547,9 @@ Google Calendar (scheduled jobs) can be added later.
   - [ ] Approved estimates list with "Schedule" action links
 - [ ] Auto-create to-do when estimate status changes to "Accepted":
   - [ ] Add Redis key schema for approved estimate tracking
-  - [ ] Middleware or polling: detect QB estimate status changes
+  - [ ] Middleware or polling: detect QB estimate status changes — **see Phase 2.5E**
   - [ ] Create to-do item: "Schedule job for [customer] — Estimate #X ($Y)"
+  - [ ] Stub calendar event creation — **see Phase 2.5F**
 
 ---
 
@@ -994,6 +1008,441 @@ to plain Vercel function (`export default async function handler(req: VercelRequ
 - [ ] Archive aac-slim repo as read-only
 - [ ] Delete old Vercel project (or keep for reference, no cost if no traffic)
 - [ ] Update root CLAUDE.md to mark middleware migration as complete
+
+---
+
+## Phase 2.5: Middleware Automation — Google Calendar + Cron Jobs
+
+**Goal:** Add proactive automation to the middleware. Today it only *reacts* to
+webhooks. This phase adds cron-driven jobs that read Google Calendar and take
+action: sending reminder texts, follow-up texts, detecting approved estimates,
+creating stub calendar events, and staging completed project data for other
+systems to consume.
+
+**Risk level:** Low-Medium. New capabilities on top of proven middleware.
+Google Calendar is read/write (creating stub events), SMS is already proven
+(Quo client works). Main risk is calendar filtering logic — getting the wrong
+events could send reminders to the wrong people.
+
+**Why now:** Google Calendar is AAC's canonical source for job scheduling.
+Every automation in this phase reads from or writes to it. The calendar client
+(Phase 0 task 0.11) is the single prerequisite that unlocks all of this.
+
+**Approach:** Crawl → Walk → Run. Start with simple, high-value cron jobs
+(reminders, follow-ups), then add approval detection and stub event creation,
+then build toward scheduling automation.
+
+### 2.5A — Google Calendar Client (prerequisite)
+
+**Completes Phase 0 task 0.11.** The stub in `packages/api-clients/src/google-calendar.ts`
+needs real implementation using the `googleapis` package (already a dependency).
+
+- [ ] Read aac-astro `scripts/lib/project-import-core.js` — understand the
+  `fetchJobEvents()` pattern, filtering logic, and auth flow
+- [ ] Implement `GoogleCalendarClient` using `googleapis`:
+  - [ ] Constructor accepts `{ auth: OAuth2Client | GoogleAuth }` (same pattern
+    as GA4/GSC clients)
+  - [ ] `listEvents(calendarId, options)` — query events by date range, with
+    optional filtering by attendee, color, keyword. Returns typed event objects.
+  - [ ] `getEvent(calendarId, eventId)` — fetch single event with full details
+  - [ ] `createEvent(calendarId, data)` — create event with title, location,
+    description, color, start/end time, attendees. Returns event ID + HTML link.
+  - [ ] `updateEvent(calendarId, eventId, data)` — update existing event fields
+- [ ] Design `CalendarEvent` response type:
+  ```typescript
+  interface CalendarEvent {
+    id: string;
+    summary: string;           // Event title (customer name)
+    location?: string;         // Address
+    description?: string;      // Job details, Pipedrive ID, etc.
+    start: string;             // ISO datetime
+    end: string;               // ISO datetime
+    colorId?: string;          // Google Calendar color code
+    attendees?: string[];      // Email addresses
+    htmlLink: string;          // Link to edit in Google Calendar
+    attachments?: { fileUrl: string; title: string }[];
+  }
+  ```
+- [ ] Write Vitest tests (mock googleapis)
+- [ ] Add export to `packages/api-clients/src/index.ts`
+- [ ] Verify build passes
+
+**Reference — Google Calendar color codes (from aac-astro):**
+- `10` (green) = Completed job
+- `5` (yellow) = Callback / follow-up visit
+- `3` (purple) = Assessment / investigation
+- Other colors TBD as filtering rules are refined
+
+**Calendar ID:** `matt@attackacrack.com`
+**Technician emails (for attendee filtering):**
+- `harrringtonm@gmail.com` (legacy)
+- `mike@attackacrack.com` (primary, transitioning to)
+- Cron jobs must check for EITHER email when filtering events by attendee.
+  The `listEvents()` client method accepts a single `attendeeEmail`, so callers
+  should query once per technician email and merge/deduplicate results. Or
+  skip the attendee filter and do it in app-level code.
+- **Future:** Technician email list should be configurable in Command Center
+  settings (same settings UI as message templates). This supports adding
+  technicians without code changes.
+
+### 2.5B — Cron Infrastructure
+
+The middleware today is purely webhook-driven (Vercel Serverless Functions).
+Cron jobs need a trigger mechanism.
+
+- [ ] `[DISCUSS]` Cron trigger approach:
+  - **Option A: Vercel Cron** — Add `vercel.json` cron config. Free tier allows
+    2 cron jobs (1/day), Pro allows unlimited. Simple, no new infrastructure.
+  - **Option B: QStash Scheduled Messages** — Already have Upstash. QStash can
+    call any endpoint on a schedule. More flexible, but adds QStash dependency.
+  - **Option C: GitHub Actions** — Already used for aac-astro project imports.
+    Works but adds latency and complexity for simple HTTP triggers.
+  - Recommendation: Start with Vercel Cron (simplest). Move to QStash if we
+    need more than 2 cron jobs on free tier or need sub-daily granularity.
+- [ ] Create `api/cron/` directory for cron-triggered endpoints
+- [ ] Add shared cron auth (verify requests come from Vercel/QStash, not public)
+- [ ] Add Google Calendar client initialization to `apps/middleware/lib/clients.ts`
+  (lazy singleton, same pattern as Pipedrive/Quo/QB clients)
+- [ ] Add Google OAuth credentials to middleware env vars:
+  - [ ] `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`
+  - [ ] Or `GOOGLE_SERVICE_ACCOUNT_KEY` for service account auth
+  - [ ] `[DISCUSS]` Which auth model? Service account is simpler for server-to-server.
+    OAuth2 with refresh token matches aac-astro's existing setup. If Matt's personal
+    calendar, service account needs calendar sharing. Leaning OAuth2 with refresh token.
+
+### 2.5C — Job Reminder Texts (crawl)
+
+**Value:** Customers get a professional reminder before their appointment. Most
+home service companies do this; AAC doesn't yet. Immediate credibility boost.
+
+Daily morning cron. For any jobs scheduled *tomorrow*, send a reminder SMS.
+
+- [ ] Create `api/cron/job-reminders.ts`:
+  - [ ] Query Google Calendar for tomorrow's events
+  - [ ] Filter: has a technician as attendee (`mike@attackacrack.com` OR
+    `harrringtonm@gmail.com`), has location (address), has description
+  - [ ] Include ALL job types: green (jobs), yellow (callbacks), purple (assessments)
+  - [ ] No keyword exclusions (unlike project import, which excludes callbacks)
+  - [ ] For each matching event:
+    - [ ] Extract customer name from event title (summary)
+    - [ ] Extract appointment time from event start
+    - [ ] Match to Pipedrive person (name search initially — see matching note below)
+    - [ ] Get phone number from Pipedrive person
+    - [ ] Send reminder SMS via Quo client
+    - [ ] Log reminder sent (Redis key for dedup — don't re-send on retry)
+- [ ] Reminder template (configurable — start with config file, move to
+  Command Center settings later):
+  ```
+  Hi {firstName}, this is a reminder from Attack A Crack Foundation Repair
+  that our technician will be at your home at {time} tomorrow, {date}.
+  Please let us know if you have any questions. Reply STOP to opt out.
+  ```
+- [ ] Edge cases:
+  - [ ] Multiple events for same person on same day → one reminder only
+  - [ ] Event with no attendees or no location → skip, log warning
+  - [ ] Person not found in Pipedrive → skip, log warning (don't block other reminders)
+  - [ ] Weekend/holiday handling → send reminders regardless (jobs happen on weekends)
+- [ ] Add health tracking: `reminders:sent:{date}` counter in Redis
+- [ ] Write tests (mock calendar + Pipedrive + Quo)
+- [ ] Deploy and test with a real calendar event
+
+**Calendar → Pipedrive matching (initial approach):**
+Name-based search via `PipedriveClient.searchPersonByName()`. This is imperfect
+(common names, realtor vs. homeowner discrepancy) but works for crawl stage.
+The tighter correlation comes in 2.5F when stub calendar events are created
+with Pipedrive IDs baked in — once that's in place, new events will have a
+reliable link. For legacy events without a Pipedrive ID, fall back to name search.
+
+**Future improvement:** Check event description for a `PipedriveID: {id}` field
+first, fall back to name search. This becomes reliable once stub event creation (2.5F)
+is in production.
+
+### 2.5D — Post-Job Follow-Up Texts (crawl)
+
+**Value:** Automated check-in after job completion. Requests a Google review,
+which is the #1 way to grow local SEO rankings. Currently done manually (or
+not at all).
+
+Daily morning cron. For jobs completed 1-2 days ago, send a follow-up SMS.
+
+- [ ] Create `api/cron/job-followups.ts`:
+  - [ ] Query Google Calendar for events that ended 1-2 days ago
+    (configurable delay, default 2 days)
+  - [ ] Filter: same criteria as project import (green color = completed jobs
+    only, 2+ hours, Mike as attendee, has location). Callbacks and assessments
+    excluded — only real jobs get follow-ups.
+  - [ ] For each matching event:
+    - [ ] Match to Pipedrive person (same approach as reminders)
+    - [ ] Get phone number from Pipedrive person
+    - [ ] Send follow-up SMS via Quo client
+    - [ ] Log follow-up sent (Redis dedup)
+- [ ] Follow-up template (configurable):
+  ```
+  Hi {firstName}, this is Matt from Attack A Crack. I hope everything
+  went well with your recent repair. If you have any questions, don't
+  hesitate to reach out. If you're happy with the work, we'd really
+  appreciate a Google review: {reviewLink}
+
+  Thank you for choosing Attack A Crack!
+  ```
+- [ ] Config values (start in config file):
+  - [ ] `followUpDelayDays` — days after job completion (default: 2)
+  - [ ] `reviewLink` — Google review URL for the relevant location (MA vs CT)
+  - [ ] `followUpTemplate` — the message template
+- [ ] Edge cases:
+  - [ ] Already sent follow-up for this event → skip (Redis dedup by event ID)
+  - [ ] Person already left a review recently → skip (future enhancement)
+  - [ ] Person not found in Pipedrive → skip, log warning
+- [ ] Add health tracking: `followups:sent:{date}` counter
+- [ ] Write tests
+- [ ] Deploy and test
+
+**Future enhancement (noted, not building now):** Different follow-up templates
+for assessments vs. jobs. Assessments might get a "Thanks for letting us take a
+look — here's what we recommend" follow-up. This would require a separate
+template and different calendar filtering (purple color, shorter duration).
+
+### 2.5E — Approval Detection (walk)
+
+**The problem:** When a customer approves an estimate, Matt needs to know
+immediately so he can schedule the job. Today this happens via three channels,
+and there's no automation catching any of them.
+
+**Channel 1: QuickBooks estimate status change**
+
+This is the most common approval path. Customer receives estimate email from QB,
+clicks "Accept."
+
+- [ ] **Verify QB webhook support for estimates:**
+  - [ ] Check Intuit Developer Portal for `Estimate` webhook event type
+  - [ ] Confirm that estimate status change to "Accepted" fires an update webhook
+  - [ ] If webhooks work: register for Estimate events alongside existing Invoice events
+  - [ ] If webhooks don't fire on status change: implement polling (see below)
+- [ ] Add estimate methods to `@aac/api-clients` QuickBooksClient:
+  - [ ] `getEstimate(estimateId)` — fetch estimate with line items, customer, total, status
+  - [ ] `listEstimates(filter)` — query estimates by status (Accepted, Pending, etc.)
+  - [ ] Define `QBEstimate` type with relevant fields
+- [ ] Create `api/webhooks/quickbooks-estimate.ts` (or add to existing QB webhook):
+  - [ ] Receive QB webhook notification for Estimate update
+  - [ ] Fetch the estimate from QB API to check current status
+  - [ ] If status = "Accepted":
+    - [ ] Look up Pipedrive person via customer name/phone/email
+    - [ ] Update Pipedrive deal stage to "Estimate Accepted"
+    - [ ] Create to-do item in Redis: "Schedule job for [customer] — Estimate #X ($Y)"
+    - [ ] Trigger stub calendar event creation (2.5F)
+    - [ ] Send Matt an SMS alert: "Estimate approved: [customer] ($X)"
+  - [ ] Dedup: don't process same estimate approval twice
+- [ ] **Polling fallback** (if QB webhooks don't support estimate status changes):
+  - [ ] Add a daily cron `api/cron/check-estimates.ts`
+  - [ ] Query QB for estimates with status "Accepted" that haven't been processed
+  - [ ] Track processed estimate IDs in Redis
+  - [ ] Same downstream actions as webhook path
+
+**Channel 2: Text message ("looks good, let's schedule")**
+
+This is handled by the AI commitment detection feature (Phase 1F, task 1.10).
+When the Quo webhook processes an inbound message, the Gemini prompt detects
+scheduling intent and creates a to-do item. No additional middleware work needed
+here — it's already planned. Cross-reference: the to-do item should include
+enough context to trigger stub calendar event creation.
+
+**Channel 3: Email approval**
+
+Customer replies to estimate email or sends a new email saying they want to
+proceed. This requires Gmail monitoring (Phase 1F, task 1.12). Deferred until
+Gmail client is built. When it is:
+- [ ] Detect estimate-approval-like emails (AI classification)
+- [ ] Same downstream actions: deal stage update, to-do, stub event, alert
+
+**The funnel:** All three channels converge on the same outcome:
+1. Pipedrive deal stage → "Estimate Accepted"
+2. To-do item created
+3. Stub calendar event created (2.5F)
+4. Matt gets an SMS alert
+
+### 2.5F — Stub Calendar Event Creation (walk)
+
+**Value:** Eliminates the manual pain of creating calendar events. When an
+estimate is approved, a fully-populated calendar event is auto-created ~30 days
+out. Matt just drags it to the right date.
+
+**This also solves the calendar↔Pipedrive correlation problem.** Every stub
+event has the Pipedrive person ID in its description, so reminders (2.5C) and
+follow-ups (2.5D) can use a reliable ID match instead of fuzzy name search.
+
+- [ ] Create `lib/calendar-events.ts` in middleware:
+  - [ ] `createStubJobEvent(params)`:
+    - [ ] Title: customer name (from Pipedrive person or QB estimate)
+    - [ ] Location: customer address (from Pipedrive or QB)
+    - [ ] Description: structured block containing:
+      ```
+      Job: [estimate line items / service description]
+      Estimate: #[docNumber] — $[total]
+      PipedriveID: [personId]
+      PipedriveDealID: [dealId]
+      QuickBooksEstimateID: [estimateId]
+      Source: auto-created on [date] via approval detection
+      ```
+    - [ ] Start time: 30 days from now, 8:00 AM (placeholder)
+    - [ ] Duration: estimated based on job type (default 4 hours)
+    - [ ] Color: distinct "needs scheduling" color (TBD — maybe blue/`9`?)
+    - [ ] Attendees: Mike's email
+    - [ ] Returns: Google Calendar event HTML link
+  - [ ] Send Matt SMS: "Estimate approved for [name] ($X). Stub event created — [link]"
+- [ ] Wire into approval detection (2.5E): all three approval channels call
+  `createStubJobEvent()` as part of their downstream actions
+- [ ] Edge cases:
+  - [ ] Stub event already exists for this estimate → don't create duplicate
+    (track in Redis: `calendar:stub:{estimateId}` → event ID)
+  - [ ] Missing address → create event without location, add note to description
+  - [ ] Missing Pipedrive person → create event anyway, note in description
+- [ ] Write tests
+- [ ] Deploy and test end-to-end: approve estimate → stub event appears on calendar
+
+### 2.5G — Project Discovery & Staging (walk)
+
+**Value:** Moves the aac-astro project import pipeline into the monorepo with
+a cleaner architecture. Middleware discovers completed projects; downstream
+systems (website, marketing) react independently.
+
+**Architecture decision:** The middleware is the *discovery engine*. It runs a
+cron, finds completed projects on Google Calendar, pulls all relevant data
+(photos, classifications, metadata), and stages everything to a shared location.
+Other systems consume from that staging area:
+- **Website** picks up staged projects → generates markdown → commits to repo
+- **Marketing** picks up staged projects → publishes to GBP via Buffer
+
+This separates concerns: middleware doesn't edit the website or post to social
+media. It just collects and stages the data.
+
+- [ ] `[DISCUSS]` Staging mechanism:
+  - **Option A: Redis stream** — `XADD projects:discovered ...`. Consumers use
+    `XREAD` to process new entries. Natural fit for event-driven, multiple consumers.
+  - **Option B: Redis hash per project** — `projects:staged:{eventId}` with full
+    project data. Consumers poll for new entries. Simpler but requires polling.
+  - **Option C: Webhook/HTTP** — Middleware POSTs to website and marketing endpoints.
+    Tight coupling, but immediate.
+  - Recommendation: Redis stream (Option A). Multiple consumers, built-in ordering,
+    each consumer tracks its own position. The middleware already uses Redis heavily.
+- [ ] Create `api/cron/discover-projects.ts`:
+  - [ ] Query Google Calendar for completed jobs in the lookback window
+    (same filters as current aac-astro: green color, 2+ hours, Mike, has
+    location, keyword exclusions for callback/lunch/meeting/estimate-only)
+  - [ ] Check dedup manifest (Redis) — skip already-discovered events
+  - [ ] For each new completed project:
+    - [ ] Download photos from Google Drive (Mike's attached photos)
+    - [ ] Classify photos via Gemini (before/after)
+    - [ ] Parse location → city/state
+    - [ ] Detect service types
+    - [ ] Stage to Redis stream with full project data:
+      ```
+      {
+        eventId, customerName, city, state, coordinates,
+        serviceTypes, date, photos: [{ url, classification }],
+        description, pipedriveId (if available)
+      }
+      ```
+    - [ ] Update dedup manifest
+  - [ ] Schedule: twice weekly (Mon + Thu, matching current aac-astro cron)
+  - [ ] 14-day lookback buffer (matches current behavior — catches late photo uploads)
+- [ ] Phase 2 re-check: scan previously discovered projects for photo changes
+  (matches current "update" mode in aac-astro cron)
+- [ ] Migrate logic from aac-astro `scripts/lib/project-import-core.js`:
+  - [ ] `fetchJobEvents()` filtering logic → Google Calendar client query + app-level filtering
+  - [ ] `filterMikePhotos()` → Drive API integration (may need a minimal Drive client or method on Calendar client)
+  - [ ] `classifyPhotos()` → Gemini client
+  - [ ] `parseLocation()`, `detectServiceTypes()`, `generateContent()` → middleware lib functions
+- [ ] **Downstream consumers (built separately, documented here for reference):**
+  - [ ] Website consumer: reads from Redis stream, generates markdown, commits via
+    GitHub API or local git (during Phase 3 website migration)
+  - [ ] Marketing consumer: reads from Redis stream, posts to GBP via Buffer
+    (during Phase 4 marketing engine)
+- [ ] Write tests
+- [ ] Deploy and verify projects are staged correctly
+
+**Migration note:** The aac-astro GitHub Action (`import-projects.yml`) continues
+running until this is deployed and verified. Then the Action is disabled and the
+monorepo cron takes over.
+
+### 2.5H — Scheduling Automation (run)
+
+**Goal:** Reduce the time from "estimate approved" to "job on the calendar" as
+much as possible. This is the long-term vision — builds on everything above.
+
+**Crawl (2.5F above):** Stub event created automatically, Matt drags to right date.
+
+**Walk:**
+- [ ] When creating stub event, query Google Calendar for Matt's/Mike's
+  availability in the next 2-4 weeks
+- [ ] Suggest 3-5 open time slots in the SMS alert to Matt
+- [ ] Matt picks a slot (or manually adjusts)
+
+**Run:**
+- [ ] After estimate approval, send customer a text with available time slots:
+  "Your estimate has been approved! Here are some available dates for your repair:
+  [date 1], [date 2], [date 3]. Reply with your preferred date."
+- [ ] AI processes customer's reply (via Quo webhook commitment detection)
+- [ ] Auto-move stub event to selected date
+- [ ] Send confirmation to customer and Matt
+
+**Prerequisites for Run stage:**
+- Reliable calendar↔Pipedrive correlation (solved by 2.5F)
+- AI commitment detection working (Phase 1F, task 1.10)
+- Customer-facing SMS interaction patterns proven (2.5C and 2.5D)
+
+**Not building Run stage now.** Documenting the vision so crawl and walk
+stages are designed with it in mind.
+
+### 2.5 — Dependency Map
+
+```
+2.5A (Calendar Client) ──┬──→ 2.5B (Cron Infra) ──┬──→ 2.5C (Reminders)
+                         │                         ├──→ 2.5D (Follow-ups)
+                         │                         └──→ 2.5G (Project Discovery)
+                         │
+                         └──→ 2.5E (Approval Detection) ──→ 2.5F (Stub Events)
+                                                                    │
+                                                                    └──→ 2.5H (Scheduling)
+```
+
+**Crawl (build now):** 2.5A → 2.5B → 2.5C + 2.5D (parallel)
+**Walk (build next):** 2.5E → 2.5F, 2.5G (parallel, independent of each other)
+**Run (future):** 2.5H
+
+### 2.5 — Message Template Configuration
+
+Templates for reminders and follow-ups start as a config file in the middleware,
+with the intent to move them to Command Center settings (Phase 1F enhancement)
+once a Settings/Config UI exists.
+
+- [ ] Create `apps/middleware/lib/templates.ts`:
+  - [ ] Define template interface: `{ id, name, body, variables[] }`
+  - [ ] Load from `apps/middleware/config/templates.json`
+  - [ ] Variable substitution: `{firstName}`, `{time}`, `{date}`, `{reviewLink}`, etc.
+  - [ ] Validate all variables are provided at send time
+- [ ] Create `apps/middleware/config/templates.json`:
+  ```json
+  {
+    "jobReminder": {
+      "name": "Job Reminder (Day Before)",
+      "body": "Hi {firstName}, this is a reminder from Attack A Crack Foundation Repair that our technician will be at your home at {time} tomorrow, {date}. Please let us know if you have any questions. Reply STOP to opt out.",
+      "variables": ["firstName", "time", "date"]
+    },
+    "jobFollowUp": {
+      "name": "Post-Job Follow-Up",
+      "body": "Hi {firstName}, this is Matt from Attack A Crack. I hope everything went well with your recent repair. If you have any questions, don't hesitate to reach out. If you're happy with the work, we'd really appreciate a Google review: {reviewLink}\n\nThank you for choosing Attack A Crack!",
+      "variables": ["firstName", "reviewLink"]
+    },
+    "estimateApproved": {
+      "name": "Estimate Approved Alert (to Matt)",
+      "body": "Estimate approved: {customerName} — #{estimateNumber} (${amount}). Stub event created: {calendarLink}",
+      "variables": ["customerName", "estimateNumber", "amount", "calendarLink"]
+    }
+  }
+  ```
+- [ ] **Future:** Command Center settings page reads/writes templates via Redis,
+  middleware reads from Redis with config file as fallback. This way Matt can
+  edit templates from the dashboard without code changes.
 
 ---
 

@@ -193,3 +193,38 @@ export async function writeHeartbeat(): Promise<void> {
   const redis = getRedis();
   await redis.set(keys.heartbeat('middleware'), new Date().toISOString());
 }
+
+// ── Cron Job Tracking ───────────────────────────────────────────────
+
+/**
+ * Check if a cron action was already performed (e.g., reminder already sent
+ * for a specific calendar event). Uses SET NX with TTL.
+ * Returns true if this is new (not yet done), false if already done.
+ */
+export async function markCronAction(
+  action: string,
+  entityId: string,
+  ttlSeconds: number = 7 * 86_400 // 7 days default
+): Promise<boolean> {
+  const redis = getRedis();
+  const key = `cron:${action}:${entityId}`;
+  const result = await redis.set(key, new Date().toISOString(), { nx: true, ex: ttlSeconds });
+  return result === 'OK';
+}
+
+/**
+ * Track a cron run for health observability.
+ */
+export async function trackCronRun(
+  jobName: string,
+  result: { sent: number; skipped: number; errors: number }
+): Promise<void> {
+  const redis = getRedis();
+  const now = new Date().toISOString();
+  const today = now.split('T')[0];
+
+  await Promise.all([
+    redis.set(`cron:${jobName}:last-run`, now),
+    redis.set(`cron:${jobName}:${today}:result`, JSON.stringify(result), { ex: 30 * 86_400 }),
+  ]);
+}

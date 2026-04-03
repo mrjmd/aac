@@ -25,7 +25,13 @@ export { GeminiClient } from './gemini.js';
 export type { GeminiConfig } from './gemini.js';
 
 export { GoogleCalendarClient } from './google-calendar.js';
-export type { GoogleCalendarConfig } from './google-calendar.js';
+export type {
+  GoogleCalendarConfig,
+  CalendarEvent,
+  ListEventsOptions,
+  CreateEventInput,
+  UpdateEventInput,
+} from './google-calendar.js';
 
 export { GoogleAdsClient } from './google-ads.js';
 export type { GoogleAdsConfig } from './google-ads.js';
