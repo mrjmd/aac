@@ -1110,10 +1110,13 @@ Cron jobs need a trigger mechanism.
     OAuth2 with refresh token matches aac-astro's existing setup. If Matt's personal
     calendar, service account needs calendar sharing. Leaning OAuth2 with refresh token.
 
-### 2.5C — Job Reminder Texts (crawl)
+### 2.5C — Job Reminder Texts (crawl) ✅ LIVE (2026-04-03)
 
 **Value:** Customers get a professional reminder before their appointment. Most
 home service companies do this; AAC doesn't yet. Immediate credibility boost.
+
+**Status:** Cron active since 2026-04-03. Fires daily at 8:00 AM Eastern
+(0 12 * * * UTC). Dry run and date override supported via query params.
 
 Daily morning cron. For any jobs scheduled *tomorrow*, send a reminder SMS.
 
@@ -1157,13 +1160,20 @@ reliable link. For legacy events without a Pipedrive ID, fall back to name searc
 first, fall back to name search. This becomes reliable once stub event creation (2.5F)
 is in production.
 
-### 2.5D — Post-Job Follow-Up Texts (crawl)
+### 2.5D — Post-Job Follow-Up Texts (crawl) — BUILT, NOT YET ACTIVE
 
 **Value:** Automated check-in after job completion. Requests a Google review,
 which is the #1 way to grow local SEO rankings. Currently done manually (or
 not at all).
 
-Daily morning cron. For jobs completed 1-2 days ago, send a follow-up SMS.
+**Status:** Endpoint built and tested. Cron disabled in vercel.json while
+reminders bake for one week. **Re-enable after 2026-04-10** by adding the
+cron entry back to `apps/middleware/vercel.json`:
+```json
+{ "path": "/api/cron/job-followups", "schedule": "0 13 * * *" }
+```
+
+Daily morning cron. For jobs completed 1 day ago, send a follow-up SMS.
 
 - [ ] Create `api/cron/job-followups.ts`:
   - [ ] Query Google Calendar for events that ended 1-2 days ago
