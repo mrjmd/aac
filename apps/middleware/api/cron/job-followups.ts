@@ -38,7 +38,7 @@ const EXCLUDE_KEYWORDS = ['callback', 'lunch', 'dinner', 'meeting', 'estimate-on
 const MIN_DURATION_MINUTES = 120;
 
 /** Default days after job completion to send follow-up */
-const DEFAULT_DELAY_DAYS = 2;
+const DEFAULT_DELAY_DAYS = 1;
 
 /** Google review URLs by region */
 const REVIEW_LINKS: Record<string, string> = {
