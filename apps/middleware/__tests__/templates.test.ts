@@ -14,7 +14,7 @@ describe('templates', () => {
       expect(result).toContain('8:00 AM');
       expect(result).toContain('Friday, April 4');
       expect(result).toContain('Attack A Crack');
-      expect(result).toContain('Reply STOP');
+      expect(result).toContain('let me know');
     });
 
     it('renders jobFollowUp with all variables', () => {

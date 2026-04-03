@@ -14,9 +14,9 @@ const templates = {
   jobReminder: {
     name: 'Job Reminder (Day Before)',
     body: [
-      'Hi {firstName}, this is a reminder from Attack A Crack Foundation Repair',
+      'Hi {firstName}, this is a reminder from Attack A Crack',
       'that our technician will be at your home at {time} tomorrow, {date}.',
-      'Please let us know if you have any questions. Reply STOP to opt out.',
+      'Please let me know if you have any questions.',
     ].join(' '),
   },
 

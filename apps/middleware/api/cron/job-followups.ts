@@ -40,13 +40,8 @@ const MIN_DURATION_MINUTES = 120;
 /** Default days after job completion to send follow-up */
 const DEFAULT_DELAY_DAYS = 1;
 
-/** Google review URLs by region */
-const REVIEW_LINKS: Record<string, string> = {
-  // TODO: Replace with real Google review URLs
-  MA: 'https://g.page/r/attackacrack-ma/review',
-  CT: 'https://g.page/r/attackacrack-ct/review',
-  default: 'https://g.page/r/attackacrack/review',
-};
+/** Google review URL (MA only for now) */
+const REVIEW_LINK = 'https://g.page/r/CWHz-4-5ORnJEBM/review';
 
 interface FollowUpResult {
   eventId: string;
@@ -71,15 +66,6 @@ function extractPipedriveId(description: string | undefined): string | null {
   return match ? match[1] : null;
 }
 
-/**
- * Guess the region (MA or CT) from a location string.
- */
-function guessRegion(location: string): string {
-  const upper = location.toUpperCase();
-  if (upper.includes(', CT') || upper.includes('CONNECTICUT')) return 'CT';
-  if (upper.includes(', MA') || upper.includes('MASSACHUSETTS')) return 'MA';
-  return 'default';
-}
 
 /**
  * Get a past date range in Eastern time.
@@ -237,14 +223,10 @@ async function processFollowUp(
       };
     }
 
-    // Pick the right review link based on location
-    const region = guessRegion(event.location || '');
-    const reviewLink = REVIEW_LINKS[region] || REVIEW_LINKS.default;
-
     const firstName = extractFirstName(person.name);
     const message = renderTemplate('jobFollowUp', {
       firstName,
-      reviewLink,
+      reviewLink: REVIEW_LINK,
     });
 
     if (isDryRun) {
@@ -263,7 +245,6 @@ async function processFollowUp(
       eventId: event.id,
       personName: person.name,
       phone: primaryPhone,
-      region,
     });
 
     return {
