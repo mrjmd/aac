@@ -82,26 +82,23 @@ function guessRegion(location: string): string {
 }
 
 /**
- * Get a date range in Eastern time.
- * If dateOverride is provided (YYYY-MM-DD), use that date directly.
- * Otherwise, calculate N days ago from today.
+ * Get a past date range in Eastern time.
+ * If runDate is provided (YYYY-MM-DD), treat that as "today" and
+ * look back N days. This simulates running the cron on that date.
  */
-function getDateRange(daysAgo: number, dateOverride?: string): { timeMin: string; timeMax: string; dateLabel: string } {
-  let year: number, month: string, day: string;
+function getPastDateRange(daysAgo: number, runDate?: string): { timeMin: string; timeMax: string; dateLabel: string } {
+  let base: Date;
 
-  if (dateOverride && /^\d{4}-\d{2}-\d{2}$/.test(dateOverride)) {
-    const parts = dateOverride.split('-');
-    year = parseInt(parts[0], 10);
-    month = parts[1];
-    day = parts[2];
+  if (runDate && /^\d{4}-\d{2}-\d{2}$/.test(runDate)) {
+    base = new Date(runDate + 'T12:00:00-04:00');
   } else {
-    const now = new Date();
-    const eastern = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    eastern.setDate(eastern.getDate() - daysAgo);
-    year = eastern.getFullYear();
-    month = String(eastern.getMonth() + 1).padStart(2, '0');
-    day = String(eastern.getDate()).padStart(2, '0');
+    base = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   }
+
+  base.setDate(base.getDate() - daysAgo);
+  const year = base.getFullYear();
+  const month = String(base.getMonth() + 1).padStart(2, '0');
+  const day = String(base.getDate()).padStart(2, '0');
 
   const dateLabel = `${year}-${month}-${day}`;
   return {
@@ -131,7 +128,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const calendar = getCalendar();
     const pipedrive = getPipedrive();
 
-    const { timeMin, timeMax, dateLabel } = getDateRange(delayDays, dateOverride);
+    const { timeMin, timeMax, dateLabel } = getPastDateRange(delayDays, dateOverride);
 
     log.info('Job follow-ups cron started', { isDryRun, delayDays, dateLabel, timeMin, timeMax });
 
