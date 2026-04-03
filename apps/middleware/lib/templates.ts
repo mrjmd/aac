@@ -15,7 +15,7 @@ const templates = {
     name: 'Job Reminder (Day Before)',
     body: [
       'Hi {firstName}, this is a reminder from Attack A Crack',
-      'that our technician will be at your home at {time} tomorrow, {date}.',
+      'that our technician Mike will be at your home at {time} tomorrow, {date}.',
       'Please let me know if you have any questions.',
     ].join(' '),
   },
@@ -24,10 +24,13 @@ const templates = {
     name: 'Post-Job Follow-Up',
     body: [
       'Hi {firstName}, this is Matt from Attack A Crack.',
-      'I hope everything went well with your recent repair.',
-      'If you have any questions, don\'t hesitate to reach out.',
-      'If you\'re happy with the work, we\'d really appreciate a Google review: {reviewLink}',
-      '\n\nThank you for choosing Attack A Crack!',
+      'Just checking in to make sure everything went well with the repair.',
+      'I hope Mike took great care of you!',
+      '\n\nIf we did do a good job for you, I would very much appreciate a Google review.',
+      'We are a small family-run business, and each review is extremely impactful.',
+      'Here is the link where you can leave one.',
+      'Thank you so much again for your business!',
+      '\n\n{reviewLink}',
     ].join(' '),
   },
 
