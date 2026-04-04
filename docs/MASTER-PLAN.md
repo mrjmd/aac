@@ -1865,27 +1865,63 @@ VA replacement.
 
 ### 4.2 — App Scaffold
 
-- [ ] Initialize `apps/marketing` as Next.js 15 app (App Router)
-- [ ] Set up database:
-  - [x] ~~Choose ORM~~ `[DECIDED 2026-04-04]` **Drizzle ORM** — lighter than Prisma, better edge support
-  - [x] ~~Choose provider~~ `[DECIDED 2026-04-04]` **Turso** (SQLite edge, libsql) — single-user app,
-    9 GB free tier, simpler than Postgres for this use case
-  - [ ] Define initial schema (adapted from marketing-engine's Prisma schema):
-    ```
-    ContentPost: id, concept, type, status, scheduledAt, createdAt, updatedAt
-    PlatformVariant: id, postId, platform, caption, captionStatus, imageUrl,
-                     imageStatus, aspectRatio, bufferPostId, publishStatus
-    VariantVersion: id, variantId, caption, imageUrl, feedback, createdAt
-    ContentIdea: id, title, description, pillar, status, batchId, postId
-    BrandProfile: singleton, parsed from markdown, cached in DB
-    Settings: singleton, API keys (encrypted), defaults, timezone
-    ```
-- [ ] Add dependencies: `@aac/api-clients`, `@aac/shared-utils`, `drizzle-orm`,
-  `@libsql/client`, `@vercel/blob`, Sharp
-- [ ] Basic layout with navigation (ideas, posts, calendar, settings)
-- [ ] Simple auth (single-user password, same pattern as command center)
-- [ ] Health check endpoint
-- [ ] `pnpm turbo build && pnpm turbo typecheck` passes
+Split into plumbing (4.2A) and UX design (4.2B). Plumbing can be done without
+UX decisions. UX needs brainstorming before building any screens.
+
+#### 4.2A — Technical Plumbing (No UI Screens)
+
+- [x] Initialize `apps/marketing` as Next.js 15 app (App Router)
+- [x] Add dependencies: `@aac/ui`, `@aac/api-clients`, `@aac/shared-utils`,
+  `drizzle-orm`, `@libsql/client`, `@vercel/blob`, `lucide-react`
+- [x] Tailwind v4 + design tokens (reuse `@aac/ui` tokens — brand colors, fonts)
+- [x] Set up database:
+  - [x] ~~Choose ORM~~ `[DECIDED 2026-04-04]` **Drizzle ORM**
+  - [x] ~~Choose provider~~ `[DECIDED 2026-04-04]` **Turso** (SQLite edge, libsql)
+  - [x] Define Drizzle schema (`db/schema.ts`):
+    - `contentIdeas` — id, title, description, pillar, status, batchId, postId, rejectionReason
+    - `contentPosts` — id, concept, type, status, scheduledAt, ideaId
+    - `platformVariants` — id, postId, platform, caption, captionStatus, imageUrl,
+      imageStatus, aspectRatio, bufferPostId, publishStatus
+    - `variantVersions` — id, variantId, caption, imageUrl, feedback
+- [x] Database connection helper (`lib/db.ts`) — Turso client + Drizzle ORM
+- [x] Drizzle Kit config (`drizzle.config.ts`) — supports local SQLite file for dev
+- [x] Vercel Blob image storage helpers (`lib/storage.ts`):
+  - `uploadImage(buffer, filename) → publicUrl`
+  - `deleteImage(url) → void`
+- [x] Simple auth (HMAC cookie, same pattern as command center `lib/auth.ts`)
+  - Separate cookie name (`aac-marketing-session`) to avoid conflicts
+- [x] Login page (reuse command center pattern)
+- [x] Root layout with `@aac/ui` design tokens, fonts, globals.css
+- [x] Health check endpoint (`/api/health`)
+- [x] Placeholder `page.tsx` (no real UI — just "Marketing Engine" heading)
+- [x] `pnpm turbo build && pnpm turbo typecheck` passes ✅ (2026-04-04)
+
+#### 4.2B — UX Design (Brainstorm Before Building)
+
+**Status:** Not started. Requires brainstorming session before implementation.
+
+These are the UX decisions that affect how the marketing app *feels* to use.
+Building screens without resolving these will result in rework.
+
+**Questions to resolve:**
+- [ ] **Navigation structure:** Sidebar (like command center)? Top tabs? Wizard-style
+  flows? The marketing app has different interaction patterns than a dashboard —
+  it's a content creation tool, not a monitoring tool.
+- [ ] **Content review/approval UX:** This is the core daily interaction. How do you
+  review AI-generated posts? Side-by-side comparisons? Card-based gallery? Swipe
+  to approve? Preview that looks like the actual platform?
+- [ ] **"Generate a Month" flow:** How does generating 12 posts in one click feel?
+  Progress bar? Stream results as they come? Review one-by-one or batch?
+- [ ] **Calendar view:** Month grid? Kanban board? List? How much detail on hover?
+- [ ] **Image regeneration UX:** When a generated image is bad, how do you give
+  feedback? Text prompt? Slider for style parameters? Reference image upload?
+- [ ] **Mobile considerations:** Will you review/approve content on your phone?
+  If so, the review UX must work on small screens.
+- [ ] **Platform preview:** Should approved posts show a preview of how they'll
+  look on Instagram vs. Facebook vs. LinkedIn?
+- [ ] **Component reuse from @aac/ui:** DashboardCard and StatusIndicator exist.
+  What new shared components does the marketing app need? ContentCard?
+  ImagePreview? ApprovalActions?
 
 ---
 

@@ -1,0 +1,26 @@
+@import "tailwindcss";
+@import "@aac/ui/tokens.css";
+
+@source "../../../packages/ui/src";
+
+@font-face {
+  font-family: "Inter";
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Space Grotesk";
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("/fonts/space-grotesk-latin.woff2") format("woff2");
+}
+
+body {
+  @apply bg-zinc-50 font-sans text-aac-dark antialiased;
+}
+
+::selection {
+  @apply bg-aac-yellow text-aac-dark;
+}
