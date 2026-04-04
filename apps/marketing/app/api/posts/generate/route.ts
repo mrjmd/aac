@@ -6,11 +6,14 @@ import { contentIdeas, contentPosts, platformVariants } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { buildCaptionPrompt } from "@/lib/caption-prompts";
 import { uploadImage } from "@/lib/storage";
+import { renderTemplate, type TemplateData } from "@/lib/templates/renderer";
+import { PLATFORM_SIZES, type Platform } from "@/lib/templates/brand";
+import type { ImageAspectRatio } from "@aac/api-clients";
 
-const PLATFORM_ASPECT_RATIOS: Record<string, string> = {
+const PLATFORM_ASPECT_RATIOS: Record<string, ImageAspectRatio> = {
   instagram: "3:4",
   facebook: "1:1",
-  linkedin: "1:1",
+  linkedin: "16:9",
   gbp: "4:3",
 };
 
@@ -64,35 +67,46 @@ export async function POST(request: NextRequest) {
       .set({ postId: post.id, updatedAt: new Date().toISOString() })
       .where(eq(contentIdeas.id, idea.id));
 
-    // Generate AI image (only for ai-full posts)
-    let imageUrl: string | null = null;
-
-    if (meta.sourceType !== "ai-caption-only") {
-      const gemini = getGeminiClient();
-      const imagePrompt = buildImagePrompt(meta.visualApproach, idea.pillar ?? "");
-
-      try {
-        const [image] = await gemini.generateImage(imagePrompt, {
-          aspectRatio: "3:4", // default to Instagram portrait
-          mimeType: "image/png",
-        });
-
-        const buffer = Buffer.from(image.base64, "base64");
-        imageUrl = await uploadImage(
-          buffer,
-          `posts/${post.id}/base-${Date.now()}.png`,
-        );
-      } catch (imgErr) {
-        console.error("Image generation failed:", imgErr);
-        // Continue without image — user can regenerate later
-      }
-    }
-
-    // Generate captions per platform + create variants
     const gemini = getGeminiClient();
+    const templateId = meta.suggestedTemplate || "A";
+    const templateData = buildTemplateData(templateId, idea.title, meta.text);
+
+    // Generate per-platform: AI background → Satori composite → upload
     const variants = [];
 
     for (const platform of platforms) {
+      const aspectRatio = PLATFORM_ASPECT_RATIOS[platform] ?? "1:1";
+      let imageUrl: string | null = null;
+
+      if (meta.sourceType !== "ai-caption-only") {
+        try {
+          // Generate AI background at the platform's aspect ratio
+          const imagePrompt = buildImagePrompt(meta.visualApproach, idea.pillar ?? "");
+          const [rawImage] = await gemini.generateImage(imagePrompt, {
+            aspectRatio,
+            mimeType: "image/png",
+          });
+
+          const bgDataUrl = `data:image/png;base64,${rawImage.base64}`;
+
+          // Apply branded template overlay via Satori
+          const compositePng = await renderTemplate({
+            templateId,
+            platform: platform as Platform,
+            bgDataUrl,
+            data: templateData,
+          });
+
+          imageUrl = await uploadImage(
+            compositePng,
+            `posts/${post.id}/${platform}-${Date.now()}.png`,
+          );
+        } catch (imgErr) {
+          console.error(`Image generation failed for ${platform}:`, imgErr);
+        }
+      }
+
+      // Generate caption
       const { systemPrompt, userPrompt } = buildCaptionPrompt({
         concept: idea.title + " — " + meta.text,
         pillar: idea.pillar ?? "educational",
@@ -123,7 +137,7 @@ export async function POST(request: NextRequest) {
             : "generated",
           imageUrl,
           imageStatus: imageUrl ? "generated" : "pending",
-          aspectRatio: PLATFORM_ASPECT_RATIOS[platform] ?? "1:1",
+          aspectRatio,
         })
         .returning();
 
@@ -140,6 +154,40 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     console.error("Post generation error:", e);
     return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+}
+
+function buildTemplateData(
+  templateId: string,
+  title: string,
+  description: string,
+): TemplateData {
+  switch (templateId.toUpperCase()) {
+    case "G":
+      // Split description into checklist items if it looks like a list
+      const items = description
+        .split(/[,;•\n]/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 3)
+        .slice(0, 5);
+      return {
+        type: "G",
+        title: title.length > 25 ? "CHECKLIST" : title.toUpperCase(),
+        items: items.length >= 3 ? items : [
+          title,
+          description.slice(0, 50),
+          "Call or text for a free quote",
+        ],
+      };
+    case "A":
+    default:
+      return {
+        type: "A",
+        headline: title,
+        body: description.length > 120
+          ? description.slice(0, 117) + "…"
+          : description,
+      };
   }
 }
 
