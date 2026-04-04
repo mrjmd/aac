@@ -2210,11 +2210,51 @@ the idea level.
   auto-roll 8 new ideas (excluding concepts similar to the rejected ones).
   Backfill prompt includes rejected concepts as negative examples.
 - [ ] Approved ideas become available for post creation
+- [ ] `[FUTURE]` **Bulk-approve:** Select multiple ideas and approve them all at once,
+  triggering parallel post generation for each. Useful for monthly batch review.
+
+#### 4.3B+ — AI Quality Gates (Self-Check Before Presenting)
+
+Two automated quality checks to filter out garbage before it reaches the user:
+
+**1. Idea Quality Gate (pre-Tier 1):**
+- [ ] After Gemini generates ideas, run a self-evaluation pass:
+  - "Does this idea require real assets AI can't create?" → flag sourceType
+  - "Is this concept distinct from the other ideas in this batch?" → dedup
+  - "Does this match the requested pillar/theme?" → relevance check
+- [ ] Filter out or auto-revise ideas that fail before presenting to user
+- [ ] Implementation: second Gemini call with the batch as input, returns
+  pass/fail + reason per idea. Failed ideas get regenerated automatically.
+
+**2. Image Quality Gate (pre-Tier 2):**
+- [ ] After Imagen generates a background, run automated checks:
+  - **OCR/text detection:** Use Gemini vision to check "Does this image contain
+    any text, letters, words, or gibberish?" Auto-retry if yes (up to 3 attempts).
+  - **Relevance check:** "Does this image match the prompt? Is it related to
+    foundation repair / New England homes / the requested scene?" Auto-retry if no.
+  - **Quality check:** "Is this image photorealistic and professional quality,
+    or does it have obvious AI artifacts?" Flag for retry if poor quality.
+- [ ] Only present images that pass all checks to the user
+- [ ] Track retry count — if 3 attempts all fail, present best attempt with
+  a warning badge rather than blocking the pipeline entirely
+- [ ] `[FUTURE]` Fine-tune the quality gate thresholds based on rejection data
 
 #### 4.3C — Post Creation & Image Generation (The Core)
 
 **This is where the hybrid image pipeline lives.**
 
+- [ ] Generate **per-platform images** at correct aspect ratios:
+  - Instagram: 3:4 (1080x1350)
+  - Facebook: 1:1 (1080x1080)
+  - LinkedIn: 1:1 (1080x1080)
+  - GBP: 4:3 (1200x900)
+- [ ] Each platform variant gets its own image generation call (not shared)
+- [ ] **Default to Facebook, Instagram, LinkedIn** (not GBP — that's auto-posted
+  via Buffer separately). Only include GBP if the idea explicitly targets it.
+- [ ] Apply **Satori template overlay** to AI background:
+  - Brand colors, logo, headline, callout text per template pattern (A-I)
+  - Composite: AI background → template overlay → text → logo = final PNG
+  - This is where the spike 4.0E Satori pipeline gets wired into the app
 - [ ] Create post from approved idea (or manually)
 - [ ] Generate platform-specific captions via Gemini:
   - System prompt includes brand voice, platform rules, character limits

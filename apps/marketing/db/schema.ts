@@ -23,6 +23,9 @@ export const contentPosts = sqliteTable("content_posts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   concept: text("concept").notNull(), // what this post is about
   type: text("type").notNull(), // tip, showcase, testimonial, seasonal, personality, blog
+  sourceType: text("source_type").notNull().default("ai-full"), // ai-full, ai-caption-only
+  templateId: text("template_id"), // A-I, which brand template to use
+  visualPrompt: text("visual_prompt"), // the Imagen prompt used (or upload note for ai-caption-only)
   status: text("status").notNull().default("draft"), // draft, generating, review, approved, scheduled, published, failed
   scheduledAt: text("scheduled_at"),
   ideaId: integer("idea_id"), // FK to content_ideas

@@ -8,6 +8,13 @@
       "when": 1775327352953,
       "tag": "0000_exotic_master_chief",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1775328644843,
+      "tag": "0001_dazzling_rocket_racer",
+      "breakpoints": true
     }
   ]
 }
