@@ -1896,32 +1896,163 @@ UX decisions. UX needs brainstorming before building any screens.
 - [x] Placeholder `page.tsx` (no real UI — just "Marketing Engine" heading)
 - [x] `pnpm turbo build && pnpm turbo typecheck` passes ✅ (2026-04-04)
 
-#### 4.2B — UX Design (Brainstorm Before Building)
+#### 4.2B — UX Design ✅ COMPLETE (2026-04-04)
 
-**Status:** Not started. Requires brainstorming session before implementation.
+**Status:** Brainstormed and locked. All major UX decisions resolved.
 
-These are the UX decisions that affect how the marketing app *feels* to use.
-Building screens without resolving these will result in rework.
+##### Usage Model
 
-**Questions to resolve:**
-- [ ] **Navigation structure:** Sidebar (like command center)? Top tabs? Wizard-style
-  flows? The marketing app has different interaction patterns than a dashboard —
-  it's a content creation tool, not a monitoring tool.
-- [ ] **Content review/approval UX:** This is the core daily interaction. How do you
-  review AI-generated posts? Side-by-side comparisons? Card-based gallery? Swipe
-  to approve? Preview that looks like the actual platform?
-- [ ] **"Generate a Month" flow:** How does generating 12 posts in one click feel?
-  Progress bar? Stream results as they come? Review one-by-one or batch?
-- [ ] **Calendar view:** Month grid? Kanban board? List? How much detail on hover?
-- [ ] **Image regeneration UX:** When a generated image is bad, how do you give
-  feedback? Text prompt? Slider for style parameters? Reference image upload?
-- [ ] **Mobile considerations:** Will you review/approve content on your phone?
-  If so, the review UX must work on small screens.
-- [ ] **Platform preview:** Should approved posts show a preview of how they'll
-  look on Instagram vs. Facebook vs. LinkedIn?
-- [ ] **Component reuse from @aac/ui:** DashboardCard and StatusIndicator exist.
-  What new shared components does the marketing app need? ContentCard?
-  ImagePreview? ApprovalActions?
+**Primary:** Monthly automated batch generation (cron on last week of month).
+AI generates 12 posts, self-verifies quality, iterates on failures, then queues
+batch for human review. Notification surfaces in Command Center smart todo list
+(Redis write).
+
+**Secondary:** Manual one-off post creation for timely/reactive content.
+
+**Weekly:** Quick calendar glance to see what's going out.
+
+**Time investment:** ~30 min/month for batch review, 5-10 min/week for check-in.
+
+##### App Navigation — Sidebar with Collapsible Sections
+
+```
+AAC Marketing Engine
+├── ▼ Content (social media production)
+│   ├── Review (card grid of pending batch)
+│   ├── Calendar (month grid of scheduled/published)
+│   └── + New Post (manual one-off creation)
+├── ▶ Campaigns (SMS — future, Phase 4.6)
+├── ▶ Reviews (GBP review automation — future, Phase 4.11)
+└── Settings
+    ├── API Keys (Buffer, Gemini, GBP)
+    ├── Brand Profile
+    └── Schedule Defaults
+```
+
+Sidebar matches command center pattern. Sections collapse. Future sections
+(Campaigns, Reviews) shown as disabled/coming-soon until built.
+
+##### Page 1: Review Queue (`/content`)
+
+Card gallery grid showing all posts in the current review batch.
+
+**Each card shows:**
+- IG variant image thumbnail (largest/most visual aspect ratio)
+- Post concept/title
+- Content type badge (Tip, Showcase, Testimonial, Seasonal, Personality, Blog)
+- Scheduled date
+- Status indicator (Ready / Needs Review / Rejected / Generating)
+
+**Actions:**
+- Click card → navigates to Post Detail
+- "Schedule All Approved" button at top (shows count: "10 of 12 approved")
+- Filter by status (All / Ready / Needs Review / Rejected)
+
+##### Page 2: Post Detail (`/content/posts/[id]`)
+
+**This is the core editing surface.** Inline editing, no mode switching.
+
+**Layout:**
+- Platform tabs at top: `[IG] [FB] [LI] [GBP]`
+- Switching tabs changes the image aspect ratio preview and caption below
+
+**Image section (upper):**
+- Large image preview at the selected platform's aspect ratio
+- Below the image, layer controls:
+  - **Background:** Shows the prompt used. "Regenerate" button + "Edit prompt" inline.
+  - **Template:** Dropdown to swap template type (Tip Card, Showcase, Checklist, etc.)
+  - **Text overlay:** Editable fields for headline, body text, CTA
+  - "Recomposite" button after any layer change (re-renders via Puppeteer)
+
+**Caption section (lower):**
+- Editable text area with the platform-specific caption
+- Character count with limit indicator (e.g., "1,847 / 2,200")
+- "Regenerate caption" button (with optional feedback field)
+- Platform-specific rules shown as hints (e.g., "LinkedIn: no hashtags")
+
+**Actions:**
+- "Approve" button (approves all variants for this post)
+- "Reject" button → feedback text field appears: "What should change?"
+  Feedback fed to Gemini for targeted regeneration.
+- Navigation: ← Previous Post / Next Post → (for sequential review)
+- Back to Review Queue link
+
+**Auto-save:** 3-second debounce on all inline edits.
+
+##### Page 3: New Post (`/content/new`)
+
+Single-page progressive creation. Same layout as Post Detail, but starts empty.
+
+**Top section:**
+1. Concept text input ("What is this post about?")
+2. Content type selector (Tip, Showcase, Testimonial, etc.)
+3. Platform checkboxes (IG, FB, LI, GBP — all checked by default)
+4. "Generate Post" button
+
+**After generation:** Image + captions populate below using the same Post Detail
+layout. Edit any layer inline, then approve and schedule.
+
+##### Page 4: Calendar (`/content/calendar`)
+
+Simple month grid. Desktop-first.
+
+- Standard month calendar layout
+- Days with scheduled posts show a dot indicator
+- Click a day → expands to show post list for that day (title, type, status)
+- Click a post → navigates to Post Detail
+- Month navigation (← May 2026 →)
+- Color-coded dots: green = published, blue = scheduled, yellow = draft
+
+##### Page 5: Settings (`/settings`)
+
+- **API Keys:** Buffer access token, Gemini API key (masked inputs)
+- **Brand Profile:** Path to markdown file, or inline editor (TBD)
+- **Schedule Defaults:** Posting days/times per platform, timezone
+- **Notification:** Toggle for Command Center todo item on batch ready
+
+##### Responsive Design
+
+Desktop-first, mobile passable. Card grid stacks to single column on mobile.
+Post Detail tabs remain but image preview shrinks. Caption editing works on
+mobile but layer editing may require horizontal scroll.
+
+##### Regeneration Flow
+
+Feedback-first approach:
+1. User clicks "Reject" on a post
+2. Text field appears: "What should change?"
+3. User types feedback (e.g., "image too dark, needs a basement scene")
+4. System regenerates the specific layer (background, caption, etc.) using
+   the feedback as Gemini prompt context
+5. New version appears. User can approve, reject again, or edit further.
+
+##### Automated Batch Generation (Cron)
+
+Monthly cron (last week of month) runs the full pipeline:
+1. Generate 12 ideas based on content calendar rules (from 4.4 cadence table)
+2. For each idea: generate AI background → apply template → render text
+3. Composite images at all 4 platform aspect ratios
+4. Generate platform-specific captions
+5. Self-verify: check caption lengths, content diversity, no duplicate themes
+6. Auto-retry failures (up to 3 attempts per post)
+7. When batch is complete → write todo item to Redis for Command Center
+8. All posts saved with status "awaiting_review"
+
+##### Reference Material from Previous Attempts
+
+Good patterns to reuse from `aac-marketing-engine`:
+- Rejection tracking with 6 categories (OFF_BRAND, WRONG_TONE, BAD_TIMING,
+  DUPLICATE, LOW_QUALITY, OTHER) — useful for quality improvement over time
+- Edit-after-approval with time gate (>30 min before scheduled publish)
+- Version history per variant (keep all versions until scheduled)
+- Platform character limits enforced inline (IG: 2200, FB: 5000, LI: 3000, GBP: 1500)
+- Smart crop preview (CSS-only aspect ratio preview, no API cost)
+
+Patterns to avoid from previous attempt:
+- 61 API routes and 10 pages — too much surface area
+- Separate Video and Reference sections — integrate into post creation flow
+- Quality dashboard as its own page — surface as stats on Review Queue instead
+- Prisma + SQLite on serverless — replaced by Turso + Drizzle
 
 ---
 
