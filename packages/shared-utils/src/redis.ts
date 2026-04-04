@@ -59,6 +59,14 @@ export const keys = {
   /** QB OAuth token storage */
   qbOAuthTokens: 'oauth:quickbooks:tokens' as const,
 
+  // ── To-Do Items ────────────────────────────────────────────────────
+
+  /** Individual to-do item (JSON blob) */
+  todo: (todoId: string) => `todo:${todoId}` as const,
+
+  /** Sorted set of all to-do IDs, scored by due date (epoch ms) */
+  todoList: 'todo:list' as const,
+
   // ── Campaign State ─────────────────────────────────────────────────
 
   /** Campaign state — 90d TTL */

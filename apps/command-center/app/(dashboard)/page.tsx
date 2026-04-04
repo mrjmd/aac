@@ -1,5 +1,6 @@
 import { DashboardCard } from "@aac/ui";
 import { MiddlewareHealthCard } from "./components/middleware-health-card";
+import { TodoCard } from "./components/todo-card";
 
 export default function DashboardPage() {
   return (
@@ -17,15 +18,7 @@ export default function DashboardPage() {
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         <MiddlewareHealthCard />
 
-        <DashboardCard
-          title="Smart To-Do"
-          status="gray"
-          statusLabel="Coming soon"
-        >
-          <p className="text-sm text-zinc-400">
-            Tasks, commitments, and recurring reminders.
-          </p>
-        </DashboardCard>
+        <TodoCard />
 
         <DashboardCard
           title="Business Pulse"
