@@ -1,11 +1,11 @@
 /**
- * Gemini AI client — Entity extraction from unstructured text.
+ * Gemini AI client — Entity extraction, text generation, and image generation.
  *
- * Extracted from aac-slim/src/clients/gemini.ts.
- * Refactored to class pattern with constructor config.
+ * Extracted from aac-slim/src/clients/gemini.ts (entity extraction).
+ * Expanded in Phase 4.1B with content generation (gemini-2.0-flash) and
+ * image generation (imagen-4.0-generate-001) for the marketing engine.
  *
- * Currently supports entity extraction (middleware use case).
- * Content generation methods for marketing will be added in Phase 4.
+ * The marketing app owns prompt engineering — this client handles API mechanics.
  */
 
 import { createLogger } from '@aac/shared-utils/logger';
@@ -16,6 +16,10 @@ const log = createLogger('gemini');
 
 export interface GeminiConfig {
   apiKey: string;
+  /** Text model for generateContent(). Default: gemini-2.0-flash */
+  textModel?: string;
+  /** Image model for generateImage(). Default: imagen-4.0-generate-001 */
+  imageModel?: string;
 }
 
 export interface ExtractedEntities {
@@ -30,6 +34,26 @@ export interface ExtractedEntities {
   confidence: 'high' | 'medium' | 'low';
 }
 
+export interface GenerateContentOptions {
+  systemPrompt?: string;
+  temperature?: number;
+  maxOutputTokens?: number;
+}
+
+export type ImageAspectRatio = '1:1' | '3:4' | '4:3' | '16:9' | '9:16';
+
+export interface GenerateImageOptions {
+  aspectRatio?: ImageAspectRatio;
+  sampleCount?: number;
+  /** Output MIME type. Default: image/png */
+  mimeType?: 'image/png' | 'image/jpeg';
+}
+
+export interface GeneratedImage {
+  base64: string;
+  mimeType: string;
+}
+
 interface GeminiResponse {
   candidates: Array<{
     content: {
@@ -41,7 +65,21 @@ interface GeminiResponse {
   }>;
 }
 
+interface ImagenResponse {
+  predictions?: Array<{
+    bytesBase64Encoded: string;
+    mimeType: string;
+  }>;
+}
+
 // ── Constants ────────────────────────────────────────────────────────
+
+const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+const DEFAULT_TEXT_MODEL = 'gemini-2.0-flash';
+const DEFAULT_IMAGE_MODEL = 'imagen-4.0-generate-001';
+const IMAGE_TIMEOUT_MS = 45_000;
+const TEXT_TIMEOUT_MS = 30_000;
+const IMAGE_MIN_DELAY_MS = 8_000;
 
 const EXTRACTION_PROMPT = `You are an entity extraction assistant. Extract contact information from the following conversation text.
 
@@ -84,8 +122,9 @@ export class GeminiClient {
     }
 
     try {
+      const model = this.config.textModel ?? DEFAULT_TEXT_MODEL;
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.config.apiKey}`,
+        `${API_BASE}/${model}:generateContent?key=${this.config.apiKey}`,
         {
           method: 'POST',
           headers: {
@@ -145,6 +184,154 @@ export class GeminiClient {
       return null;
     }
   }
+
+  // ── Content Generation ──────────────────────────────────────────────
+
+  /**
+   * Generate text content using Gemini.
+   * Returns the raw text response. The caller is responsible for parsing.
+   */
+  async generateContent(
+    prompt: string,
+    options?: GenerateContentOptions
+  ): Promise<string> {
+    if (!this.config.apiKey) {
+      throw new Error('Gemini API key not configured');
+    }
+
+    const model = this.config.textModel ?? DEFAULT_TEXT_MODEL;
+    const contents: Array<Record<string, unknown>> = [];
+
+    if (options?.systemPrompt) {
+      contents.push({
+        role: 'user',
+        parts: [{ text: options.systemPrompt }],
+      });
+      contents.push({
+        role: 'model',
+        parts: [{ text: 'Understood. I will follow these instructions.' }],
+      });
+    }
+
+    contents.push({
+      role: 'user',
+      parts: [{ text: prompt }],
+    });
+
+    const response = await fetch(
+      `${API_BASE}/${model}:generateContent?key=${this.config.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents,
+          generationConfig: {
+            temperature: options?.temperature ?? 0.7,
+            maxOutputTokens: options?.maxOutputTokens ?? 2048,
+          },
+        }),
+        signal: AbortSignal.timeout(TEXT_TIMEOUT_MS),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Gemini API error (${response.status}): ${error}`);
+    }
+
+    const data = (await response.json()) as GeminiResponse;
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!text) {
+      throw new Error('No text in Gemini response');
+    }
+
+    log.debug('Generated content', {
+      model,
+      promptLength: prompt.length,
+      responseLength: text.length,
+    });
+
+    return text;
+  }
+
+  // ── Image Generation ──────────────────────────────────────────────
+
+  private lastImageRequestTime = 0;
+
+  /**
+   * Generate images using Gemini Imagen.
+   * Returns an array of base64-encoded images.
+   *
+   * Rate limited to 1 request per 8 seconds (Imagen is slow and has tight quotas).
+   */
+  async generateImage(
+    prompt: string,
+    options?: GenerateImageOptions
+  ): Promise<GeneratedImage[]> {
+    if (!this.config.apiKey) {
+      throw new Error('Gemini API key not configured');
+    }
+
+    // Enforce minimum delay between image requests
+    const now = Date.now();
+    const elapsed = now - this.lastImageRequestTime;
+    if (elapsed < IMAGE_MIN_DELAY_MS && this.lastImageRequestTime > 0) {
+      await new Promise((r) => setTimeout(r, IMAGE_MIN_DELAY_MS - elapsed));
+    }
+
+    const model = this.config.imageModel ?? DEFAULT_IMAGE_MODEL;
+    const sampleCount = options?.sampleCount ?? 1;
+
+    this.lastImageRequestTime = Date.now();
+
+    const response = await fetch(
+      `${API_BASE}/${model}:predict?key=${this.config.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instances: [{ prompt }],
+          parameters: {
+            sampleCount,
+            aspectRatio: options?.aspectRatio ?? '1:1',
+            personGeneration: 'ALLOW_ADULT',
+            outputOptions: {
+              mimeType: options?.mimeType ?? 'image/png',
+            },
+          },
+        }),
+        signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Imagen API error (${response.status}): ${error}`);
+    }
+
+    const data = (await response.json()) as ImagenResponse;
+
+    if (!data.predictions?.length) {
+      throw new Error('No images in Imagen response');
+    }
+
+    const images = data.predictions.map((p) => ({
+      base64: p.bytesBase64Encoded,
+      mimeType: p.mimeType || 'image/png',
+    }));
+
+    log.debug('Generated images', {
+      model,
+      count: images.length,
+      aspectRatio: options?.aspectRatio ?? '1:1',
+      promptLength: prompt.length,
+    });
+
+    return images;
+  }
+
+  // ── Utilities ─────────────────────────────────────────────────────
 
   /**
    * Check if extracted entities have any useful data.

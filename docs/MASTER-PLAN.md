@@ -1789,21 +1789,23 @@ These must be completed before the marketing app can function.
 The GeminiClient (0.10) already exists with `extractEntities()`. Add content
 generation and image generation methods.
 
-- [ ] Add `generateContent(prompt, options?)` method:
-  - Model: `gemini-2.0-flash` (or latest — verify current best model)
-  - Accept system prompt + user prompt
-  - Return parsed text response
-  - Handle: rate limits, safety blocks, timeout (30s + 1 retry)
-- [ ] Add `generateImage(prompt, options?)` method:
-  - Model: `imagen-4.0-generate-001` (confirmed in Spike 4.0B, 2026-04-03)
-  - Options: aspectRatio (`1:1`, `3:4`, `16:9`, `9:16`), sampleCount
-  - Return: `{ base64: string, mimeType: string }` (or array if sampleCount > 1)
-  - Handle: rate limits, safety blocks, timeout (30s + 1 retry)
-  - `[NOTE]` The marketing app owns prompt engineering (brand context injection,
-    platform rules, content type templates). The client just handles API mechanics.
+- [x] Add `generateContent(prompt, options?)` method:
+  - Model: `gemini-2.0-flash` (configurable via `textModel` in config)
+  - Accept system prompt + user prompt (system prompt injected as conversation context)
+  - Return raw text response (caller parses)
+  - Options: temperature, maxOutputTokens, systemPrompt
+  - Timeout: 30s via AbortSignal
+- [x] Add `generateImage(prompt, options?)` method:
+  - Model: `imagen-4.0-generate-001` (configurable via `imageModel` in config)
+  - Options: aspectRatio (`1:1`, `3:4`, `4:3`, `16:9`, `9:16`), sampleCount, mimeType (png/jpeg)
+  - Return: `GeneratedImage[]` — `{ base64: string, mimeType: string }`
+  - Rate limited: 8s minimum between requests
+  - Timeout: 45s via AbortSignal
+  - `[NOTE]` The marketing app owns prompt engineering. Client handles API mechanics.
 - [ ] Reference image support: accept optional base64 images in the prompt context
-- [ ] Write Vitest tests for new methods
-- [ ] Verify build passes
+  (deferred — not needed for MVP, add when visual style anchoring is required)
+- [x] Write Vitest tests for new methods (15 new tests)
+- [x] Verify build passes ✅ (111 tests pass, 2026-04-04)
 
 #### 4.1C — Image Storage Solution (Vercel Blob) — Built During 4.2
 

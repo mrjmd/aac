@@ -22,7 +22,13 @@ export { SearchBugClient } from './searchbug.js';
 export type { SearchBugConfig } from './searchbug.js';
 
 export { GeminiClient } from './gemini.js';
-export type { GeminiConfig } from './gemini.js';
+export type {
+  GeminiConfig,
+  GenerateContentOptions,
+  GenerateImageOptions,
+  GeneratedImage,
+  ImageAspectRatio,
+} from './gemini.js';
 
 export { GoogleCalendarClient } from './google-calendar.js';
 export type {
