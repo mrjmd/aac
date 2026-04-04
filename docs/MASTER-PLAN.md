@@ -2,7 +2,7 @@
 
 **Created:** 2026-03-29
 **Status:** Active — Single source of truth for all work
-**Last Updated:** 2026-04-03
+**Last Updated:** 2026-04-04
 
 This document is the comprehensive, granular task list for building the AAC
 four-pillar monorepo. Every task can be checked off as completed. Gaps that
@@ -35,8 +35,8 @@ noted inline.
 5. [Phase 3: Storefront Migration](#phase-3-storefront-migration)
 6. [Phase 4: Marketing Engine](#phase-4-marketing-engine)
    - [4.0: Image Generation Spike](#40--image-generation-spike-step-zero) — Prove the hybrid approach works
-   - [4.1: Prerequisites](#41--prerequisites-shared-package-work) — BufferClient, GeminiClient expansion, image storage
-   - [4.2: App Scaffold](#42--app-scaffold) — Next.js 15, database, layout
+   - [4.1: Prerequisites](#41--prerequisites-shared-package-work) — BufferClient, GeminiClient, image storage, GBP client
+   - [4.2: App Scaffold](#42--app-scaffold) — Next.js 15, Turso + Drizzle, Vercel Blob
    - [4.3: Content Production Pipeline](#43--content-production-pipeline-the-1000mo-va-replacement) — The $1,000/mo VA replacement
    - [4.4: Content Type Library](#44--content-type-library) — Templates, cadences, prompt patterns
    - [4.5: Automated Generation](#45--automated-content-generation-generate-a-month) — "Generate a Month" feature
@@ -45,6 +45,7 @@ noted inline.
    - [4.8: Brand Profile](#48--brand-profile-system) — Markdown parser + Gemini prompt injection
    - [4.9: Email Marketing](#49--email-marketing-future-state) — Future state placeholder
    - [4.10: Deployment](#410--deployment) — Vercel project setup
+   - [4.11: Review Automation](#411--gbp-review-automation-after-content-pipeline-is-live) — GBP reviews + AI-suggested responses
 7. [Cross-Phase: Tools Migration](#cross-phase-tools-migration)
 8. [Ongoing: Infrastructure & Governance](#ongoing-infrastructure--governance)
 
@@ -1606,17 +1607,30 @@ plan (~$24/mo for 4 channels). Net savings: ~$1,000/mo = $12,000/year.
 
 ### Open Decisions
 
-- [ ] `[DISCUSS]` **Data layer:** SQLite doesn't work on Vercel serverless.
-  - Options: Turso (SQLite edge, Drizzle ORM), Postgres (Neon free tier, Drizzle),
-    or Redis-only (content workflows may be too complex for Redis alone)
-  - Leaning: Turso or Neon. Decide during 4.2 scaffold.
-- [ ] `[DISCUSS]` **Image storage:** Generated images need to live somewhere accessible
-  by Buffer for scheduling. Options: Vercel Blob, Cloudflare R2, Uploadthing.
-  - Constraint: Buffer `createPost` accepts `imageUrl` — images must be publicly
-    accessible URLs, not local filesystem paths.
-- [ ] `[DISCUSS]` **SMS campaigns:** Stay in aac-slim until marketing app is mature
-  enough to absorb them? Or migrate early?
-  - Leaning: Leave in aac-slim for now. Content production is the priority.
+_(None — all resolved as of 2026-04-04.)_
+
+### Additional Resolved Decisions
+
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-04-04]` **Data layer:** Turso (SQLite edge) +
+  Drizzle ORM. Single-user app doesn't need Postgres complexity. 9 GB free tier.
+  Redis-only rejected — content workflows (ideas, posts, variants, versions,
+  approval state) are too complex for KV.
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-04-04]` **Image storage:** Vercel Blob. Native
+  Vercel integration, trivial API (`put()` → public URL), 1 GB free tier covers
+  ~2,000 images (~2 years at projected volume). Buffer `createPost` fetches images
+  by URL — Vercel Blob provides this natively.
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-04-04]` **SMS campaigns:** Leave in aac-slim
+  until content production pipeline (4.3) is live and VA is replaced. Content
+  pipeline is the $1,000/mo win; SMS is secondary ROI with existing functionality.
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-04-04]` **Posting pipeline:** Buffer handles ALL
+  posting to all platforms (IG, FB, LI, GBP). Single pipeline, proven in aac-astro.
+  No direct GBP posting — Buffer already supports GBP with metadata (whats_new,
+  CTA buttons).
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-04-04]` **Google Business Profile API:** Direct
+  API integration for **review management only** (read reviews, AI-suggested
+  responses, reply). GBP API approval granted. OAuth2 required (no service
+  accounts). Posts/reviews on legacy v4 API — no announced sunset. Client built
+  as thin wrapper for easy replacement if Google changes the API.
 
 ---
 
@@ -1693,14 +1707,31 @@ This gives us AI variety + brand consistency + messaging control.
 7. **No carousel support yet** — need Template H (dark bg + white text for slide 2)
 8. **Platform sizing** — LinkedIn landscape needs different layout, not just rescaled
 
-#### Spike 4.0D — Buffer API Validation (Deferred)
+#### Spike 4.0D — Buffer API Validation ✅ COMPLETE (2026-04-04)
 
-Lower risk — Buffer API already works for GBP via aac-astro scripts. Will
-validate IG/FB/LI support during Phase 4.1 BufferClient extraction.
+Buffer API research completed. Key findings:
 
-- [ ] Verify Buffer `createPost` supports image posts to IG, FB, LI
-- [ ] Verify batch scheduling (2+ months of posts)
-- [ ] Document platform-specific constraints
+- **API:** New GraphQL endpoint at `api.buffer.com` (legacy REST at `api.bufferapp.com/1/` is deprecated)
+- **Auth:** Bearer token via API key (not OAuth — generate at `publish.buffer.com/settings/api`)
+- **Rate limit:** 60 authenticated requests per user per minute. 429 on exceed.
+- **Supports 12 platforms:** IG, FB, LI, GBP, X/Twitter, Pinterest, TikTok, Mastodon, YouTube Shorts, Threads, Bluesky, Start Pages
+- **No analytics via API** — engagement data is UI-only
+- **No video uploads via API** — video requires Buffer UI
+- **Schema is append-only** — Buffer promises no breaking changes
+
+- [x] Verify Buffer `createPost` supports image posts to IG, FB, LI — **confirmed**
+  - IG: 2,200 chars, 10 images max. **Gotcha: Instagram rejects PNG — must convert to JPEG before upload.**
+  - FB: 5,000 chars, 10 images max. GIFs OK (15 MB).
+  - LI: 3,000 chars, 20 images max. GIFs OK (10 MB).
+  - GBP: 1,500 chars, 1 image max. No GIFs, no video.
+- [x] Verify batch scheduling (2+ months of posts) — **confirmed**
+  - Free plan: 10 posts per channel queued. Paid: 2,000 (5,000 fair use).
+  - Scheduling modes: `addToQueue`, `customScheduled`, `shareNow`, `shareNext`.
+  - Cursor-based pagination (forward-only, Relay-style).
+- [x] Document platform-specific constraints — **documented above**
+
+**Existing client:** `aac-astro/scripts/lib/buffer-client.js` (312 lines, GraphQL,
+rate limiting, exponential backoff). Clean extraction target for 4.1A.
 
 **Spike deliverable:** `docs/spike-4.0-findings.md` — full analysis with
 architecture decisions, performance notes, and production fix list.
@@ -1713,27 +1744,43 @@ These must be completed before the marketing app can function.
 
 #### 4.1A — Extract BufferClient to @aac/api-clients
 
-**Source:** `aac-astro/scripts/lib/buffer-client.js`
+**Source:** `aac-astro/scripts/lib/buffer-client.js` (312 lines, GraphQL)
 
-- [ ] Read existing Buffer client (GraphQL API, rate limiting, exponential backoff)
-- [ ] Design `BufferConfig`:
+**Buffer API reference (researched 2026-04-04):**
+- GraphQL endpoint: `https://api.buffer.com` (POST). Legacy REST at `api.bufferapp.com/1/` is deprecated.
+- Auth: Bearer token via API key (generate at `publish.buffer.com/settings/api`).
+- Rate limit: 60 req/min per user. Returns HTTP 429 on exceed.
+- GraphQL operations: `account`, `channels`, `posts`, `createPost`, `deletePost`, `createIdea`, `dailyPostingLimits`.
+- Scheduling modes: `automatic` (Buffer publishes) or `notification` (reminder only).
+- Post modes: `addToQueue`, `customScheduled`, `shareNow`, `shareNext`.
+- Assets: images via URL (`assets: { images: [{ url }] }`), one media type per post.
+- GBP metadata: `metadata.google` with `type` (whats_new/event/offer) and CTA button.
+- Pagination: cursor-based (Relay-style), forward-only.
+- Schema: append-only, no breaking changes guaranteed.
+- **Gotcha:** Instagram rejects PNG at publish time — convert to JPEG before upload.
+- **Gotcha:** GBP max 1 image, 1,500 chars, no GIFs/video.
+- Queue limits: Free 10/channel, Paid 2,000 (5,000 fair use).
+
+- [x] Read existing Buffer client (GraphQL API, rate limiting, exponential backoff)
+- [x] Design `BufferConfig`:
   ```typescript
   interface BufferConfig {
     accessToken: string;
     organizationId?: string;  // Cache after first getOrganizations() call
   }
   ```
-- [ ] Implement BufferClient class:
-  - [ ] `getOrganizations()` — list orgs for account
-  - [ ] `getChannels(orgId)` — list channels (IG, FB, LI, GBP) with service type
-  - [ ] `getScheduledPosts(channelIds, options?)` — list queued posts
-  - [ ] `createPost(channelId, text, options?)` — schedule post with optional image,
-    link, dueAt, and platform-specific metadata (GBP: whats_new type, button, etc.)
-  - [ ] `deletePost(postId)` — remove scheduled post
-- [ ] Rate limiting: 200ms minimum delay between requests, exponential backoff on 429
-- [ ] Write Vitest tests (mock GraphQL responses)
-- [ ] Add export to `packages/api-clients/src/index.ts`
-- [ ] Verify: `pnpm turbo build && pnpm turbo test`
+- [x] Implement BufferClient class:
+  - [x] `getOrganizations()` — list orgs for account
+  - [x] `getChannels(orgId)` — list channels (IG, FB, LI, GBP) with service type
+  - [x] `getScheduledPosts(channelId, options?)` — list queued posts
+  - [x] `createPost(channelId, text, options?)` — schedule post with optional image,
+    link, dueAt, and platform-specific metadata (GBP: whats_new/event/offer type, configurable CTA button)
+  - [x] `deletePost(postId)` — remove scheduled post
+  - [x] `createIdea(text, options?)` — create content idea (bonus, not in original plan)
+- [x] Rate limiting: 200ms minimum delay between requests, exponential backoff on 429
+- [x] Write Vitest tests (26 tests, mock GraphQL responses)
+- [x] Add export to `packages/api-clients/src/index.ts`
+- [x] Verify: `pnpm turbo build && pnpm turbo test` ✅ (96 tests pass, 2026-04-04)
 
 #### 4.1B — Expand GeminiClient for Content Generation
 
@@ -1748,7 +1795,7 @@ generation and image generation methods.
   - Return parsed text response
   - Handle: rate limits, safety blocks, timeout (30s + 1 retry)
 - [ ] Add `generateImage(prompt, options?)` method:
-  - Model: `imagen-3.0-generate-002` (or latest — verify during spike)
+  - Model: `imagen-4.0-generate-001` (confirmed in Spike 4.0B, 2026-04-03)
   - Options: aspectRatio (`1:1`, `3:4`, `16:9`, `9:16`), sampleCount
   - Return: `{ base64: string, mimeType: string }` (or array if sampleCount > 1)
   - Handle: rate limits, safety blocks, timeout (30s + 1 retry)
@@ -1758,15 +1805,59 @@ generation and image generation methods.
 - [ ] Write Vitest tests for new methods
 - [ ] Verify build passes
 
-#### 4.1C — Image Storage Solution
+#### 4.1C — Image Storage Solution (Vercel Blob) — Built During 4.2
 
-- [ ] `[DISCUSS]` Choose image storage: Vercel Blob vs. Cloudflare R2 vs. Uploadthing
-  - Requirement: publicly accessible URLs (Buffer needs to fetch images)
-  - Requirement: reasonable free tier (we'll store ~500-1000 images/year)
-  - Requirement: simple upload API (Buffer from base64 or stream)
-- [ ] Add storage helper to `@aac/shared-utils` or keep in marketing app
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-04-04]` **Vercel Blob.** Native Vercel integration,
+  trivial API (`put(filename, body) → { url }`), 1 GB free tier. At ~500 KB/image,
+  covers ~2,000 images before paid tier. Buffer `createPost` accepts `imageUrl` —
+  Vercel Blob returns public URLs natively.
+- [ ] Storage helper lives in marketing app (only consumer), not shared packages
 - [ ] Implement: `uploadImage(buffer, filename) → publicUrl`
 - [ ] Implement: `deleteImage(url)` (cleanup after posts are published)
+- [ ] Consider cleanup policy: delete images after Buffer publishes them, or keep
+  for historical reference? Leaning: keep for 90 days, then clean up via cron.
+
+#### 4.1D — GoogleBusinessProfileClient (Review Management Only)
+
+**NEW (2026-04-04).** GBP API approval granted. Direct API for review management
+only — posting stays through Buffer (see resolved decisions above).
+
+**API status:** Posts, reviews, and media remain on legacy v4 API
+(`mybusiness.googleapis.com/v4`). No v1 replacement announced. No typed Node.js
+client for these endpoints — build thin HTTP wrapper.
+
+**Auth:** OAuth 2.0 mandatory (no service accounts). One-time consent flow as GBP
+owner → store refresh token as env var. Scope:
+`https://www.googleapis.com/auth/business.manage`. Client handles token refresh
+via `googleapis` auth library.
+
+**Rate limits:** 300 QPM shared across all GBP API endpoints. 10 edits per
+location per minute (hard cap). More than adequate for single-location business.
+
+- [ ] Design `GoogleBusinessProfileConfig`:
+  ```typescript
+  interface GoogleBusinessProfileConfig {
+    clientId: string;
+    clientSecret: string;
+    refreshToken: string;
+    accountId: string;     // GBP account ID
+    locationId: string;    // Single location for AAC
+  }
+  ```
+- [ ] Implement GoogleBusinessProfileClient class:
+  - [ ] `listReviews(options?)` — list reviews with optional pagination, filtering
+  - [ ] `getReview(reviewId)` — get single review with rating, text, author, reply
+  - [ ] `replyToReview(reviewId, comment)` — post or update a reply
+  - [ ] `deleteReply(reviewId)` — remove an existing reply
+- [ ] OAuth2 token refresh handling (via `googleapis` auth client)
+- [ ] Rate limiting: respect 300 QPM and 10 edits/min/location
+- [ ] Write Vitest tests (mock HTTP responses)
+- [ ] Add export to `packages/api-clients/src/index.ts`
+- [ ] Verify: `pnpm turbo build && pnpm turbo test`
+
+**Priority:** Lower than BufferClient + GeminiClient. Can be deferred until
+review automation feature is built (Phase 4.11). Not on critical path for
+VA replacement.
 
 ---
 
@@ -1774,8 +1865,9 @@ generation and image generation methods.
 
 - [ ] Initialize `apps/marketing` as Next.js 15 app (App Router)
 - [ ] Set up database:
-  - [ ] Choose ORM: Drizzle (preferred — lighter than Prisma, better edge support)
-  - [ ] Choose provider: Turso or Neon (based on data layer decision)
+  - [x] ~~Choose ORM~~ `[DECIDED 2026-04-04]` **Drizzle ORM** — lighter than Prisma, better edge support
+  - [x] ~~Choose provider~~ `[DECIDED 2026-04-04]` **Turso** (SQLite edge, libsql) — single-user app,
+    9 GB free tier, simpler than Postgres for this use case
   - [ ] Define initial schema (adapted from marketing-engine's Prisma schema):
     ```
     ContentPost: id, concept, type, status, scheduledAt, createdAt, updatedAt
@@ -1786,7 +1878,8 @@ generation and image generation methods.
     BrandProfile: singleton, parsed from markdown, cached in DB
     Settings: singleton, API keys (encrypted), defaults, timezone
     ```
-- [ ] Add dependencies: `@aac/api-clients`, `@aac/shared-utils`, ORM, Sharp
+- [ ] Add dependencies: `@aac/api-clients`, `@aac/shared-utils`, `drizzle-orm`,
+  `@libsql/client`, `@vercel/blob`, Sharp
 - [ ] Basic layout with navigation (ideas, posts, calendar, settings)
 - [ ] Simple auth (single-user password, same pattern as command center)
 - [ ] Health check endpoint
@@ -2047,6 +2140,52 @@ Not in scope for MVP. Placeholder for when we're ready.
   image storage credentials, Redis URL
 - [ ] Deploy and verify health check
 - [ ] `[DISCUSS]` Custom domain? (marketing.attackacrack.com or internal-only)
+- [ ] Add GBP-related env vars: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+  `GOOGLE_REFRESH_TOKEN`, `GBP_ACCOUNT_ID`, `GBP_LOCATION_ID`
+
+### 4.11 — GBP Review Automation (After Content Pipeline Is Live)
+
+**Goal:** Automate Google Business Profile review responses using AI-generated
+suggestions. Builds on GoogleBusinessProfileClient (4.1D) and GeminiClient (4.1B).
+
+**Priority:** After 4.3 (content pipeline) is live and VA is replaced. This is
+a "nice to have" that improves online reputation management, not a cost savings.
+
+#### 4.11A — Review Ingestion
+
+- [ ] Cron job or on-demand fetch: pull new GBP reviews via `GoogleBusinessProfileClient.listReviews()`
+- [ ] Store reviews in Turso: `GbpReview` table (id, reviewId, authorName, rating,
+  text, createTime, replyText, replyTime, aiSuggestion, status)
+- [ ] Deduplicate: skip reviews already in DB
+- [ ] Write review count/rating stats to Redis for Command Center visibility
+
+#### 4.11B — AI-Suggested Responses
+
+- [ ] For each new review, generate suggested response via `GeminiClient.generateContent()`:
+  - System prompt: brand voice from BrandProfile, response guidelines per rating tier
+  - 4-5 stars: warm thank-you, mention specific service if reviewer described it,
+    brief CTA to refer friends
+  - 1-3 stars: empathetic acknowledgment, offer to resolve offline, include phone
+    number, no defensive tone
+- [ ] Store suggestion in `GbpReview.aiSuggestion`
+- [ ] Flag reviews needing manual attention (1-2 star, contains keywords like
+  "lawsuit", "BBB", "attorney")
+
+#### 4.11C — Review Response UI
+
+- [ ] Review list page in marketing app: new reviews, responded, flagged
+- [ ] Per-review detail: review text, rating, AI suggestion, edit box
+- [ ] Actions: approve suggestion → post via `replyToReview()`, edit → post,
+  regenerate suggestion with feedback, flag for later
+- [ ] Response history: what was posted, when, was it AI or manual
+
+#### 4.11D — Auto-Response (Future)
+
+- [ ] After confidence is established (e.g., 50+ manually approved suggestions
+  with <10% edit rate), enable auto-response for 4-5 star reviews
+- [ ] Manual review still required for 1-3 star reviews
+- [ ] Configurable: auto-respond ON/OFF, minimum rating threshold, excluded keywords
+- [ ] Notification to Matt when auto-response is sent (SMS or email)
 
 ---
 

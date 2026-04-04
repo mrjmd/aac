@@ -41,3 +41,15 @@ export type { GoogleAnalyticsConfig } from './google-analytics.js';
 
 export { GoogleSearchConsoleClient } from './google-search-console.js';
 export type { GoogleSearchConsoleConfig } from './google-search-console.js';
+
+export { BufferClient } from './buffer.js';
+export type {
+  BufferConfig,
+  BufferOrganization,
+  BufferChannel,
+  BufferPost,
+  BufferIdea,
+  GbpMetadata,
+  CreatePostOptions,
+  CreateIdeaOptions,
+} from './buffer.js';
