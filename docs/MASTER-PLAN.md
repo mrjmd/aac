@@ -34,7 +34,7 @@ noted inline.
    - [2.5H: Scheduling Automation](#25h--scheduling-automation-run)
 5. [Phase 3: Storefront Migration](#phase-3-storefront-migration)
 6. [Phase 4: Marketing Engine](#phase-4-marketing-engine)
-   - [4.0: Image Generation Spike](#40--image-generation-spike-step-zero) — Prove the hybrid approach works
+   - [4.0: Image Generation Spike](#40--image-generation-spike-step-zero) — Hybrid approach + Satori rendering validation
    - [4.1: Prerequisites](#41--prerequisites-shared-package-work) — BufferClient, GeminiClient, image storage, GBP client
    - [4.2: App Scaffold](#42--app-scaffold) — Next.js 15, Turso + Drizzle, Vercel Blob
    - [4.3: Content Production Pipeline](#43--content-production-pipeline-the-1000mo-va-replacement) — The $1,000/mo VA replacement
@@ -1706,6 +1706,43 @@ This gives us AI variety + brand consistency + messaging control.
 6. **Dark overlay tuning** — needs to adapt to AI image brightness
 7. **No carousel support yet** — need Template H (dark bg + white text for slide 2)
 8. **Platform sizing** — LinkedIn landscape needs different layout, not just rescaled
+
+#### Spike 4.0E — Satori Rendering Validation (Replaces Puppeteer)
+
+**Goal:** Determine if Satori + resvg can replace Puppeteer for template rendering,
+eliminating the headless Chrome dependency and enabling full Vercel free tier deployment.
+
+**Context (2026-04-04):** Puppeteer can't run on Vercel serverless (200MB Chrome binary,
+50MB function limit, 10s timeout). Researched 7 alternatives. Satori (Vercel's own
+JSX → SVG → PNG library) is the top candidate: free, fast (~100-200ms vs 5-10s),
+runs natively in Node.js, supports flexbox layout + custom fonts + background images.
+htmlcsstoimage.com ($14/mo) is the fallback if Satori's CSS subset is insufficient.
+
+**Spike scope:**
+- [ ] Port Template A (headline + callout) from HTML string → Satori JSX
+- [ ] Load brand fonts (Space Grotesk + Inter) as TTF buffers
+- [ ] Composite with an AI-generated background image (base64 data URL)
+- [ ] Render at Instagram 4:5 (1080×1350), Facebook 1:1 (1080×1080),
+  LinkedIn 16:9 (1200×627)
+- [ ] Compare output quality to Spike 4.0C Puppeteer output
+- [ ] Document any CSS features that don't translate (backgroundSize: cover,
+  specific layout patterns)
+- [ ] Decision: Satori (proceed) or htmlcsstoimage.com (fallback)
+
+**Key Satori constraints to test:**
+- `backgroundSize: cover` reportedly unsupported — use `<img>` with `objectFit: cover`
+- No WOFF2 — must use TTF/OTF font files
+- No z-index — stacking by document order (should be fine for layered templates)
+- No CSS Grid — flexbox only (templates are already flexbox)
+- ~100-200ms render time (vs 5-10s Puppeteer) — major performance win
+
+**If Satori works:** Update architecture decision from Puppeteer → Satori + resvg.
+Remove Puppeteer as a dependency. Full pipeline runs on Vercel free tier.
+
+**If Satori fails:** Use htmlcsstoimage.com REST API. 50 free images/month covers
+our volume (~48 images/month = 12 posts × 4 platforms). $14/mo if we exceed free tier.
+
+---
 
 #### Spike 4.0D — Buffer API Validation ✅ COMPLETE (2026-04-04)
 
