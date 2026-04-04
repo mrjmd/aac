@@ -35,12 +35,16 @@ export async function createSession(): Promise<void> {
 }
 
 export async function verifySession(): Promise<boolean> {
-  const jar = await cookies();
-  const token = jar.get(SESSION_COOKIE)?.value;
-  if (!token) return false;
+  try {
+    const jar = await cookies();
+    const token = jar.get(SESSION_COOKIE)?.value;
+    if (!token) return false;
 
-  const expected = await sign("authenticated");
-  return token === expected;
+    const expected = await sign("authenticated");
+    return token === expected;
+  } catch {
+    return false;
+  }
 }
 
 export function checkPassword(password: string): boolean {

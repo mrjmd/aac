@@ -2114,6 +2114,59 @@ Patterns to avoid from previous attempt:
 
 This is the MVP. Built in sub-phases that each deliver incremental value.
 
+#### Content Model — Weekly Mix (3 posts/week)
+
+The weekly content cadence has three distinct post types, each with different
+asset requirements:
+
+1. **Blog-tied post** — Directly tied to that week's website blog topic.
+   AI-generated image + template overlay. Fully automatable.
+2. **Before/after showcase** — Real project photos (supplied by Matt) with
+   branded template overlay. Requires real assets uploaded to the app.
+   AI generates the caption and selects the template, but the photos are real.
+3. **Topical/seasonal/local** — Timely content about weather, foundation tips,
+   local events, etc. Fully AI-generated (image + caption + template).
+
+**Content source classification:**
+- `ai-full` — AI generates everything (background image, caption, template)
+- `ai-caption-only` — Real photo provided, AI generates caption + template overlay
+- `real-video` — Real video from Matt/Luc, AI generates caption only
+- `ai-video` — Sora AI-generated video (limited supply, use while available)
+
+**What AI CANNOT generate:** Team photos, real project photos, real people,
+before/after shots. The system must clearly flag when a post type requires
+real assets and prompt the user to upload them rather than trying to AI-generate.
+
+#### Video Content
+
+Video is a separate content stream that needs to coexist with image posts:
+- **Real videos** — Matt and Luc on-camera (selfie reels, job footage, walkthroughs).
+  These get 3-20x more engagement than image posts. The app should support
+  uploading video + generating captions/scheduling via Buffer.
+- **Sora AI videos** — Cinematic AI-generated brand videos. Existing library
+  may be exhausted; use while supply lasts. Upload + caption + schedule flow.
+- **Video is NOT auto-generated** — Unlike image posts, video always requires
+  a real asset (either filmed or from Sora library). The pipeline handles
+  captioning and scheduling only.
+- `[FUTURE]` Video editing/trimming in-app is out of scope. Upload finished clips.
+
+#### Two-Tiered Approval Process
+
+Images are the most common source of iteration and rejection. The approval
+flow must separate concept approval from visual approval:
+
+1. **Tier 1 — Idea review** (current 4.3B): Approve/revise/reject the concept,
+   topic, suggested template, and platform selection. No images generated yet.
+   This is fast and cheap (text-only Gemini call).
+2. **Tier 2 — Visual review** (part of 4.3C/4.3D): After idea approval, generate
+   the actual image + caption. Review the composite image with template overlay.
+   Approve/revise/reject the visual independently. Image regeneration with hints
+   ("make it warmer", "different angle", "less text"). Caption and image can be
+   approved independently — you might love the image but want to tweak the caption.
+
+This prevents wasting Imagen API calls on concepts that will be rejected at
+the idea level.
+
 #### 4.3A — Brand Profile & Settings
 
 - [ ] Copy `brand-profile-attack-a-crack.md` into the app
@@ -2125,6 +2178,19 @@ This is the MVP. Built in sub-phases that each deliver incremental value.
 - [ ] Settings page: Buffer access token, Gemini API key, timezone, defaults
 - [ ] Store parsed brand profile in DB for fast access during generation
 
+#### 4.3A+ — Post History Manifest (Deduplication Context)
+
+- [ ] Create `content/post-history.md` — a manifest of all posts published in the
+  last 3–6 months (seeded manually from Instagram/Facebook/LinkedIn history)
+- [ ] Schema per entry: date, platform(s), pillar, topic summary, template used,
+  key phrases (enough for Gemini to avoid duplicating the concept)
+- [ ] When generating ideas, the manifest is injected into the system prompt as
+  "recently published content — do not repeat these topics or angles"
+- [ ] As new posts are published through the pipeline, auto-append them to the
+  manifest (or move to DB-backed once volume warrants it)
+- [ ] Manifest should also track which templates have been used recently to ensure
+  visual variety (don't use Template A five times in a row)
+
 #### 4.3B — Idea Generation & Review
 
 - [ ] "Generate Ideas" UI: select content pillar, optional theme/prompt
@@ -2132,9 +2198,18 @@ This is the MVP. Built in sub-phases that each deliver incremental value.
   - Title, description, suggested platforms, suggested visual approach
   - Brand context injected into system prompt (from parsed brand profile)
   - Content pillar context (before/after, seasonal, educational, etc.)
-- [ ] Idea review UI: approve / iterate (with feedback) / replace / reject
+- [ ] Idea review UI with three actions per idea:
+  - **Approve** — idea is ready for post creation
+  - **Revise** — concept is promising but needs iteration. User provides feedback,
+    Gemini regenerates a new version of the same concept incorporating the notes.
+    Revision history is preserved (idea keeps same ID, new version appended).
+  - **Reject** — concept didn't work at all. Removed from the batch entirely.
+    Rejection reason tracked (off-brand, wrong-tone, duplicate, irrelevant, etc.)
+- [ ] **Auto-backfill on reject:** When ideas are rejected from a batch, automatically
+  generate replacement ideas to fill the gaps. E.g., if 8 of 12 are rejected,
+  auto-roll 8 new ideas (excluding concepts similar to the rejected ones).
+  Backfill prompt includes rejected concepts as negative examples.
 - [ ] Approved ideas become available for post creation
-- [ ] Rejection tracking with categories (off-brand, wrong-tone, duplicate, etc.)
 
 #### 4.3C — Post Creation & Image Generation (The Core)
 
@@ -2195,7 +2270,16 @@ This is the MVP. Built in sub-phases that each deliver incremental value.
 
 #### 4.3E — Scheduling & Publishing
 
-- [ ] Calendar view (month grid showing scheduled + published + draft posts)
+- [ ] **Universal content calendar** — single month grid showing ALL scheduled content:
+  - Social posts created in this app (draft → approved → scheduled → published)
+  - GBP auto-posts from Buffer (fully automated, no review — pulled from Buffer API)
+  - Blog posts scheduled in aac-astro (read-only, pulled from website data)
+- [ ] Calendar is the universal view. Clicking any item shows detail appropriate to its
+  source (editable for social posts, read-only for GBP auto-posts and blog posts).
+- [ ] Ability to intervene on any calendar item: reschedule, pause, or cancel even
+  auto-posted content (by updating Buffer queue via BufferClient)
+- [ ] `[FUTURE]` Expose read-only calendar data to Command Center via shared Redis
+  or API endpoint. Command Center shows "upcoming content this week" card.
 - [ ] Schedule post: select date/time, validate all variants approved
 - [ ] Send to Buffer via `@aac/api-clients` BufferClient:
   - One `createPost` call per platform variant
@@ -2226,6 +2310,7 @@ This is the MVP. Built in sub-phases that each deliver incremental value.
   - One social post per platform, blog-promotion template
 - [ ] Schedule blog promo posts for same week as blog publish date
 - [ ] At least 1 of the 2-3 weekly social posts should be a blog promotion
+- [ ] Blog publish dates surface on the universal content calendar (read-only items)
 
 ---
 

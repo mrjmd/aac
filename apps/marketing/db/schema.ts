@@ -7,10 +7,12 @@ export const contentIdeas = sqliteTable("content_ideas", {
   title: text("title").notNull(),
   description: text("description"),
   pillar: text("pillar"), // educational, showcase, testimonial, seasonal, personality, blog
-  status: text("status").notNull().default("draft"), // draft, approved, rejected, used
+  status: text("status").notNull().default("draft"), // draft, approved, revising, rejected, used
   batchId: text("batch_id"), // groups ideas from same generation run
   postId: integer("post_id"), // FK to content_posts when idea becomes a post
-  rejectionReason: text("rejection_reason"),
+  rejectionReason: text("rejection_reason"), // off-brand, wrong-tone, duplicate, irrelevant, other
+  revisionFeedback: text("revision_feedback"), // user feedback for current revision request
+  version: integer("version").notNull().default(1), // increments on each revise cycle
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
