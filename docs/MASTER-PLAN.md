@@ -1631,6 +1631,11 @@ _(None — all resolved as of 2026-04-04.)_
   responses, reply). GBP API approval granted. OAuth2 required (no service
   accounts). Posts/reviews on legacy v4 API — no announced sunset. Client built
   as thin wrapper for easy replacement if Google changes the API.
+- [x] ~~`[DECIDED 2026-04-03]` Puppeteer~~ `[REVISED 2026-04-04]` **Rendering engine:
+  Satori + resvg.** Puppeteer can't run on Vercel serverless. Spike 4.0E validated
+  Satori produces near-identical output at ~250ms/image (20x faster). Templates
+  as JSX, fonts as TTF. Only gaps: no `dotted` borders, no CSS Grid (not needed).
+  Entire pipeline runs on Vercel free tier — no external rendering service needed.
 
 ---
 
@@ -1663,9 +1668,12 @@ This gives us AI variety + brand consistency + messaging control.
 
 - [x] Created 3 HTML/CSS templates (A: headline+callout, C: dark header, G: checklist)
 - [x] Rendered at Instagram 4:5, Facebook 1:1, LinkedIn 1.91:1
-- [x] ~~`[DISCUSS]`~~ `[DECIDED]` **Rendering engine: Puppeteer.** Full CSS support,
-  headless, fast. Satori rejected due to CSS limitations. Canvas rejected due
-  to manual layout complexity.
+- [x] ~~`[DISCUSS]`~~ ~~`[DECIDED]` Puppeteer~~ `[REVISED 2026-04-04]` **Rendering
+  engine: Satori + resvg.** Originally chose Puppeteer for full CSS support, but
+  it can't run on Vercel serverless (200MB Chrome binary). Spike 4.0E validated
+  Satori produces near-identical output at ~250ms/image (vs 5-10s Puppeteer).
+  Templates written as JSX, fonts loaded as TTF buffers. Only limitation: no
+  `dotted` borders (use `dashed`). Full pipeline runs on Vercel free tier.
 - [x] Templates render correctly — structure matches Instagram post patterns
 
 #### Spike 4.0B — AI Image Generation ✅ COMPLETE
@@ -1707,40 +1715,49 @@ This gives us AI variety + brand consistency + messaging control.
 7. **No carousel support yet** — need Template H (dark bg + white text for slide 2)
 8. **Platform sizing** — LinkedIn landscape needs different layout, not just rescaled
 
-#### Spike 4.0E — Satori Rendering Validation (Replaces Puppeteer)
+#### Spike 4.0E — Satori Rendering Validation ✅ COMPLETE (2026-04-04)
 
-**Goal:** Determine if Satori + resvg can replace Puppeteer for template rendering,
-eliminating the headless Chrome dependency and enabling full Vercel free tier deployment.
+**Goal:** Replace Puppeteer with Satori + resvg for template rendering, eliminating
+the headless Chrome dependency and enabling full Vercel free tier deployment.
 
-**Context (2026-04-04):** Puppeteer can't run on Vercel serverless (200MB Chrome binary,
-50MB function limit, 10s timeout). Researched 7 alternatives. Satori (Vercel's own
-JSX → SVG → PNG library) is the top candidate: free, fast (~100-200ms vs 5-10s),
-runs natively in Node.js, supports flexbox layout + custom fonts + background images.
-htmlcsstoimage.com ($14/mo) is the fallback if Satori's CSS subset is insufficient.
+**Result:** Satori produces near-identical output to Puppeteer. Decision: **proceed
+with Satori.** Puppeteer is no longer a dependency.
 
-**Spike scope:**
-- [ ] Port Template A (headline + callout) from HTML string → Satori JSX
-- [ ] Load brand fonts (Space Grotesk + Inter) as TTF buffers
-- [ ] Composite with an AI-generated background image (base64 data URL)
-- [ ] Render at Instagram 4:5 (1080×1350), Facebook 1:1 (1080×1080),
+**Context:** Puppeteer can't run on Vercel serverless (200MB Chrome binary, 50MB
+function limit, 10s timeout). Researched 7 alternatives. Satori validated as the
+rendering engine.
+
+**Spike results:**
+- [x] Port Template A (headline + callout) from HTML string → Satori JSX
+- [x] Port Template G (checklist card) from HTML string → Satori JSX
+- [x] Load brand fonts (Space Grotesk + Inter) as TTF buffers
+- [x] Composite with AI-generated background images (base64 data URL)
+- [x] Render at Instagram 4:5 (1080×1350), Facebook 1:1 (1080×1080),
   LinkedIn 16:9 (1200×627)
-- [ ] Compare output quality to Spike 4.0C Puppeteer output
-- [ ] Document any CSS features that don't translate (backgroundSize: cover,
-  specific layout patterns)
-- [ ] Decision: Satori (proceed) or htmlcsstoimage.com (fallback)
+- [x] Compare output quality to Spike 4.0C Puppeteer output — **near-identical**
+- [x] Document CSS features that don't translate:
+  - `border-style: dotted` → use `dashed` instead (only `solid` and `dashed` supported)
+  - `backgroundSize: cover` → use `<img>` with `objectFit: cover` (works perfectly)
+  - No WOFF2 → use TTF/OTF font files
+  - No z-index → stacking by document order (works fine for layered templates)
+  - No CSS Grid → flexbox only (templates are already flexbox)
+  - No `::before`/`::after` pseudo-elements → use explicit elements instead
+- [x] Decision: **Satori confirmed.** htmlcsstoimage.com fallback not needed.
 
-**Key Satori constraints to test:**
-- `backgroundSize: cover` reportedly unsupported — use `<img>` with `objectFit: cover`
-- No WOFF2 — must use TTF/OTF font files
-- No z-index — stacking by document order (should be fine for layered templates)
-- No CSS Grid — flexbox only (templates are already flexbox)
-- ~100-200ms render time (vs 5-10s Puppeteer) — major performance win
+**Performance comparison:**
 
-**If Satori works:** Update architecture decision from Puppeteer → Satori + resvg.
-Remove Puppeteer as a dependency. Full pipeline runs on Vercel free tier.
+| Metric | Puppeteer | Satori + resvg |
+|--------|-----------|----------------|
+| First render | ~5-10 seconds | ~1.4 seconds (font loading) |
+| Subsequent renders | ~3-5 seconds | **~250ms** |
+| Chrome binary | 200MB required | Not needed |
+| Vercel free tier | ❌ Can't run | ✅ Runs natively |
+| Node.js dependency | puppeteer + chromium | satori + @resvg/resvg-js |
 
-**If Satori fails:** Use htmlcsstoimage.com REST API. 50 free images/month covers
-our volume (~48 images/month = 12 posts × 4 platforms). $14/mo if we exceed free tier.
+**Spike deliverables:**
+- `tools/src/scratch/spike-satori.tsx` — Satori JSX templates + render pipeline
+- `tools/src/scratch/spike-output/satori-*.png` — 6 rendered images for comparison
+- `tools/src/scratch/fonts/` — TTF font files for Satori
 
 ---
 
@@ -1999,7 +2016,7 @@ Card gallery grid showing all posts in the current review batch.
   - **Background:** Shows the prompt used. "Regenerate" button + "Edit prompt" inline.
   - **Template:** Dropdown to swap template type (Tip Card, Showcase, Checklist, etc.)
   - **Text overlay:** Editable fields for headline, body text, CTA
-  - "Recomposite" button after any layer change (re-renders via Puppeteer)
+  - "Recomposite" button after any layer change (re-renders via Satori)
 
 **Caption section (lower):**
 - Editable text area with the platform-specific caption
