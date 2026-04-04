@@ -2,7 +2,7 @@
 
 **Created:** 2026-03-29
 **Status:** Active — Single source of truth for all work
-**Last Updated:** 2026-03-29
+**Last Updated:** 2026-04-03
 
 This document is the comprehensive, granular task list for building the AAC
 four-pillar monorepo. Every task can be checked off as completed. Gaps that
@@ -33,7 +33,18 @@ noted inline.
    - [2.5G: Project Discovery & Staging](#25g--project-discovery--staging-walk)
    - [2.5H: Scheduling Automation](#25h--scheduling-automation-run)
 5. [Phase 3: Storefront Migration](#phase-3-storefront-migration)
-6. [Phase 4: Marketing Engine (Greenfield from Spec)](#phase-4-marketing-engine)
+6. [Phase 4: Marketing Engine](#phase-4-marketing-engine)
+   - [4.0: Image Generation Spike](#40--image-generation-spike-step-zero) — Prove the hybrid approach works
+   - [4.1: Prerequisites](#41--prerequisites-shared-package-work) — BufferClient, GeminiClient expansion, image storage
+   - [4.2: App Scaffold](#42--app-scaffold) — Next.js 15, database, layout
+   - [4.3: Content Production Pipeline](#43--content-production-pipeline-the-1000mo-va-replacement) — The $1,000/mo VA replacement
+   - [4.4: Content Type Library](#44--content-type-library) — Templates, cadences, prompt patterns
+   - [4.5: Automated Generation](#45--automated-content-generation-generate-a-month) — "Generate a Month" feature
+   - [4.6: SMS Campaigns](#46--sms-campaign-manager-phase-2-of-marketing-engine) — Lower priority, migrate from aac-slim
+   - [4.7: Campaign Webhooks](#47--campaign-response-webhook-stripped-from-middleware-quo-webhook) — Rebuild stripped middleware logic
+   - [4.8: Brand Profile](#48--brand-profile-system) — Markdown parser + Gemini prompt injection
+   - [4.9: Email Marketing](#49--email-marketing-future-state) — Future state placeholder
+   - [4.10: Deployment](#410--deployment) — Vercel project setup
 7. [Cross-Phase: Tools Migration](#cross-phase-tools-migration)
 8. [Ongoing: Infrastructure & Governance](#ongoing-infrastructure--governance)
 
@@ -1564,56 +1575,399 @@ live production site. DNS cutover is the scariest moment.
 
 ## Phase 4: Marketing Engine
 
-**Goal:** Build the marketing engine fresh within the monorepo, consuming
-shared packages from day one. Informed by gate docs and specs from the
-archived aac-marketing-engine repo.
+**Goal:** Replace $1,000/mo administrative assistant and $30/mo Canva subscription
+by building an AI-powered content production and campaign management system.
+Greenfield build within the monorepo, consuming shared packages from day one.
+Informed by gate docs and specs from the archived aac-marketing-engine repo.
 
-**Risk level:** Low. Greenfield build, no migration.
+**Risk level:** Low (greenfield, no migration). Technical risk concentrated in
+image generation quality (addressed by Spike 4.0).
 
-### 4.0 — Vision & Scope Definition
+**ROI justification:** $1,030/mo in cost elimination. Only new cost: Buffer paid
+plan (~$24/mo for 4 channels). Net savings: ~$1,000/mo = $12,000/year.
 
-- [ ] `[DISCUSS]` **What's the MVP?** The gate docs define a massive scope. What do we build first?
-  - Option A: Content production pipeline first (ideas → posts → approval → Buffer)
-  - Option B: SMS campaign manager first (CSV import → scrub → send — this exists in aac-slim)
-  - Option C: Both, but minimal — ideas + send, no approval workflow
-  - `[DISCUSS]` Which delivers the most value soonest?
-- [ ] `[DISCUSS]` **Data layer:** The marketing engine spec used SQLite/Prisma. Our meta-architecture says it "may use its own local data store." But:
-  - SQLite doesn't work well on Vercel (serverless, no persistent filesystem)
-  - Options: Turso (SQLite edge), Postgres (Neon/Supabase), or Redis-only
-  - `[DISCUSS]` What's the right choice for the monorepo context?
-- [ ] `[DISCUSS]` **SMS campaigns:** These currently live in aac-slim. During Phase 2, we may have pulled them out. Do they go here?
-- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Quo webhook campaign tracking:** Stripped from middleware. Rebuilt as separate marketing webhook/subscriber. See section 4.4 for full plan.
-- [ ] Review and adopt from archived specs:
-  - [ ] Copy `features.json` (48 features) as the backlog
-  - [ ] Copy `brand-profile-attack-a-crack.md` as real client data
-  - [ ] Copy Gate 1 (problem discovery) and Gate 4 (edge cases)
-  - [ ] Review Gate 3 (tech plan) for data model reference
-- [ ] Write `docs/marketing-engine-spec.md` with updated scope decisions
+**Reference material:**
+- `aac-marketing-engine/specs/gate-1-problem-discovery.md` — Problem statement
+- `aac-marketing-engine/specs/gate-3-tech-plan.md` — Data model, API contracts
+- `aac-marketing-engine/specs/gate-4-edge-cases.md` — Edge cases (framework-agnostic)
+- `aac-marketing-engine/specs/features.json` — 48 features with acceptance criteria
+- `aac-marketing-engine/specs/brand-profile-attack-a-crack.md` — Real brand data
+- `aac-marketing-engine/src/lib/gemini.ts` — Gemini prompt patterns (1,755 lines)
+- `aac-marketing-engine/docs/forensic-analysis/04-reuse-assessment.md` — What to reuse vs. rebuild
+- `aac-slim/docs/marketing-hub-platform-spec.md` — 9-phase platform spec
 
-### 4.1 — App Scaffold
+### Resolved Decisions
 
-- [ ] Initialize `apps/marketing` as Next.js app (version TBD — `[DISCUSS]` 15? 16?)
-- [ ] Set up database (based on data layer discussion above)
-- [ ] Add dependencies: framework, `@aac/api-clients`, `@aac/shared-utils`, ORM, etc.
-- [ ] Basic layout, auth, health check
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-04-03]` **What's the MVP?** Content production
+  pipeline first. This is the $1,000/mo VA replacement. SMS campaigns are secondary
+  ROI and already partially functional in aac-slim.
+- [x] ~~`[DISCUSS]`~~ `[DECIDED 2026-03-31]` **Quo webhook campaign tracking:** Stripped
+  from middleware. Rebuilt as separate marketing webhook/subscriber. See section 4.7.
 
-### 4.2 — Content Production Pipeline (if chosen as MVP)
+### Open Decisions
 
-- [ ] Idea generation (Gemini via `@aac/api-clients`)
-- [ ] Idea review UI (approve/iterate/replace/reject)
-- [ ] Post creation from approved idea
-- [ ] Platform variant generation (4 platforms)
-- [ ] Caption approval workflow
-- [ ] Image generation (Gemini Imagen via `@aac/api-clients`)
-- [ ] Image approval workflow
-- [ ] Version history and restore
-- [ ] Calendar view for scheduling
-- [ ] Buffer integration (real, not simulated) via `@aac/api-clients`
-- [ ] Campaign results → Redis for Command Center visibility
-- [ ] Quality tracking (rejection reasons, threshold alerts)
+- [ ] `[DISCUSS]` **Data layer:** SQLite doesn't work on Vercel serverless.
+  - Options: Turso (SQLite edge, Drizzle ORM), Postgres (Neon free tier, Drizzle),
+    or Redis-only (content workflows may be too complex for Redis alone)
+  - Leaning: Turso or Neon. Decide during 4.2 scaffold.
+- [ ] `[DISCUSS]` **Image storage:** Generated images need to live somewhere accessible
+  by Buffer for scheduling. Options: Vercel Blob, Cloudflare R2, Uploadthing.
+  - Constraint: Buffer `createPost` accepts `imageUrl` — images must be publicly
+    accessible URLs, not local filesystem paths.
+- [ ] `[DISCUSS]` **SMS campaigns:** Stay in aac-slim until marketing app is mature
+  enough to absorb them? Or migrate early?
+  - Leaning: Leave in aac-slim for now. Content production is the priority.
 
-### 4.3 — SMS Campaign Manager (if chosen as MVP or added after content)
+---
 
+### 4.0 — Image Generation Spike (Step Zero) ✅ COMPLETE (2026-04-03)
+
+**Goal:** Answer the fundamental question: can we generate images that look
+like our brand, programmatically? This determines the entire content pipeline
+architecture.
+
+**Result:** Hybrid approach validated. 3 of 5 first-attempt composites were
+postable quality. See `docs/spike-4.0-findings.md` for full analysis.
+
+**Time box:** 2-3 hours. No production code. Just answers.
+
+**The Hybrid Approach (confirmed direction):**
+The image generation pipeline is a three-layer sandwich:
+1. **Layer 1 — AI Background:** Generate a custom image with AI (scene, texture,
+   illustration, before/after visualization)
+2. **Layer 2 — Brand Template:** Overlay a branded template frame (logo placement,
+   color bars, layout structure, consistent visual identity)
+3. **Layer 3 — Custom Text:** Add headline, body text, CTA, hashtags using brand
+   fonts and colors
+
+This gives us AI variety + brand consistency + messaging control.
+
+#### Spike 4.0A — Template Rendering PoC ✅ COMPLETE
+
+**Question:** Can we render branded social media images from HTML/CSS templates?
+**Answer:** Yes. Puppeteer renders crisp full-resolution PNGs in <1 second.
+
+- [x] Created 3 HTML/CSS templates (A: headline+callout, C: dark header, G: checklist)
+- [x] Rendered at Instagram 4:5, Facebook 1:1, LinkedIn 1.91:1
+- [x] ~~`[DISCUSS]`~~ `[DECIDED]` **Rendering engine: Puppeteer.** Full CSS support,
+  headless, fast. Satori rejected due to CSS limitations. Canvas rejected due
+  to manual layout complexity.
+- [x] Templates render correctly — structure matches Instagram post patterns
+
+#### Spike 4.0B — AI Image Generation ✅ COMPLETE
+
+**Question:** Can current AI models generate on-brand images for AAC?
+**Answer:** Yes, 3 of 5 prompts produced usable results on first try.
+
+- [x] Tested Gemini Imagen 4.0 (`imagen-4.0-generate-001`) — current model,
+  3.0 is deprecated
+- [x] Generated 5 images: rain scene, foundation crack, winter house,
+  basement interior, spring thaw
+- [x] Results: 3 hits (winter house, basement, spring thaw), 1 miss (woman
+  with cat instead of rain), 1 partial (text artifacts in crack image)
+- [ ] Not yet tested: reference images, alternative models (DALL-E 3, Flux)
+- [x] Key finding: prompt specificity matters enormously. New England context +
+  explicit negative instructions ("no text, no people") improve results
+
+#### Spike 4.0C — Hybrid Composition ✅ COMPLETE
+
+**Question:** Does the three-layer sandwich produce good results?
+**Answer:** Yes — 3 of 5 composites are Instagram-postable quality.
+
+- [x] Composited AI backgrounds with branded templates via Puppeteer
+- [x] Used actual logo image file (not text approximation)
+- [x] Best results: `hybrid-a-spring.png`, `hybrid-c-winter.png`, `hybrid-g-basement.png`
+- [x] **Decision: proceed with hybrid approach**
+
+**Known issues to fix in production build (see `docs/spike-4.0-findings.md`):**
+1. **Image relevancy** — 1 of 5 AI backgrounds was completely off-topic (woman with cat).
+   Need curated prompt library + validation step to catch misses and auto-retry.
+2. **Prompt text in images** — model rendered its own prompt text into 1 image.
+   Need stronger negative instructions + possible OCR-based post-generation check.
+3. **Text too small** — headlines need 56-64px (was 42px), body needs 38-44px (was 30px).
+   Must be readable at Instagram grid thumbnail size (~110px square).
+4. **Card placement blocks background** — checklist card centered over the interesting
+   part of the AI image. Template elements should frame the image, not obscure it.
+5. **Logo sizing inconsistent** — standardize to 140-160px with backdrop shadow
+6. **Dark overlay tuning** — needs to adapt to AI image brightness
+7. **No carousel support yet** — need Template H (dark bg + white text for slide 2)
+8. **Platform sizing** — LinkedIn landscape needs different layout, not just rescaled
+
+#### Spike 4.0D — Buffer API Validation (Deferred)
+
+Lower risk — Buffer API already works for GBP via aac-astro scripts. Will
+validate IG/FB/LI support during Phase 4.1 BufferClient extraction.
+
+- [ ] Verify Buffer `createPost` supports image posts to IG, FB, LI
+- [ ] Verify batch scheduling (2+ months of posts)
+- [ ] Document platform-specific constraints
+
+**Spike deliverable:** `docs/spike-4.0-findings.md` — full analysis with
+architecture decisions, performance notes, and production fix list.
+
+---
+
+### 4.1 — Prerequisites (Shared Package Work)
+
+These must be completed before the marketing app can function.
+
+#### 4.1A — Extract BufferClient to @aac/api-clients
+
+**Source:** `aac-astro/scripts/lib/buffer-client.js`
+
+- [ ] Read existing Buffer client (GraphQL API, rate limiting, exponential backoff)
+- [ ] Design `BufferConfig`:
+  ```typescript
+  interface BufferConfig {
+    accessToken: string;
+    organizationId?: string;  // Cache after first getOrganizations() call
+  }
+  ```
+- [ ] Implement BufferClient class:
+  - [ ] `getOrganizations()` — list orgs for account
+  - [ ] `getChannels(orgId)` — list channels (IG, FB, LI, GBP) with service type
+  - [ ] `getScheduledPosts(channelIds, options?)` — list queued posts
+  - [ ] `createPost(channelId, text, options?)` — schedule post with optional image,
+    link, dueAt, and platform-specific metadata (GBP: whats_new type, button, etc.)
+  - [ ] `deletePost(postId)` — remove scheduled post
+- [ ] Rate limiting: 200ms minimum delay between requests, exponential backoff on 429
+- [ ] Write Vitest tests (mock GraphQL responses)
+- [ ] Add export to `packages/api-clients/src/index.ts`
+- [ ] Verify: `pnpm turbo build && pnpm turbo test`
+
+#### 4.1B — Expand GeminiClient for Content Generation
+
+**Source:** `aac-marketing-engine/src/lib/gemini.ts` (prompt patterns)
+
+The GeminiClient (0.10) already exists with `extractEntities()`. Add content
+generation and image generation methods.
+
+- [ ] Add `generateContent(prompt, options?)` method:
+  - Model: `gemini-2.0-flash` (or latest — verify current best model)
+  - Accept system prompt + user prompt
+  - Return parsed text response
+  - Handle: rate limits, safety blocks, timeout (30s + 1 retry)
+- [ ] Add `generateImage(prompt, options?)` method:
+  - Model: `imagen-3.0-generate-002` (or latest — verify during spike)
+  - Options: aspectRatio (`1:1`, `3:4`, `16:9`, `9:16`), sampleCount
+  - Return: `{ base64: string, mimeType: string }` (or array if sampleCount > 1)
+  - Handle: rate limits, safety blocks, timeout (30s + 1 retry)
+  - `[NOTE]` The marketing app owns prompt engineering (brand context injection,
+    platform rules, content type templates). The client just handles API mechanics.
+- [ ] Reference image support: accept optional base64 images in the prompt context
+- [ ] Write Vitest tests for new methods
+- [ ] Verify build passes
+
+#### 4.1C — Image Storage Solution
+
+- [ ] `[DISCUSS]` Choose image storage: Vercel Blob vs. Cloudflare R2 vs. Uploadthing
+  - Requirement: publicly accessible URLs (Buffer needs to fetch images)
+  - Requirement: reasonable free tier (we'll store ~500-1000 images/year)
+  - Requirement: simple upload API (Buffer from base64 or stream)
+- [ ] Add storage helper to `@aac/shared-utils` or keep in marketing app
+- [ ] Implement: `uploadImage(buffer, filename) → publicUrl`
+- [ ] Implement: `deleteImage(url)` (cleanup after posts are published)
+
+---
+
+### 4.2 — App Scaffold
+
+- [ ] Initialize `apps/marketing` as Next.js 15 app (App Router)
+- [ ] Set up database:
+  - [ ] Choose ORM: Drizzle (preferred — lighter than Prisma, better edge support)
+  - [ ] Choose provider: Turso or Neon (based on data layer decision)
+  - [ ] Define initial schema (adapted from marketing-engine's Prisma schema):
+    ```
+    ContentPost: id, concept, type, status, scheduledAt, createdAt, updatedAt
+    PlatformVariant: id, postId, platform, caption, captionStatus, imageUrl,
+                     imageStatus, aspectRatio, bufferPostId, publishStatus
+    VariantVersion: id, variantId, caption, imageUrl, feedback, createdAt
+    ContentIdea: id, title, description, pillar, status, batchId, postId
+    BrandProfile: singleton, parsed from markdown, cached in DB
+    Settings: singleton, API keys (encrypted), defaults, timezone
+    ```
+- [ ] Add dependencies: `@aac/api-clients`, `@aac/shared-utils`, ORM, Sharp
+- [ ] Basic layout with navigation (ideas, posts, calendar, settings)
+- [ ] Simple auth (single-user password, same pattern as command center)
+- [ ] Health check endpoint
+- [ ] `pnpm turbo build && pnpm turbo typecheck` passes
+
+---
+
+### 4.3 — Content Production Pipeline (The $1,000/mo VA Replacement)
+
+This is the MVP. Built in sub-phases that each deliver incremental value.
+
+#### 4.3A — Brand Profile & Settings
+
+- [ ] Copy `brand-profile-attack-a-crack.md` into the app
+- [ ] Build brand profile parser (markdown → structured data):
+  - Business name, tagline, industry
+  - Voice description, tone keywords, phrases to use/avoid
+  - Target audiences, service list, value propositions
+  - Content pillars, CTA rules per platform
+- [ ] Settings page: Buffer access token, Gemini API key, timezone, defaults
+- [ ] Store parsed brand profile in DB for fast access during generation
+
+#### 4.3B — Idea Generation & Review
+
+- [ ] "Generate Ideas" UI: select content pillar, optional theme/prompt
+- [ ] Gemini generates batch of 5 ideas with:
+  - Title, description, suggested platforms, suggested visual approach
+  - Brand context injected into system prompt (from parsed brand profile)
+  - Content pillar context (before/after, seasonal, educational, etc.)
+- [ ] Idea review UI: approve / iterate (with feedback) / replace / reject
+- [ ] Approved ideas become available for post creation
+- [ ] Rejection tracking with categories (off-brand, wrong-tone, duplicate, etc.)
+
+#### 4.3C — Post Creation & Image Generation (The Core)
+
+**This is where the hybrid image pipeline lives.**
+
+- [ ] Create post from approved idea (or manually)
+- [ ] Generate platform-specific captions via Gemini:
+  - System prompt includes brand voice, platform rules, character limits
+  - One caption per platform variant (IG, FB, LI, GBP)
+  - Respect platform-specific constraints:
+    - Instagram: 2,200 chars, hashtags in caption, include phone number
+    - Facebook: 63,206 chars, hashtags OK, include phone number
+    - LinkedIn: 3,000 chars, NO hashtags, professional tone, include phone number
+    - GBP: 1,500 chars, NO hashtags, no phone number, "Text us a photo" CTA
+- [ ] **Hybrid image generation pipeline:**
+  1. **Generate AI base image** via Gemini Imagen (or best model from spike):
+     - Prompt built from: content type + brand context + visual style hints
+     - Aspect ratios: 1:1 (IG/FB), 3:4 (IG portrait), 16:9 (LI), 4:3 (GBP)
+     - For educational/tip content: abstract backgrounds, textures, patterns
+     - For project showcases: construction/repair photography style
+     - For seasonal: weather/nature scenes relevant to foundation work
+  2. **Apply brand template overlay:**
+     - Template selected based on content type (tip card, showcase, testimonial, etc.)
+     - Template renders: color bars, layout frames, logo placement zone
+     - Logo positioned bottom-right at 10% image width (Sharp composition)
+     - Brand colors from profile applied to template elements
+  3. **Render text layer:**
+     - Headline text (from idea title or custom)
+     - Body text (key message, stat, or quote)
+     - CTA text (platform-appropriate)
+     - Brand fonts, colors, sizing from profile
+  4. **Composite final image:**
+     - AI base → template overlay → text layer → logo watermark
+     - Output at platform-specific dimensions
+     - Upload to image storage → get public URL
+- [ ] Template library:
+  - [ ] Tip/educational card template
+  - [ ] Before/after split template
+  - [ ] Testimonial/review card template
+  - [ ] Service spotlight template
+  - [ ] Seasonal warning template
+  - [ ] Stat/number highlight template
+  - [ ] "Crack of the Week" personality template
+  - [ ] Blog promotion template (with blog post title + link)
+  - `[FUTURE]` Template editor UI for creating new templates
+
+#### 4.3D — Approval Workflow
+
+- [ ] Per-variant independent approval (caption + image approved separately)
+- [ ] Caption editing with auto-save (3-second debounce)
+- [ ] Image regeneration with style hints ("make it warmer", "more professional")
+- [ ] Caption regeneration with feedback ("shorter", "more urgent", "add emoji")
+- [ ] Version history per variant (caption + image snapshots)
+- [ ] Restore previous version
+- [ ] Edit-after-approval with time cutoff (30 minutes)
+- [ ] Quality dashboard: rejection rate (rolling 7-day), pattern alerts (>40%),
+  intervention suggestions based on rejection categories
+
+#### 4.3E — Scheduling & Publishing
+
+- [ ] Calendar view (month grid showing scheduled + published + draft posts)
+- [ ] Schedule post: select date/time, validate all variants approved
+- [ ] Send to Buffer via `@aac/api-clients` BufferClient:
+  - One `createPost` call per platform variant
+  - Include image URL, caption, platform-specific metadata
+  - GBP posts: include `metadata.google` with `whats_new` type and CTA link
+  - Store `bufferPostId` on each variant for tracking
+- [ ] Unschedule (remove from Buffer queue)
+- [ ] Per-variant publish status tracking: PENDING → PUBLISHING → PUBLISHED / FAILED
+- [ ] Retry failed variants individually
+- [ ] Batch scheduling: generate and schedule 4-8 weeks of content at once
+- [ ] Scheduling algorithm (from aac-astro pattern):
+  - Configurable posting days/times per platform
+  - Content type diversity (don't post 3 tip cards in a row)
+  - Service type diversity (interleave crack repair, resurfacing, waterproofing)
+  - Geographic diversity (mix towns for local content)
+
+#### 4.3F — Blog Integration
+
+- [ ] Blog content source: read from aac-astro content collections or an API
+  - `[DISCUSS]` How? Options:
+    - aac-astro exposes a simple JSON API of recent blog posts
+    - Marketing app reads blog markdown files directly (monorepo = same filesystem during dev)
+    - Shared Redis: website publishes new blog metadata, marketing subscribes
+  - Leaning: simple JSON API on the website (`/api/blog/recent.json`)
+- [ ] When new blog post detected: auto-generate social post set promoting it
+  - Caption links back to blog post URL
+  - Image generated from blog hero image + branded template
+  - One social post per platform, blog-promotion template
+- [ ] Schedule blog promo posts for same week as blog publish date
+- [ ] At least 1 of the 2-3 weekly social posts should be a blog promotion
+
+---
+
+### 4.4 — Content Type Library
+
+Pre-defined content types with associated prompt templates, visual approaches,
+and scheduling cadences. These drive the "generate a month of content" feature.
+
+| Content Type | Cadence | Visual Approach | Prompt Focus |
+|---|---|---|---|
+| **Tip/Educational** | 1x/week | Template-heavy, AI background texture | Crack education, seasonal warnings, DIY guidance |
+| **Project Showcase** | 1x/week | Before/after split, real project photos preferred, AI-generated as fallback | Specific repair story, location, service type |
+| **Blog Promotion** | 1x/week | Blog hero image + branded overlay | Summary of blog post + CTA to read more |
+| **Testimonial** | 1x/2 weeks | Review card template, star rating | Real customer quote from Google reviews |
+| **Seasonal** | Seasonal | Weather/nature AI background + template | Spring thaw, fall prep, winter emergency, summer concrete |
+| **Personality** | 1x/2 weeks | Playful template, "Crack of the Week" | Humor, behind-the-scenes, team spotlight |
+
+**Monthly content calendar target:** 10-12 posts/month across all platforms
+- 4x tips/educational
+- 4x project showcases
+- 4x blog promotions
+- 2x testimonials (rotated from review library)
+- 1-2x seasonal (when applicable)
+- 1-2x personality/humor
+
+---
+
+### 4.5 — Automated Content Generation ("Generate a Month")
+
+The killer feature: one-click generation of a full month of content.
+
+- [ ] "Generate Month" workflow:
+  1. User selects month and optional theme focus
+  2. System generates content calendar based on cadence rules (4.4)
+  3. For each slot: generate idea → generate captions → generate hybrid image
+  4. Present all posts in calendar view for review
+  5. User reviews, tweaks, approves in bulk or individually
+  6. One-click "Schedule All Approved" sends everything to Buffer
+- [ ] Batch generation with progress tracking:
+  - Gemini rate limits: respect API quotas, queue with delays
+  - Image generation is slowest step: ~5-10 seconds per image
+  - Full month (12 posts × 4 platforms = 48 variants, 12 images) ≈ 2-3 minutes
+  - Show progress bar with per-post status
+- [ ] Smart defaults: auto-select posting times based on platform best practices
+  - Instagram: Tue/Thu 11am, Sat 10am
+  - Facebook: Wed/Fri 1pm
+  - LinkedIn: Tue/Wed 9am
+  - GBP: Mon-Fri 9am (from existing aac-astro pattern)
+
+---
+
+### 4.6 — SMS Campaign Manager (Phase 2 of Marketing Engine)
+
+Lower priority than content production. Can be built after 4.3 is live and
+the VA is fired. Much of this already exists in aac-slim and can be migrated.
+
+- [ ] `[DISCUSS]` Timing: build this when content pipeline is stable, or leave in
+  aac-slim until Phase 2 middleware extraction naturally moves it?
 - [ ] CSV import (PropertyRadar format)
 - [ ] Phone scrubbing via `@aac/api-clients` SearchBugClient
 - [ ] Campaign creation with A/B testing
@@ -1622,9 +1976,9 @@ archived aac-marketing-engine repo.
 - [ ] Opt-out handling
 - [ ] Campaign stats → Redis for Command Center
 - [ ] Business hours enforcement
-- [ ] Daily limit enforcement
+- [ ] Daily limit enforcement (125/day default)
 
-### 4.4 — Campaign Response Webhook (Stripped from Middleware Quo Webhook)
+### 4.7 — Campaign Response Webhook (Stripped from Middleware Quo Webhook)
 
 The middleware's Quo webhook was stripped of ~55 lines of campaign response
 tracking during Phase 2 clean extraction. This logic needs to be rebuilt as
@@ -1650,18 +2004,49 @@ subscribes to this stream and processes campaign-related logic.
 
 **Source reference:** aac-slim `app/api/webhooks/quo/route.ts` lines 438-494
 
-### 4.5 — Brand Profile System
+### 4.8 — Brand Profile System
 
-- [ ] Markdown-based brand profile (reuse from marketing engine spec)
-- [ ] Parser (reuse patterns from aac-marketing-engine)
-- [ ] `[DISCUSS]` Does brand profile belong in `@aac/shared-utils` since multiple apps might use it? Or is it marketing-specific?
+- [ ] Markdown-based brand profile (reuse `brand-profile-attack-a-crack.md`)
+- [ ] Parser: markdown → structured BrandProfile object:
+  ```typescript
+  interface BrandProfile {
+    businessName: string;
+    tagline: string;
+    industry: string;
+    voice: { description: string; toneKeywords: string[]; avoidKeywords: string[] };
+    valueProprositions: { name: string; details: string }[];
+    services: { category: string; items: string[] }[];
+    targetAudiences: { segment: string; trigger: string }[];
+    contentPillars: string[];
+    ctaRules: Record<Platform, { phoneAllowed: boolean; ctaStyle: string }>;
+    visualStyle: { primaryColors: string[]; fonts: string[]; photoStyle: string };
+  }
+  ```
+- [ ] Inject into Gemini prompts for content and image generation
+- [ ] Settings UI for editing brand profile (or just edit the markdown file)
+- [ ] `[DISCUSS]` Does brand profile belong in `@aac/shared-utils` since multiple
+  apps might use it? Or is it marketing-specific?
+  - Leaning: marketing-specific. Only the marketing app generates content.
 
-### 4.6 — Deployment
+### 4.9 — Email Marketing (Future State)
+
+Not in scope for MVP. Placeholder for when we're ready.
+
+- [ ] Email template system (branded templates similar to social image templates)
+- [ ] Mailing list management (import, segment, suppress)
+- [ ] Campaign creation and scheduling
+- [ ] Provider: Resend or SendGrid (API-based, not UI-based)
+- [ ] Unsubscribe handling
+- [ ] Campaign stats → Redis for Command Center
+
+### 4.10 — Deployment
 
 - [ ] Create Vercel project `aac-marketing`
-- [ ] Configure root directory, env vars
-- [ ] Deploy and verify
-- [ ] `[DISCUSS]` Custom domain?
+- [ ] Configure root directory: `apps/marketing`
+- [ ] Environment variables: Gemini API key, Buffer token, database URL,
+  image storage credentials, Redis URL
+- [ ] Deploy and verify health check
+- [ ] `[DISCUSS]` Custom domain? (marketing.attackacrack.com or internal-only)
 
 ---
 
