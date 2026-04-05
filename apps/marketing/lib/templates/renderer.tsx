@@ -9,6 +9,9 @@ import { join } from "node:path";
 import React from "react";
 import { PLATFORM_SIZES, type Platform } from "./brand";
 import { TemplateA } from "./template-a";
+import { TemplateC } from "./template-c";
+import { TemplateD } from "./template-d";
+import { TemplateF } from "./template-f";
 import { TemplateG } from "./template-g";
 
 // ── Font loading (cached at module level) ──────────────────────────
@@ -62,6 +65,9 @@ export interface RenderOptions {
 
 export type TemplateData =
   | { type: "A"; headline: string; body: string }
+  | { type: "C"; line1: string; line2: string }
+  | { type: "D"; badgeText: string }
+  | { type: "F"; text: string }
   | { type: "G"; title: string; items: string[] };
 
 /**
@@ -82,6 +88,46 @@ export async function renderTemplate(options: RenderOptions): Promise<Buffer> {
         <TemplateA
           headline={data.headline}
           body={data.body}
+          bgDataUrl={bgDataUrl}
+          logoDataUrl={logoDataUrl}
+          width={size.width}
+          height={size.height}
+        />
+      );
+      break;
+
+    case "C":
+      if (data.type !== "C") throw new Error("Template C requires type C data");
+      jsx = (
+        <TemplateC
+          line1={data.line1}
+          line2={data.line2}
+          bgDataUrl={bgDataUrl}
+          logoDataUrl={logoDataUrl}
+          width={size.width}
+          height={size.height}
+        />
+      );
+      break;
+
+    case "D":
+      if (data.type !== "D") throw new Error("Template D requires type D data");
+      jsx = (
+        <TemplateD
+          badgeText={data.badgeText}
+          bgDataUrl={bgDataUrl}
+          logoDataUrl={logoDataUrl}
+          width={size.width}
+          height={size.height}
+        />
+      );
+      break;
+
+    case "F":
+      if (data.type !== "F") throw new Error("Template F requires type F data");
+      jsx = (
+        <TemplateF
+          text={data.text}
           bgDataUrl={bgDataUrl}
           logoDataUrl={logoDataUrl}
           width={size.width}

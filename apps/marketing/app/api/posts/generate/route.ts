@@ -8,6 +8,7 @@ import { buildCaptionPrompt } from "@/lib/caption-prompts";
 import { uploadImage } from "@/lib/storage";
 import { renderTemplate, type TemplateData } from "@/lib/templates/renderer";
 import { PLATFORM_SIZES, type Platform } from "@/lib/templates/brand";
+import { generateWithQualityGate } from "@/lib/image-quality-gate";
 import type { ImageAspectRatio } from "@aac/api-clients";
 
 const PLATFORM_ASPECT_RATIOS: Record<string, ImageAspectRatio> = {
@@ -43,9 +44,8 @@ export async function POST(request: NextRequest) {
     }
 
     const meta = safeParseDescription(idea.description);
-    const platforms = meta.suggestedPlatforms.length
-      ? meta.suggestedPlatforms
-      : ["instagram", "facebook", "linkedin"];
+    // Always generate for all 3 platforms (GBP is auto-posted separately via Buffer)
+    const platforms = ["instagram", "facebook", "linkedin"];
 
     // Create the post
     const [post] = await db
@@ -80,14 +80,30 @@ export async function POST(request: NextRequest) {
 
       if (meta.sourceType !== "ai-caption-only") {
         try {
-          // Generate AI background at the platform's aspect ratio
           const imagePrompt = buildImagePrompt(meta.visualApproach, idea.pillar ?? "");
-          const [rawImage] = await gemini.generateImage(imagePrompt, {
-            aspectRatio,
-            mimeType: "image/png",
-          });
+          const apiKey = process.env.GEMINI_API_KEY ?? "";
 
-          const bgDataUrl = `data:image/png;base64,${rawImage.base64}`;
+          // Generate AI background with quality gate (auto-retries on text detection)
+          const result = await generateWithQualityGate(
+            async () => {
+              const [img] = await gemini.generateImage(imagePrompt, {
+                aspectRatio,
+                mimeType: "image/png",
+              });
+              return img;
+            },
+            `${idea.pillar} content for foundation repair: ${meta.visualApproach}`,
+            apiKey,
+            3,
+          );
+
+          if (!result.quality.passed) {
+            console.warn(
+              `Image quality gate: best of ${result.attempts} attempts still has issues: ${result.quality.reason}`,
+            );
+          }
+
+          const bgDataUrl = `data:image/png;base64,${result.base64}`;
 
           // Apply branded template overlay via Satori
           const compositePng = await renderTemplate({
@@ -162,9 +178,35 @@ function buildTemplateData(
   title: string,
   description: string,
 ): TemplateData {
+  // Truncate helper — keep text short and punchy for templates
+  const truncate = (s: string, max: number) =>
+    s.length > max ? s.slice(0, max - 1) + "…" : s;
+
   switch (templateId.toUpperCase()) {
-    case "G":
-      // Split description into checklist items if it looks like a list
+    case "C": {
+      // Split title into two lines for the dark header
+      const words = title.split(" ");
+      const mid = Math.ceil(words.length / 2);
+      return {
+        type: "C",
+        line1: words.slice(0, mid).join(" "),
+        line2: words.slice(mid).join(" ") || truncate(description, 60),
+      };
+    }
+
+    case "D":
+      return {
+        type: "D",
+        badgeText: title,
+      };
+
+    case "F":
+      return {
+        type: "F",
+        text: title,
+      };
+
+    case "G": {
       const items = description
         .split(/[,;•\n]/)
         .map((s) => s.trim())
@@ -175,25 +217,32 @@ function buildTemplateData(
         title: title.length > 25 ? "CHECKLIST" : title.toUpperCase(),
         items: items.length >= 3 ? items : [
           title,
-          description.slice(0, 50),
+          truncate(description, 50),
           "Call or text for a free quote",
         ],
       };
+    }
+
     case "A":
     default:
       return {
         type: "A",
         headline: title,
-        body: description.length > 120
-          ? description.slice(0, 117) + "…"
-          : description,
+        body: truncate(description, 100),
       };
   }
 }
 
 function buildImagePrompt(visualApproach: string, pillar: string): string {
-  const base = visualApproach || `Professional photo related to ${pillar} content for a foundation repair company`;
-  return `${base}. Photorealistic, professional photography, editorial quality. New England setting. Natural lighting. No text, no watermarks, no labels, no annotations, no words, no writing of any kind in the image.`;
+  // Strip any template-specific instructions from the visual approach
+  // (e.g., "with a yellow badge that reads 'Hurricane Prep'" — that's the template's job)
+  let base = visualApproach || `Professional photo related to ${pillar} content for a foundation repair company`;
+  base = base
+    .replace(/with (?:a |the )?(?:yellow |gold )?(?:badge|banner|text|overlay|label).*?[.']/gi, "")
+    .replace(/text (?:overlay|that reads).*?[.']/gi, "")
+    .trim();
+
+  return `${base}. Photorealistic, professional photography, editorial quality. New England residential setting. Natural or golden hour lighting. Shallow depth of field. ABSOLUTELY NO TEXT of any kind in this image — no words, no letters, no numbers, no labels, no watermarks, no annotations, no signs, no writing, no captions, no titles, no logos, no stamps. This is a background photograph only — all text and branding will be added separately as an overlay. The image must contain zero readable characters.`;
 }
 
 function safeParseDescription(desc: string | null): {
