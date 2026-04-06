@@ -24,7 +24,8 @@
     "next": "^15",
     "react": "^19",
     "react-dom": "^19",
-    "satori": "^0.26.0"
+    "satori": "^0.26.0",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@aac/tsconfig": "workspace:*",

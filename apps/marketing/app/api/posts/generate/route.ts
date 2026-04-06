@@ -7,16 +7,9 @@ import { eq } from "drizzle-orm";
 import { buildCaptionPrompt } from "@/lib/caption-prompts";
 import { uploadImage } from "@/lib/storage";
 import { renderTemplate, type TemplateData } from "@/lib/templates/renderer";
-import { PLATFORM_SIZES, type Platform } from "@/lib/templates/brand";
+import { PLATFORM_SIZES, PLATFORM_RATIO_LABELS, type Platform } from "@/lib/templates/brand";
 import { generateWithQualityGate } from "@/lib/image-quality-gate";
-import type { ImageAspectRatio } from "@aac/api-clients";
-
-const PLATFORM_ASPECT_RATIOS: Record<string, ImageAspectRatio> = {
-  instagram: "3:4",
-  facebook: "1:1",
-  linkedin: "16:9",
-  gbp: "4:3",
-};
+import { detectFocalPoint, cropToSize } from "@/lib/image-crop";
 
 export async function POST(request: NextRequest) {
   if (!(await verifySession())) {
@@ -69,41 +62,70 @@ export async function POST(request: NextRequest) {
 
     const gemini = getGeminiClient();
     const templateId = meta.suggestedTemplate || "A";
-    const templateData = buildTemplateData(templateId, idea.title, meta.text);
 
-    // Generate per-platform: AI background → Satori composite → upload
+    // Generate customer-facing overlay text (replaces raw internal description)
+    const overlayText = await generateOverlayText(
+      gemini,
+      templateId,
+      idea.title,
+      meta.text,
+      idea.pillar ?? "educational",
+    );
+    const templateData = buildTemplateData(templateId, idea.title, overlayText);
+
+    // Generate ONE AI background image at 1:1, then crop per platform
     const variants = [];
+    let baseImageBuffer: Buffer | null = null;
+    let focalPoint = { x: 0.5, y: 0.5 };
+
+    if (meta.sourceType !== "ai-caption-only") {
+      try {
+        const imagePrompt = buildImagePrompt(meta.visualApproach, idea.pillar ?? "");
+        const apiKey = process.env.GEMINI_API_KEY ?? "";
+
+        // Generate one base image at 1:1 (most versatile for cropping)
+        const result = await generateWithQualityGate(
+          async () => {
+            const [img] = await gemini.generateImage(imagePrompt, {
+              aspectRatio: "1:1",
+              mimeType: "image/png",
+            });
+            return img;
+          },
+          `${idea.pillar} content for foundation repair: ${meta.visualApproach}`,
+          apiKey,
+          3,
+        );
+
+        if (!result.quality.passed) {
+          console.warn(
+            `Image quality gate: best of ${result.attempts} attempts still has issues: ${result.quality.reason}`,
+          );
+        }
+
+        baseImageBuffer = Buffer.from(result.base64, "base64");
+
+        // Detect focal point for smart cropping
+        focalPoint = await detectFocalPoint(result.base64, apiKey);
+      } catch (imgErr) {
+        console.error("Base image generation failed:", imgErr);
+      }
+    }
 
     for (const platform of platforms) {
-      const aspectRatio = PLATFORM_ASPECT_RATIOS[platform] ?? "1:1";
+      const size = PLATFORM_SIZES[platform as Platform];
       let imageUrl: string | null = null;
 
-      if (meta.sourceType !== "ai-caption-only") {
+      if (baseImageBuffer) {
         try {
-          const imagePrompt = buildImagePrompt(meta.visualApproach, idea.pillar ?? "");
-          const apiKey = process.env.GEMINI_API_KEY ?? "";
-
-          // Generate AI background with quality gate (auto-retries on text detection)
-          const result = await generateWithQualityGate(
-            async () => {
-              const [img] = await gemini.generateImage(imagePrompt, {
-                aspectRatio,
-                mimeType: "image/png",
-              });
-              return img;
-            },
-            `${idea.pillar} content for foundation repair: ${meta.visualApproach}`,
-            apiKey,
-            3,
+          // Crop the base image to this platform's aspect ratio
+          const croppedBuffer = await cropToSize(
+            baseImageBuffer,
+            size.width,
+            size.height,
+            focalPoint,
           );
-
-          if (!result.quality.passed) {
-            console.warn(
-              `Image quality gate: best of ${result.attempts} attempts still has issues: ${result.quality.reason}`,
-            );
-          }
-
-          const bgDataUrl = `data:image/png;base64,${result.base64}`;
+          const bgDataUrl = `data:image/png;base64,${croppedBuffer.toString("base64")}`;
 
           // Apply branded template overlay via Satori
           const compositePng = await renderTemplate({
@@ -118,7 +140,7 @@ export async function POST(request: NextRequest) {
             `posts/${post.id}/${platform}-${Date.now()}.png`,
           );
         } catch (imgErr) {
-          console.error(`Image generation failed for ${platform}:`, imgErr);
+          console.error(`Image processing failed for ${platform}:`, imgErr);
         }
       }
 
@@ -153,7 +175,7 @@ export async function POST(request: NextRequest) {
             : "generated",
           imageUrl,
           imageStatus: imageUrl ? "generated" : "pending",
-          aspectRatio,
+          aspectRatio: PLATFORM_RATIO_LABELS[platform as Platform],
         })
         .returning();
 
@@ -173,12 +195,63 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * Generate customer-facing overlay text via Gemini.
+ * Converts the internal idea description into a short, punchy tagline
+ * appropriate for displaying on a social media image.
+ */
+async function generateOverlayText(
+  gemini: ReturnType<typeof getGeminiClient>,
+  templateId: string,
+  title: string,
+  internalDescription: string,
+  pillar: string,
+): Promise<string> {
+  const templateGuide: Record<string, string> = {
+    A: "a short supporting tagline (8-12 words max) that complements the headline. Think magazine ad callout.",
+    C: "a short second line (3-6 words) that pairs with the headline to form a punchy two-line statement.",
+    D: "not needed — this template uses only the headline badge.",
+    F: "not needed — this template uses only the headline.",
+    G: "3-5 short actionable checklist items (each 3-8 words). Return them separated by semicolons.",
+  };
+
+  const guide = templateGuide[templateId.toUpperCase()] ?? templateGuide.A;
+
+  // Templates D and F don't need body text
+  if (templateId.toUpperCase() === "D" || templateId.toUpperCase() === "F") {
+    return "";
+  }
+
+  try {
+    const result = await gemini.generateContent(
+      `You are writing text for a branded social media image overlay for a foundation repair company.
+
+Post topic: ${title}
+Internal concept: ${internalDescription}
+Content pillar: ${pillar}
+
+Write ${guide}
+
+Rules:
+- This text appears ON the image, not as a caption. Keep it very short.
+- Write for the customer, not the content creator. No exposition or meta-descriptions.
+- Direct, confident tone. No filler words.
+- Do NOT include hashtags, emojis, or the company name.
+- Return ONLY the overlay text, nothing else.`,
+      { temperature: 0.7, maxOutputTokens: 150 },
+    );
+    return result.trim();
+  } catch (err) {
+    console.error("Overlay text generation failed, falling back to title:", err);
+    return title;
+  }
+}
+
 function buildTemplateData(
   templateId: string,
   title: string,
-  description: string,
+  overlayText: string,
 ): TemplateData {
-  // Truncate helper — keep text short and punchy for templates
   const truncate = (s: string, max: number) =>
     s.length > max ? s.slice(0, max - 1) + "…" : s;
 
@@ -190,25 +263,20 @@ function buildTemplateData(
       return {
         type: "C",
         line1: words.slice(0, mid).join(" "),
-        line2: words.slice(mid).join(" ") || truncate(description, 60),
+        line2: overlayText || words.slice(mid).join(" "),
       };
     }
 
     case "D":
-      return {
-        type: "D",
-        badgeText: title,
-      };
+      return { type: "D", badgeText: title };
 
     case "F":
-      return {
-        type: "F",
-        text: title,
-      };
+      return { type: "F", text: title };
 
     case "G": {
-      const items = description
-        .split(/[,;•\n]/)
+      // overlayText should be semicolon-separated checklist items
+      const items = overlayText
+        .split(/[;•\n]/)
         .map((s) => s.trim())
         .filter((s) => s.length > 3)
         .slice(0, 5);
@@ -216,8 +284,8 @@ function buildTemplateData(
         type: "G",
         title: title.length > 25 ? "CHECKLIST" : title.toUpperCase(),
         items: items.length >= 3 ? items : [
-          title,
-          truncate(description, 50),
+          truncate(title, 40),
+          "Schedule an inspection today",
           "Call or text for a free quote",
         ],
       };
@@ -228,7 +296,7 @@ function buildTemplateData(
       return {
         type: "A",
         headline: title,
-        body: truncate(description, 100),
+        body: truncate(overlayText || title, 100),
       };
   }
 }

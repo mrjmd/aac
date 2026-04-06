@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySession } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { platformVariants, variantVersions } from "@/db/schema";
+import { platformVariants, variantVersions, contentPosts } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getGeminiClient } from "@/lib/gemini";
 import { buildCaptionPrompt } from "@/lib/caption-prompts";
 import { uploadImage } from "@/lib/storage";
+import { renderTemplate } from "@/lib/templates/renderer";
+import { PLATFORM_SIZES, type Platform } from "@/lib/templates/brand";
+import { detectFocalPoint, cropToSize } from "@/lib/image-crop";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -121,14 +124,42 @@ Return ONLY the revised caption text. No JSON, no labels.`;
             : "";
           const imagePrompt = `${basePrompt}Photorealistic, professional photography, editorial quality. New England setting. Natural lighting. No text, no watermarks, no labels, no annotations, no words, no writing of any kind in the image.`;
 
+          // Generate at 1:1 then crop to platform aspect ratio
           const [image] = await gemini.generateImage(imagePrompt, {
-            aspectRatio: (variant.aspectRatio as "1:1" | "3:4" | "4:3" | "16:9") ?? "3:4",
+            aspectRatio: "1:1",
             mimeType: "image/png",
           });
 
-          const buffer = Buffer.from(image.base64, "base64");
+          const apiKey = process.env.GEMINI_API_KEY ?? "";
+          const focal = await detectFocalPoint(image.base64, apiKey);
+          const size = PLATFORM_SIZES[variant.platform as Platform];
+          const cropped = await cropToSize(
+            Buffer.from(image.base64, "base64"),
+            size.width,
+            size.height,
+            focal,
+          );
+
+          // Re-apply template overlay if the post has a templateId
+          let finalBuffer = cropped;
+          const [post] = await db
+            .select()
+            .from(contentPosts)
+            .where(eq(contentPosts.id, variant.postId))
+            .limit(1);
+
+          if (post?.templateId) {
+            const bgDataUrl = `data:image/png;base64,${cropped.toString("base64")}`;
+            finalBuffer = await renderTemplate({
+              templateId: post.templateId,
+              platform: variant.platform as Platform,
+              bgDataUrl,
+              data: { type: "D", badgeText: post.concept ?? "" },
+            });
+          }
+
           const newUrl = await uploadImage(
-            buffer,
+            finalBuffer,
             `posts/${variant.postId}/variant-${variant.id}-${Date.now()}.png`,
           );
 

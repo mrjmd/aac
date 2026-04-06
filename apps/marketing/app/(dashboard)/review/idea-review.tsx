@@ -32,13 +32,6 @@ function parseMeta(description: string | null): IdeaMeta {
   }
 }
 
-const REJECTION_REASONS = [
-  { value: "off-brand", label: "Off-brand" },
-  { value: "wrong-tone", label: "Wrong tone" },
-  { value: "duplicate", label: "Duplicate" },
-  { value: "irrelevant", label: "Irrelevant" },
-  { value: "other", label: "Other" },
-];
 
 const PILLAR_COLORS: Record<string, string> = {
   educational: "bg-blue-100 text-blue-700",
@@ -67,7 +60,6 @@ export function IdeaReview({
   const meta = parseMeta(idea.description);
   const [mode, setMode] = useState<"view" | "revise" | "reject">("view");
   const [feedback, setFeedback] = useState("");
-  const [reason, setReason] = useState("off-brand");
   const [loading, setLoading] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
   const [generatingPost, setGeneratingPost] = useState(false);
@@ -85,25 +77,27 @@ export function IdeaReview({
         body: JSON.stringify({
           action,
           ...(action === "revise" ? { feedback } : {}),
-          ...(action === "reject" ? { rejectionReason: reason } : {}),
         }),
       });
       const data = await res.json();
 
-      // Auto-backfill on reject
-      if (action === "reject" && data.backfill) {
-        setBackfilling(true);
+      // Auto-backfill on reject — refresh immediately so the rejected card disappears
+      if (action === "reject") {
         setMode("view");
-        await fetch("/api/ideas/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            batchId: data.backfill.batchId,
-            count: data.backfill.count,
-            excludeTopics: data.backfill.rejectedTopics,
-          }),
-        });
-        setBackfilling(false);
+        router.refresh();
+        if (data.backfill) {
+          setBackfilling(true);
+          await fetch("/api/ideas/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              batchId: data.backfill.batchId,
+              count: data.backfill.count,
+              excludeTopics: data.backfill.rejectedTopics,
+            }),
+          });
+          setBackfilling(false);
+        }
       }
 
       // Auto-generate post on approve
@@ -198,9 +192,7 @@ export function IdeaReview({
       )}
 
       {idea.status === "rejected" && (
-        <div className="mb-2 text-xs text-zinc-400">
-          Rejected: {idea.rejectionReason ?? "no reason"}
-        </div>
+        <div className="mb-2 text-xs text-zinc-400">Rejected</div>
       )}
 
       {backfilling && (
@@ -267,31 +259,20 @@ export function IdeaReview({
       )}
 
       {mode === "reject" && (
-        <div className="mt-3 space-y-2 border-t border-zinc-100 pt-3">
-          <select
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-aac-blue"
+        <div className="mt-3 flex gap-2 border-t border-zinc-100 pt-3">
+          <button
+            onClick={() => handleAction("reject")}
+            disabled={loading}
+            className="flex items-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600 disabled:opacity-50"
           >
-            {REJECTION_REASONS.map((r) => (
-              <option key={r.value} value={r.value}>{r.label}</option>
-            ))}
-          </select>
-          <div className="flex gap-2">
-            <button
-              onClick={() => handleAction("reject")}
-              disabled={loading}
-              className="flex items-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600 disabled:opacity-50"
-            >
-              <X size={12} /> {loading ? "Rejecting…" : "Confirm Reject"}
-            </button>
-            <button
-              onClick={() => setMode("view")}
-              className="rounded-lg px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-600"
-            >
-              Cancel
-            </button>
-          </div>
+            <X size={12} /> {loading ? "Rejecting…" : "Confirm Reject"}
+          </button>
+          <button
+            onClick={() => setMode("view")}
+            className="rounded-lg px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-600"
+          >
+            Cancel
+          </button>
         </div>
       )}
     </div>

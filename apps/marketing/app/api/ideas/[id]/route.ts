@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { verifySession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { contentIdeas } from "@/db/schema";
@@ -135,7 +136,6 @@ Return the revised idea as a JSON object with: title, description, pillar, sugge
         .update(contentIdeas)
         .set({
           status: "rejected",
-          rejectionReason: body.rejectionReason ?? "other",
           updatedAt: new Date().toISOString(),
         })
         .where(eq(contentIdeas.id, idNum))
@@ -160,6 +160,8 @@ Return the revised idea as a JSON object with: title, description, pillar, sugge
         const nonRejected = batchIdeas.filter((i) => i.status !== "rejected");
         backfillCount = Math.max(0, originalCount - nonRejected.length);
       }
+
+      revalidatePath("/review");
 
       return NextResponse.json({
         ...updated,
