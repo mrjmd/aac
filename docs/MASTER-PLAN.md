@@ -2167,49 +2167,42 @@ flow must separate concept approval from visual approval:
 This prevents wasting Imagen API calls on concepts that will be rejected at
 the idea level.
 
-#### 4.3A — Brand Profile & Settings
+#### 4.3A — Brand Profile & Settings `[DONE 2026-04-04]`
 
-- [ ] Copy `brand-profile-attack-a-crack.md` into the app
-- [ ] Build brand profile parser (markdown → structured data):
-  - Business name, tagline, industry
-  - Voice description, tone keywords, phrases to use/avoid
-  - Target audiences, service list, value propositions
-  - Content pillars, CTA rules per platform
-- [ ] Settings page: Buffer access token, Gemini API key, timezone, defaults
-- [ ] Store parsed brand profile in DB for fast access during generation
+- [x] Brand profile markdown (`content/brand-profile-attack-a-crack.md`) with
+  business info, voice/tone, phrases, pillars, CTA rules, visual identity
+  (colors, typography, logo, design language), 9 template patterns, example posts
+- [x] Brand profile parser (`lib/brand-profile.ts`) — markdown → structured
+  TypeScript types including colors, templates, examples
+- [x] Settings page showing parsed profile, env var status indicators
+- [x] App shell with sidebar nav (Content, Campaigns, Reviews, Settings)
+- [x] Auth (password-based cookie session), login page
+- [x] Turso + Drizzle schema with ideas, posts, variants, versions tables
 
 #### 4.3A+ — Post History Manifest (Deduplication Context)
 
-- [ ] Create `content/post-history.md` — a manifest of all posts published in the
-  last 3–6 months (seeded manually from Instagram/Facebook/LinkedIn history)
-- [ ] Schema per entry: date, platform(s), pillar, topic summary, template used,
-  key phrases (enough for Gemini to avoid duplicating the concept)
-- [ ] When generating ideas, the manifest is injected into the system prompt as
-  "recently published content — do not repeat these topics or angles"
+- [x] Created `content/post-history.md` manifest structure with schema
+- [x] Manifest injected into idea generation system prompt
+- [ ] **TODO:** Seed manifest with last 3–6 months of real posts from IG/FB/LI
 - [ ] As new posts are published through the pipeline, auto-append them to the
   manifest (or move to DB-backed once volume warrants it)
 - [ ] Manifest should also track which templates have been used recently to ensure
   visual variety (don't use Template A five times in a row)
 
-#### 4.3B — Idea Generation & Review
+#### 4.3B — Idea Generation & Review `[DONE 2026-04-04]`
 
-- [ ] "Generate Ideas" UI: select content pillar, optional theme/prompt
-- [ ] Gemini generates batch of 5 ideas with:
-  - Title, description, suggested platforms, suggested visual approach
-  - Brand context injected into system prompt (from parsed brand profile)
-  - Content pillar context (before/after, seasonal, educational, etc.)
-- [ ] Idea review UI with three actions per idea:
-  - **Approve** — idea is ready for post creation
-  - **Revise** — concept is promising but needs iteration. User provides feedback,
-    Gemini regenerates a new version of the same concept incorporating the notes.
-    Revision history is preserved (idea keeps same ID, new version appended).
-  - **Reject** — concept didn't work at all. Removed from the batch entirely.
-    Rejection reason tracked (off-brand, wrong-tone, duplicate, irrelevant, etc.)
-- [ ] **Auto-backfill on reject:** When ideas are rejected from a batch, automatically
-  generate replacement ideas to fill the gaps. E.g., if 8 of 12 are rejected,
-  auto-roll 8 new ideas (excluding concepts similar to the rejected ones).
-  Backfill prompt includes rejected concepts as negative examples.
-- [ ] Approved ideas become available for post creation
+- [x] Generate Ideas UI: pillar selector, optional theme, configurable count (3/5/8/10)
+- [x] Gemini generates ideas with full brand context (voice, pillars, phrases,
+  templates, example posts, post history) injected into system prompt
+- [x] Each idea tagged with `sourceType` (ai-full vs ai-caption-only)
+- [x] Review UI with three actions: Approve, Revise (AI re-generation with
+  feedback), Reject (with reason category)
+- [x] Auto-backfill on reject: counts rejected in batch, auto-generates
+  replacements with rejected topics as negative examples
+- [x] **On approve → auto-triggers post generation** (Tier 2). No separate
+  "Generate Post" button — approval kicks off image + caption generation
+  immediately and redirects to the post detail view.
+- [x] Review page sections: Needs Review, Visual Review, Approved, Rejected
 - [ ] `[FUTURE]` **Bulk-approve:** Select multiple ideas and approve them all at once,
   triggering parallel post generation for each. Useful for monthly batch review.
 
@@ -2226,36 +2219,27 @@ Two automated quality checks to filter out garbage before it reaches the user:
 - [ ] Implementation: second Gemini call with the batch as input, returns
   pass/fail + reason per idea. Failed ideas get regenerated automatically.
 
-**2. Image Quality Gate (pre-Tier 2):**
-- [ ] After Imagen generates a background, run automated checks:
-  - **OCR/text detection:** Use Gemini vision to check "Does this image contain
-    any text, letters, words, or gibberish?" Auto-retry if yes (up to 3 attempts).
-  - **Relevance check:** "Does this image match the prompt? Is it related to
-    foundation repair / New England homes / the requested scene?" Auto-retry if no.
-  - **Quality check:** "Is this image photorealistic and professional quality,
-    or does it have obvious AI artifacts?" Flag for retry if poor quality.
-- [ ] Only present images that pass all checks to the user
-- [ ] Track retry count — if 3 attempts all fail, present best attempt with
-  a warning badge rather than blocking the pipeline entirely
+**2. Image Quality Gate (pre-Tier 2):** `[DONE 2026-04-04]`
+- [x] Gemini vision checks each AI background for text/gibberish, relevance,
+  and quality. Auto-retries up to 3x on text detection failure.
+- [x] Strengthened Imagen negative prompts: strips template text from visual
+  approach, emphatic no-text directives
+- [x] Best attempt used if all retries fail (doesn't block pipeline)
+- [ ] **TODO:** Idea quality gate (pre-Tier 1) — self-evaluation pass not yet built
 - [ ] `[FUTURE]` Fine-tune the quality gate thresholds based on rejection data
 
-#### 4.3C — Post Creation & Image Generation (The Core)
+#### 4.3C — Post Creation & Image Generation (The Core) `[MOSTLY DONE 2026-04-04]`
 
-**This is where the hybrid image pipeline lives.**
+**Hybrid image pipeline is wired and working.**
 
-- [ ] Generate **per-platform images** at correct aspect ratios:
-  - Instagram: 3:4 (1080x1350)
-  - Facebook: 1:1 (1080x1080)
-  - LinkedIn: 1:1 (1080x1080)
-  - GBP: 4:3 (1200x900)
-- [ ] Each platform variant gets its own image generation call (not shared)
-- [ ] **Default to Facebook, Instagram, LinkedIn** (not GBP — that's auto-posted
-  via Buffer separately). Only include GBP if the idea explicitly targets it.
-- [ ] Apply **Satori template overlay** to AI background:
-  - Brand colors, logo, headline, callout text per template pattern (A-I)
-  - Composite: AI background → template overlay → text → logo = final PNG
-  - This is where the spike 4.0E Satori pipeline gets wired into the app
-- [ ] Create post from approved idea (or manually)
+- [x] Per-platform images at correct aspect ratios (IG 3:4, FB 1:1, LI 16:9)
+- [x] Each variant gets its own Imagen + Satori call (not shared)
+- [x] Default to FB, IG, LI (GBP auto-posted separately via Buffer)
+- [x] Satori template overlay: AI background → branded template → logo → PNG
+  (~250ms per composite). Templates A, C, D, F, G built and wired.
+- [x] Post generation API: creates post + variants from approved idea
+- [x] Local dev storage (public/uploads/) when Vercel Blob token not set
+- [ ] Create post manually (without idea) — not yet built
 - [ ] Generate platform-specific captions via Gemini:
   - System prompt includes brand voice, platform rules, character limits
   - One caption per platform variant (IG, FB, LI, GBP)
@@ -2285,28 +2269,32 @@ Two automated quality checks to filter out garbage before it reaches the user:
      - AI base → template overlay → text layer → logo watermark
      - Output at platform-specific dimensions
      - Upload to image storage → get public URL
-- [ ] Template library:
-  - [ ] Tip/educational card template
+- [x] Template library (5 of 9 built):
+  - [x] Template A — Headline bar + callout box (workhorse)
+  - [x] Template C — Dark header + gold text + photo (bold statement)
+  - [x] Template D — Yellow badge on photo (eye-catching)
+  - [x] Template F — Clean photo + direct text overlay (magazine-style)
+  - [x] Template G — Checklist card on blue background (actionable)
+  - [ ] Template H — Carousel slide 2 (dark bg + white text)
   - [ ] Before/after split template
-  - [ ] Testimonial/review card template
-  - [ ] Service spotlight template
-  - [ ] Seasonal warning template
-  - [ ] Stat/number highlight template
-  - [ ] "Crack of the Week" personality template
   - [ ] Blog promotion template (with blog post title + link)
   - `[FUTURE]` Template editor UI for creating new templates
+- [ ] **TODO:** Generate template-specific body text via Gemini (currently uses
+  raw idea description which is too long/internal for template callout text)
 
-#### 4.3D — Approval Workflow
+#### 4.3D — Approval Workflow `[PARTIALLY DONE 2026-04-04]`
 
-- [ ] Per-variant independent approval (caption + image approved separately)
-- [ ] Caption editing with auto-save (3-second debounce)
-- [ ] Image regeneration with style hints ("make it warmer", "more professional")
-- [ ] Caption regeneration with feedback ("shorter", "more urgent", "add emoji")
-- [ ] Version history per variant (caption + image snapshots)
-- [ ] Restore previous version
-- [ ] Edit-after-approval with time cutoff (30 minutes)
-- [ ] Quality dashboard: rejection rate (rolling 7-day), pattern alerts (>40%),
-  intervention suggestions based on rejection categories
+- [x] Per-variant independent approval (caption + image approved separately)
+- [x] Image regeneration with style hints (input field on each variant)
+- [x] Caption regeneration with feedback (input field on each variant)
+- [x] Version history per variant (variant_versions table, saved on revise)
+- [x] Inline visual review on /review page (platform tabs, image + caption
+  side by side, approve/revise/reject per component)
+- [x] Post detail page at /post/[id] (fallback deeper-edit view)
+- [ ] Caption editing with auto-save (3-second debounce) — not yet built
+- [ ] Restore previous version — not yet built
+- [ ] Edit-after-approval with time cutoff — not yet built
+- [ ] Quality dashboard — not yet built
 
 #### 4.3E — Scheduling & Publishing
 
