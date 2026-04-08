@@ -5,6 +5,8 @@ import { contentPosts, platformVariants } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { PostDetail } from "./post-detail";
+import { findNextSlot } from "@/lib/scheduling-cadence";
+import { arePostVariantsFullyApproved } from "@/lib/post-status";
 
 export default async function PostPage({
   params,
@@ -27,5 +29,16 @@ export default async function PostPage({
     .from(platformVariants)
     .where(eq(platformVariants.postId, postId));
 
-  return <PostDetail post={post} variants={variants} />;
+  // Compute the next auto-schedule slot only when the Schedule section will show
+  let nextSlotIso: string | null = null;
+  if (post.status === "review" && arePostVariantsFullyApproved(variants)) {
+    try {
+      const slot = await findNextSlot();
+      nextSlotIso = slot.toISOString();
+    } catch (e) {
+      console.error("findNextSlot failed:", e);
+    }
+  }
+
+  return <PostDetail post={post} variants={variants} nextSlotIso={nextSlotIso} />;
 }

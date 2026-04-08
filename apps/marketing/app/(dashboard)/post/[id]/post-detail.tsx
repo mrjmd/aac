@@ -11,6 +11,7 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import type { contentPosts, platformVariants } from "@/db/schema";
+import { ScheduleSection } from "./schedule-section";
 
 type Post = typeof contentPosts.$inferSelect;
 type Variant = typeof platformVariants.$inferSelect;
@@ -32,9 +33,11 @@ const STATUS_STYLES: Record<string, string> = {
 export function PostDetail({
   post,
   variants,
+  nextSlotIso,
 }: {
   post: Post;
   variants: Variant[];
+  nextSlotIso: string | null;
 }) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState(variants[0]?.platform ?? "instagram");
@@ -97,6 +100,9 @@ export function PostDetail({
       {activeVariant && (
         <VariantPanel variant={activeVariant} post={post} />
       )}
+
+      {/* Schedule Section */}
+      <ScheduleSection post={post} variants={variants} nextSlotIso={nextSlotIso} />
     </div>
   );
 }

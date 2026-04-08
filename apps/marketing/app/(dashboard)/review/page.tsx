@@ -2,16 +2,20 @@ export const dynamic = "force-dynamic";
 
 import { db } from "@/lib/db";
 import { contentIdeas, contentPosts, platformVariants } from "@/db/schema";
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, inArray } from "drizzle-orm";
 import { IdeaReview } from "./idea-review";
 import { GenerateButton } from "./generate-button";
-import type { platformVariants as pvType } from "@/db/schema";
+import { findNextSlot } from "@/lib/scheduling-cadence";
+import type { platformVariants as pvType, contentPosts as cpType } from "@/db/schema";
 
 type Variant = typeof pvType.$inferSelect;
+type Post = typeof cpType.$inferSelect;
 
 export default async function ReviewPage() {
   let ideas: (typeof contentIdeas.$inferSelect)[] = [];
   let variantsByPostId: Record<number, Variant[]> = {};
+  let postsById: Record<number, Post> = {};
+  let nextSlotIso: string | null = null;
   let dbError = false;
 
   try {
@@ -21,21 +25,32 @@ export default async function ReviewPage() {
       .orderBy(desc(contentIdeas.createdAt))
       .limit(50);
 
-    // Fetch variants for any ideas that have linked posts
+    // Fetch variants and posts for any ideas that have linked posts
     const postIds = ideas
       .filter((i) => i.postId)
       .map((i) => i.postId as number);
 
     if (postIds.length > 0) {
-      const variants = await db
-        .select()
-        .from(platformVariants)
-        .where(inArray(platformVariants.postId, postIds));
+      const [variants, posts] = await Promise.all([
+        db.select().from(platformVariants).where(inArray(platformVariants.postId, postIds)),
+        db.select().from(contentPosts).where(inArray(contentPosts.id, postIds)),
+      ]);
 
       for (const v of variants) {
         if (!variantsByPostId[v.postId]) variantsByPostId[v.postId] = [];
         variantsByPostId[v.postId].push(v);
       }
+      for (const p of posts) {
+        postsById[p.id] = p;
+      }
+    }
+
+    // Compute next auto-schedule slot once for the whole page
+    try {
+      const slot = await findNextSlot();
+      nextSlotIso = slot.toISOString();
+    } catch (e) {
+      console.error("findNextSlot failed:", e);
     }
   } catch {
     dbError = true;
@@ -104,6 +119,8 @@ export default async function ReviewPage() {
                 key={idea.id}
                 idea={idea}
                 variants={idea.postId ? variantsByPostId[idea.postId] : undefined}
+                post={idea.postId ? postsById[idea.postId] : undefined}
+                nextSlotIso={nextSlotIso}
               />
             ))}
           </div>

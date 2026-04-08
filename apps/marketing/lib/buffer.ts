@@ -70,6 +70,27 @@ export async function getBufferClient(): Promise<BufferClient> {
   return state.client;
 }
 
+/** Map our internal variant.platform values to Buffer service names. */
+const PLATFORM_TO_SERVICE: Record<string, string> = {
+  instagram: "instagram",
+  facebook: "facebook",
+  linkedin: "linkedin",
+  gbp: "googlebusiness",
+};
+
+/**
+ * Find the connected Buffer channel for a given variant platform.
+ * Returns null if no channel is connected for that platform.
+ */
+export async function findChannelForPlatform(
+  platform: string,
+): Promise<BufferChannel | null> {
+  const service = PLATFORM_TO_SERVICE[platform];
+  if (!service) return null;
+  const channels = await getBufferChannels();
+  return channels.find((c) => c.service === service) ?? null;
+}
+
 /** Map Buffer service names to friendly platform labels for the UI. */
 export function platformLabelForService(service: string): string {
   const map: Record<string, string> = {

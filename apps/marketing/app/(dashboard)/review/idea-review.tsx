@@ -8,10 +8,12 @@ import {
   X,
   Sparkles,
   Image as ImageIcon,
+  Calendar,
 } from "lucide-react";
-import type { contentIdeas, platformVariants } from "@/db/schema";
+import type { contentIdeas, contentPosts, platformVariants } from "@/db/schema";
 
 type Idea = typeof contentIdeas.$inferSelect;
+type Post = typeof contentPosts.$inferSelect;
 type Variant = typeof platformVariants.$inferSelect;
 
 interface IdeaMeta {
@@ -52,9 +54,13 @@ const PLATFORM_LABELS: Record<string, string> = {
 export function IdeaReview({
   idea,
   variants,
+  post,
+  nextSlotIso,
 }: {
   idea: Idea;
   variants?: Variant[];
+  post?: Post;
+  nextSlotIso?: string | null;
 }) {
   const router = useRouter();
   const meta = parseMeta(idea.description);
@@ -203,7 +209,13 @@ export function IdeaReview({
       )}
 
       {/* ── TIER 2: Inline Visual Review ─────────────────────────── */}
-      {hasVariants && <InlineVariantReview variants={variants} />}
+      {hasVariants && (
+        <InlineVariantReview
+          variants={variants}
+          post={post}
+          nextSlotIso={nextSlotIso ?? null}
+        />
+      )}
 
       {/* ── TIER 1: Idea Actions ─────────────────────────────────── */}
       {isDraft && !isTerminal && mode === "view" && (
@@ -281,13 +293,29 @@ export function IdeaReview({
 
 // ── Inline Variant Review (Tier 2) ─────────────────────────────────
 
-function InlineVariantReview({ variants }: { variants: Variant[] }) {
+function InlineVariantReview({
+  variants,
+  post,
+  nextSlotIso,
+}: {
+  variants: Variant[];
+  post?: Post;
+  nextSlotIso: string | null;
+}) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState(variants[0]?.platform ?? "");
   const active = variants.find((v) => v.platform === activeTab);
   const [loading, setLoading] = useState("");
+  const [scheduling, setScheduling] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [reviseTarget, setReviseTarget] = useState<"" | "caption" | "image">("");
   const [reviseText, setReviseText] = useState("");
+
+  const allApproved =
+    variants.length > 0 &&
+    variants.every(
+      (v) => v.captionStatus === "approved" && v.imageStatus === "approved",
+    );
 
   async function handleVariantAction(
     variantId: number,
@@ -307,6 +335,35 @@ function InlineVariantReview({ variants }: { variants: Variant[] }) {
       router.refresh();
     } finally {
       setLoading("");
+    }
+  }
+
+  async function handleAutoSchedule() {
+    if (!post) return;
+    setScheduling(true);
+    setScheduleError(null);
+    try {
+      const res = await fetch(`/api/posts/${post.id}/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "auto" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setScheduleError(data.error ?? "Schedule failed");
+        return;
+      }
+      const failed = (data.results ?? []).filter((r: { ok: boolean }) => !r.ok);
+      if (failed.length > 0 && !data.anySuccess) {
+        setScheduleError(
+          `All variants failed: ${failed.map((f: { error?: string }) => f.error).join("; ")}`,
+        );
+      }
+      router.refresh();
+    } catch (e) {
+      setScheduleError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScheduling(false);
     }
   }
 
@@ -462,6 +519,42 @@ function InlineVariantReview({ variants }: { variants: Variant[] }) {
           </div>
         )}
       </div>
+
+      {/* ── Auto-schedule (visible when all variants approved) ── */}
+      {allApproved && post?.status === "review" && nextSlotIso && (
+        <div className="mt-4 border-t border-zinc-100 pt-3">
+          <button
+            onClick={handleAutoSchedule}
+            disabled={scheduling}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-aac-blue px-3 py-2 text-xs font-bold text-white hover:bg-aac-blue/90 disabled:opacity-50"
+          >
+            <Calendar size={12} />
+            {scheduling
+              ? "Scheduling…"
+              : `Auto-schedule for ${formatSlotLabel(nextSlotIso)}`}
+          </button>
+          {scheduleError && (
+            <p className="mt-2 text-[10px] text-red-600">{scheduleError}</p>
+          )}
+        </div>
+      )}
+
+      {allApproved && post?.status === "scheduled" && (
+        <div className="mt-4 flex items-center justify-center gap-1.5 rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">
+          <Check size={12} /> Scheduled
+        </div>
+      )}
     </div>
   );
+}
+
+function formatSlotLabel(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
