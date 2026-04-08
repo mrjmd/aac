@@ -59,11 +59,19 @@ export interface GbpMetadata {
   link?: string;
 }
 
+/** Instagram metadata. Buffer requires a post type and shouldShareToFeed flag. */
+export interface InstagramMetadata {
+  type: 'post' | 'story' | 'reel';
+  /** Whether the post appears in the main feed. Defaults to true. */
+  shouldShareToFeed?: boolean;
+}
+
 export interface CreatePostOptions {
   imageUrl?: string;
   dueAt?: string;
   linkUrl?: string;
   gbpMetadata?: GbpMetadata;
+  instagramMetadata?: InstagramMetadata;
   mode?: 'addToQueue' | 'customScheduled' | 'shareNow' | 'shareNext';
   saveToDraft?: boolean;
 }
@@ -281,7 +289,9 @@ export class BufferClient {
       mode: ${mode}
     `;
 
-    // GBP metadata (configurable type + CTA)
+    // Build metadata block — supports google (GBP) and/or instagram together
+    const metadataParts: string[] = [];
+
     if (options?.gbpMetadata) {
       const gbp = options.gbpMetadata;
       const button = gbp.button ?? 'learn_more';
@@ -289,41 +299,34 @@ export class BufferClient {
       variableDefs += ', $linkUrl: String';
       variables.linkUrl = gbp.link ?? options?.linkUrl ?? null;
 
-      // Build the metadata block based on post type
       if (gbp.type === 'whats_new') {
-        inputFields += `,
-          metadata: {
-            google: {
-              type: whats_new,
-              detailsWhatsNew: {
-                button: ${button},
-                link: $linkUrl
-              }
-            }
-          }`;
+        metadataParts.push(`google: {
+          type: whats_new,
+          detailsWhatsNew: { button: ${button}, link: $linkUrl }
+        }`);
       } else if (gbp.type === 'event') {
-        inputFields += `,
-          metadata: {
-            google: {
-              type: event,
-              detailsEvent: {
-                button: ${button},
-                link: $linkUrl
-              }
-            }
-          }`;
+        metadataParts.push(`google: {
+          type: event,
+          detailsEvent: { button: ${button}, link: $linkUrl }
+        }`);
       } else if (gbp.type === 'offer') {
-        inputFields += `,
-          metadata: {
-            google: {
-              type: offer,
-              detailsOffer: {
-                button: ${button},
-                link: $linkUrl
-              }
-            }
-          }`;
+        metadataParts.push(`google: {
+          type: offer,
+          detailsOffer: { button: ${button}, link: $linkUrl }
+        }`);
       }
+    }
+
+    if (options?.instagramMetadata) {
+      const ig = options.instagramMetadata;
+      const shareToFeed = ig.shouldShareToFeed ?? true;
+      metadataParts.push(
+        `instagram: { type: ${ig.type}, shouldShareToFeed: ${shareToFeed} }`
+      );
+    }
+
+    if (metadataParts.length > 0) {
+      inputFields += `, metadata: { ${metadataParts.join(', ')} }`;
     }
 
     if (options?.dueAt) {

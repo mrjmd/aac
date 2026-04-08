@@ -56,6 +56,7 @@ export type {
   BufferPost,
   BufferIdea,
   GbpMetadata,
+  InstagramMetadata,
   CreatePostOptions,
   CreateIdeaOptions,
 } from './buffer.js';

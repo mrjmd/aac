@@ -259,6 +259,22 @@ describe('BufferClient', () => {
       expect(body.query).toContain('book');
     });
 
+    it('creates an Instagram post with required type metadata', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(
+        mockGraphQL({
+          createPost: { post: { id: 'post-ig', text: 'IG post' } },
+        })
+      );
+
+      await client.createPost('ch-ig', 'IG post', {
+        instagramMetadata: { type: 'post' },
+      });
+
+      const body = getLastRequestBody();
+      expect(body.query).toContain('instagram: { type: post, shouldShareToFeed: true }');
+    });
+
     it('defaults to customScheduled mode', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(
