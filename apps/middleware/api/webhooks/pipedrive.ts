@@ -21,6 +21,7 @@ import {
   storePipedriveToQbMapping,
   trackWebhookProcessed,
   logHealthError,
+  tryAcquireContactCreateLock,
 } from '../../lib/redis.js';
 import { getPipedrive, getQuo, getQuickBooks } from '../../lib/clients.js';
 
@@ -259,30 +260,62 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             quoId: quoContactId,
           });
         } else {
-          // Create new contact in Quo
-          const newContact = await quo.createContact({
-            defaultFields: {
-              firstName,
-              lastName: lastName || undefined,
-              company,
-              role: jobTitle,
-              phoneNumbers: [{ value: e164Phone, name: 'mobile' }],
-              emails: primaryEmail ? [{ value: primaryEmail, name: 'email' }] : undefined,
-            },
-          });
+          // Acquire a lock before creating to prevent duplicate contacts
+          // when multiple Pipedrive webhooks fire simultaneously
+          const gotLock = await tryAcquireContactCreateLock('quo', e164Phone);
 
-          quoContactId = newContact.id;
-          await storeIdMapping(String(data.id), quoContactId);
-          await pd.setPersonCustomField(
-            data.id,
-            PIPEDRIVE_CROSS_SYSTEM_FIELDS.QUO_CONTACT_ID,
-            quoContactId
-          );
+          if (!gotLock) {
+            // Another handler is creating for this phone — wait and re-search
+            log.info('Contact create lock held by another handler, waiting', {
+              pipedriveId: data.id,
+              phone: e164Phone,
+            });
+            await new Promise((r) => setTimeout(r, 2000));
+            const retryContact = await quo.searchContactByPhone(e164Phone);
+            if (retryContact) {
+              quoContactId = retryContact.id;
+              await storeIdMapping(String(data.id), quoContactId);
+              await pd.setPersonCustomField(
+                data.id,
+                PIPEDRIVE_CROSS_SYSTEM_FIELDS.QUO_CONTACT_ID,
+                quoContactId
+              );
+              log.info('Found Quo contact after lock wait', {
+                pipedriveId: data.id,
+                quoId: quoContactId,
+              });
+            } else {
+              log.warn('No Quo contact found after lock wait, skipping create', {
+                pipedriveId: data.id,
+                phone: e164Phone,
+              });
+            }
+          } else {
+            // We hold the lock — create the contact
+            const newContact = await quo.createContact({
+              defaultFields: {
+                firstName,
+                lastName: lastName || undefined,
+                company,
+                role: jobTitle,
+                phoneNumbers: [{ value: e164Phone, name: 'mobile' }],
+                emails: primaryEmail ? [{ value: primaryEmail, name: 'email' }] : undefined,
+              },
+            });
 
-          log.info('Created new Quo contact', {
-            pipedriveId: data.id,
-            quoId: quoContactId,
-          });
+            quoContactId = newContact.id;
+            await storeIdMapping(String(data.id), quoContactId);
+            await pd.setPersonCustomField(
+              data.id,
+              PIPEDRIVE_CROSS_SYSTEM_FIELDS.QUO_CONTACT_ID,
+              quoContactId
+            );
+
+            log.info('Created new Quo contact', {
+              pipedriveId: data.id,
+              quoId: quoContactId,
+            });
+          }
         }
       }
 

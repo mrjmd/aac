@@ -10,6 +10,7 @@ vi.mock('../lib/redis.js', () => ({
   storePipedriveToQbMapping: vi.fn().mockResolvedValue(undefined),
   trackWebhookProcessed: vi.fn().mockResolvedValue(undefined),
   logHealthError: vi.fn().mockResolvedValue(undefined),
+  tryAcquireContactCreateLock: vi.fn().mockResolvedValue(true),
 }));
 
 const mockPipedrive = {
@@ -90,9 +91,12 @@ function makePayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   (markEventProcessed as any).mockResolvedValue(true);
+  const redis = await import('../lib/redis.js');
+  (redis.tryAcquireContactCreateLock as any).mockResolvedValue(true);
+  (redis.getQuoIdFromPipedrive as any).mockResolvedValue(null);
   mockQuo.searchContactByPhone.mockResolvedValue(null);
   mockQuo.createContact.mockResolvedValue({ id: 'quo-new', defaultFields: {} });
   mockQuickBooks.isConnected.mockResolvedValue(false);
@@ -153,6 +157,24 @@ describe('pipedrive webhook', () => {
     expect(mockQuo.updateContact).toHaveBeenCalledOnce();
     expect(mockQuo.createContact).not.toHaveBeenCalled();
   });
+
+  it('waits and re-searches when contact create lock is held', async () => {
+    const { tryAcquireContactCreateLock, getQuoIdFromPipedrive } = await import('../lib/redis.js');
+    (getQuoIdFromPipedrive as any).mockResolvedValue(null);
+    (tryAcquireContactCreateLock as any).mockResolvedValue(false);
+    // After waiting, the re-search should find the contact created by the other handler
+    mockQuo.searchContactByPhone
+      .mockResolvedValueOnce(null) // First search (before lock)
+      .mockResolvedValueOnce({ id: 'quo-from-other', defaultFields: {} }); // Re-search after wait
+
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+
+    expect(mockQuo.createContact).not.toHaveBeenCalled();
+    const body = res.json.mock.calls[0][0];
+    expect(body.status).toBe('synced');
+    expect(body.quoId).toBe('quo-from-other');
+  }, 10000);
 
   it('returns 200 even when Quo sync fails (fail safe)', async () => {
     mockQuo.createContact.mockRejectedValue(new Error('API down'));

@@ -54,6 +54,9 @@ export const keys = {
   /** Track contacts created by middleware (for loop prevention) — 60s TTL */
   createdByUs: (system: string, id: string) => `created-by-us:${system}:${id}` as const,
 
+  /** Distributed lock for contact creation (prevents duplicate creates) — 30s TTL */
+  contactCreateLock: (system: string, phone: string) => `lock:create:${system}:${phone}` as const,
+
   // ── QuickBooks OAuth ───────────────────────────────────────────────
 
   /** QB OAuth token storage */
@@ -99,6 +102,7 @@ export const ttl = {
   dedupe: 86_400,            // 24 hours
   idMapping: 604_800,        // 7 days
   loopPrevention: 60,        // 60 seconds
+  contactCreateLock: 30,     // 30 seconds
   webhookCount: 172_800,     // 48 hours (keep yesterday + today)
   campaign: 7_776_000,       // 90 days
   attribution: 31_536_000,   // 1 year

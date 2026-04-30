@@ -139,6 +139,23 @@ export async function wasCreatedByMiddleware(pipedriveId: string): Promise<boole
   return exists === 1;
 }
 
+// ── Contact Create Lock ─────────────────────────────────────────────
+
+/**
+ * Try to acquire a lock before creating a contact in an external system.
+ * Returns true if lock acquired (you should create), false if another
+ * handler is already creating for this phone (you should wait and search).
+ */
+export async function tryAcquireContactCreateLock(
+  system: string,
+  phone: string
+): Promise<boolean> {
+  const redis = getRedis();
+  const key = keys.contactCreateLock(system, phone);
+  const result = await redis.set(key, 'locked', { nx: true, ex: ttl.contactCreateLock });
+  return result === 'OK';
+}
+
 // ── QuickBooks OAuth Token Storage ───────────────────────────────────
 
 export async function storeQBTokens(tokens: QBOAuthTokens): Promise<void> {
