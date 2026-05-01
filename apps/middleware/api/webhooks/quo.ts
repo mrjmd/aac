@@ -19,7 +19,7 @@
 import crypto from 'crypto';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { createLogger } from '@aac/shared-utils/logger';
-import { GeminiClient } from '@aac/api-clients/gemini';
+import { GeminiClient, ExtractionError } from '@aac/api-clients/gemini';
 import {
   markEventProcessed,
   getPipedriveIdFromPhone,
@@ -522,8 +522,15 @@ export async function POST(request: Request): Promise<Response> {
           }
         }
       } catch (error) {
+        const reason = error instanceof ExtractionError ? error.reason : 'unknown';
         log.error('AI entity extraction failed', error as Error, {
           personId: pipedrivePersonId,
+          reason,
+        });
+        await logHealthError('quo', `AI extraction failed (${reason}): ${(error as Error).message.substring(0, 200)}`, {
+          personId: String(pipedrivePersonId),
+          reason,
+          eventType: event.type,
         });
       }
     }

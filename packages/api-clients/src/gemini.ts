@@ -106,6 +106,25 @@ Respond with ONLY the JSON object, no markdown or explanation.
 Text to analyze:
 `;
 
+export type ExtractionErrorReason =
+  | 'rate_limit'
+  | 'server_error'
+  | 'api_error'
+  | 'empty_response'
+  | 'parse_error'
+  | 'timeout'
+  | 'network_error';
+
+export class ExtractionError extends Error {
+  constructor(
+    message: string,
+    public readonly reason: ExtractionErrorReason
+  ) {
+    super(message);
+    this.name = 'ExtractionError';
+  }
+}
+
 // ── Client ───────────────────────────────────────────────────────────
 
 export class GeminiClient {
@@ -113,7 +132,10 @@ export class GeminiClient {
 
   /**
    * Extract entities from unstructured text using Gemini.
-   * Returns null gracefully on API errors or missing API key.
+   * Retries on transient errors (429, 503) with exponential backoff.
+   * Returns null gracefully on permanent errors or missing API key.
+   *
+   * Throws ExtractionError on failure so callers can surface the reason.
    */
   async extractEntities(text: string): Promise<ExtractedEntities | null> {
     if (!this.config.apiKey) {
@@ -121,68 +143,110 @@ export class GeminiClient {
       return null;
     }
 
-    try {
-      const model = this.config.textModel ?? DEFAULT_TEXT_MODEL;
-      const response = await fetch(
-        `${API_BASE}/${model}:generateContent?key=${this.config.apiKey}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  {
-                    text: EXTRACTION_PROMPT + text,
-                  },
-                ],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.1,
-              maxOutputTokens: 500,
-            },
-          }),
+    const model = this.config.textModel ?? DEFAULT_TEXT_MODEL;
+    const maxRetries = 2;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s
+          log.info('Retrying entity extraction', { attempt, delayMs });
+          await new Promise((r) => setTimeout(r, delayMs));
         }
-      );
 
-      if (!response.ok) {
-        const error = await response.text();
-        log.error('Gemini API error', new Error(error), { status: response.status });
-        return null;
+        const response = await fetch(
+          `${API_BASE}/${model}:generateContent?key=${this.config.apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: EXTRACTION_PROMPT + text }] }],
+              generationConfig: { temperature: 0.1, maxOutputTokens: 500 },
+            }),
+            signal: AbortSignal.timeout(15_000),
+          }
+        );
+
+        if (response.status === 429 || response.status === 503) {
+          const error = await response.text();
+          lastError = new ExtractionError(
+            `Gemini ${response.status}: ${error.substring(0, 200)}`,
+            response.status === 429 ? 'rate_limit' : 'server_error'
+          );
+          log.warn('Gemini transient error, will retry', {
+            status: response.status,
+            attempt,
+          });
+          continue;
+        }
+
+        if (!response.ok) {
+          const error = await response.text();
+          throw new ExtractionError(
+            `Gemini API error ${response.status}: ${error.substring(0, 200)}`,
+            'api_error'
+          );
+        }
+
+        const data = (await response.json()) as GeminiResponse;
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        if (!rawText) {
+          throw new ExtractionError('No response text from Gemini', 'empty_response');
+        }
+
+        // Parse JSON response (handle potential markdown code blocks)
+        const jsonText = rawText.replace(/```json\n?|\n?```/g, '').trim();
+        let entities: ExtractedEntities;
+        try {
+          entities = JSON.parse(jsonText) as ExtractedEntities;
+        } catch {
+          throw new ExtractionError(
+            `JSON parse failed: ${jsonText.substring(0, 100)}`,
+            'parse_error'
+          );
+        }
+
+        // Validate required fields exist
+        if (typeof entities.confidence !== 'string') {
+          entities.confidence = 'low';
+        }
+
+        log.info('Extracted entities', {
+          hasName: !!(entities.firstName || entities.lastName || entities.fullName),
+          hasEmail: !!entities.email,
+          hasAddress: !!entities.streetAddress,
+          confidence: entities.confidence,
+          attempts: attempt + 1,
+        });
+
+        return entities;
+      } catch (error) {
+        if (error instanceof ExtractionError) {
+          lastError = error;
+          // Only retry transient errors
+          if (error.reason !== 'rate_limit' && error.reason !== 'server_error') {
+            break;
+          }
+        } else {
+          // Network error, timeout, etc. — retryable
+          lastError = new ExtractionError(
+            (error as Error).message,
+            (error as Error).name === 'TimeoutError' ? 'timeout' : 'network_error'
+          );
+          log.warn('Gemini network/timeout error, will retry', {
+            error: (error as Error).message,
+            attempt,
+          });
+          continue;
+        }
       }
-
-      const data = (await response.json()) as GeminiResponse;
-      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (!rawText) {
-        log.warn('No response from Gemini');
-        return null;
-      }
-
-      // Parse JSON response (handle potential markdown code blocks)
-      const jsonText = rawText.replace(/```json\n?|\n?```/g, '').trim();
-      const entities = JSON.parse(jsonText) as ExtractedEntities;
-
-      // Validate required fields exist
-      if (typeof entities.confidence !== 'string') {
-        entities.confidence = 'low';
-      }
-
-      log.info('Extracted entities', {
-        hasName: !!(entities.firstName || entities.lastName || entities.fullName),
-        hasEmail: !!entities.email,
-        hasAddress: !!entities.streetAddress,
-        confidence: entities.confidence,
-      });
-
-      return entities;
-    } catch (error) {
-      log.error('Entity extraction failed', error as Error);
-      return null;
     }
+
+    // All retries exhausted or permanent error
+    log.error('Entity extraction failed after retries', lastError!);
+    throw lastError!;
   }
 
   // ── Content Generation ──────────────────────────────────────────────

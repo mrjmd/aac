@@ -420,6 +420,24 @@ export class PipedriveClient {
     return result || [];
   }
 
+  /**
+   * List activities for a specific person.
+   */
+  async getPersonActivities(personId: number, options?: {
+    limit?: number;
+    start?: number;
+  }): Promise<PipedriveActivity[]> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.start) params.set('start', String(options.start));
+
+    const query = params.toString();
+    const endpoint = `/persons/${personId}/activities${query ? `?${query}` : ''}`;
+
+    const result = await this.request<PipedriveActivity[]>(endpoint);
+    return result || [];
+  }
+
   // ── Custom fields ───────────────────────────────────────────────
 
   async getPersonCustomField(personId: number, fieldKey: string): Promise<string | null> {

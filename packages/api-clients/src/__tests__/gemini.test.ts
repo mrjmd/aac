@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GeminiClient } from '../gemini.js';
+import { GeminiClient, ExtractionError } from '../gemini.js';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -78,7 +78,7 @@ describe('GeminiClient', () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('returns null on API error', async () => {
+    it('throws ExtractionError on permanent API error', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(Promise.resolve({
         ok: false,
@@ -86,11 +86,16 @@ describe('GeminiClient', () => {
         text: () => Promise.resolve('Internal Server Error'),
       }));
 
-      const result = await client.extractEntities('some text');
-      expect(result).toBeNull();
+      try {
+        await client.extractEntities('some text');
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ExtractionError);
+        expect((error as ExtractionError).reason).toBe('api_error');
+      }
     });
 
-    it('returns null on malformed response', async () => {
+    it('throws ExtractionError on empty response', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(Promise.resolve({
         ok: true,
@@ -98,9 +103,36 @@ describe('GeminiClient', () => {
         json: () => Promise.resolve({ candidates: [] }),
       }));
 
-      const result = await client.extractEntities('some text');
-      expect(result).toBeNull();
+      await expect(client.extractEntities('some text'))
+        .rejects.toThrow(ExtractionError);
     });
+
+    it('retries on 429 rate limit then succeeds', async () => {
+      const client = makeClient();
+      // First call: 429
+      mockFetch.mockReturnValueOnce(Promise.resolve({
+        ok: false,
+        status: 429,
+        text: () => Promise.resolve('Rate limited'),
+      }));
+      // Second call: success
+      mockFetch.mockReturnValueOnce(mockGeminiResponse({
+        firstName: 'Walter',
+        lastName: 'Nedka',
+        fullName: null,
+        email: null,
+        streetAddress: null,
+        city: null,
+        state: null,
+        zipCode: null,
+        confidence: 'high',
+      }));
+
+      const result = await client.extractEntities('My name is Walter Nedka');
+      expect(result).not.toBeNull();
+      expect(result!.firstName).toBe('Walter');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    }, 10000);
 
     it('defaults confidence to low if missing', async () => {
       const client = makeClient();
