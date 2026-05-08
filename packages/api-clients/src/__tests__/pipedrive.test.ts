@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { PipedriveClient, PIPEDRIVE_CROSS_SYSTEM_FIELDS } from '../pipedrive.js';
+import { PipedriveClient, PIPEDRIVE_CROSS_SYSTEM_FIELDS, shouldUpdateName, isNameRefinement } from '../pipedrive.js';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -226,5 +226,106 @@ describe('PipedriveClient', () => {
       expect(PIPEDRIVE_CROSS_SYSTEM_FIELDS.QUO_CONTACT_ID).toBeDefined();
       expect(PIPEDRIVE_CROSS_SYSTEM_FIELDS.QB_CUSTOMER_ID).toBeDefined();
     });
+  });
+});
+
+describe('shouldUpdateName', () => {
+  describe('placeholder names — always allow update', () => {
+    it('overwrites empty/undefined current name', () => {
+      expect(shouldUpdateName('', 'Sam Sabky')).toBe(true);
+      expect(shouldUpdateName(undefined, 'Sam Sabky')).toBe(true);
+    });
+
+    it('overwrites "Unknown Lead..." pattern', () => {
+      expect(shouldUpdateName('Unknown Lead 5478', 'Sam Sabky')).toBe(true);
+      expect(shouldUpdateName('Unknown Lead', 'Sam Sabky')).toBe(true);
+    });
+
+    it('overwrites bare phone numbers', () => {
+      expect(shouldUpdateName('+19087459554', 'Sam Sabky')).toBe(true);
+      expect(shouldUpdateName('(908) 745-9554', 'Sam Sabky')).toBe(true);
+    });
+
+    it('overwrites our own phone-suffix disambiguator', () => {
+      expect(shouldUpdateName('Sam (·9554)', 'Sam Sabky')).toBe(true);
+      expect(shouldUpdateName('Lead (·9554)', 'Sam Sabky')).toBe(true);
+    });
+  });
+
+  describe('strict refinement — allow', () => {
+    it('allows single-token to two-token with same first name', () => {
+      expect(shouldUpdateName('Sam', 'Sam Sabky')).toBe(true);
+      expect(shouldUpdateName('Tom', 'Tom Pfalzer')).toBe(true);
+    });
+
+    it('allows nickname pairs (Tom → Thomas)', () => {
+      expect(shouldUpdateName('Tom', 'Thomas Pfalzer')).toBe(true);
+      expect(shouldUpdateName('Mike', 'Michael Chen')).toBe(true);
+      expect(shouldUpdateName('Bob', 'Robert Smith')).toBe(true);
+      expect(shouldUpdateName('Liz', 'Elizabeth Johnson')).toBe(true);
+    });
+
+    it('allows formal → nickname pairs (Thomas → Tom)', () => {
+      expect(shouldUpdateName('Thomas', 'Tom Pfalzer')).toBe(true);
+    });
+
+    it('allows adding middle name to existing two-token name', () => {
+      expect(shouldUpdateName('Sam Sabky', 'Sam J Sabky')).toBe(true);
+    });
+
+    it('is case-insensitive', () => {
+      expect(shouldUpdateName('sam', 'Sam Sabky')).toBe(true);
+      expect(shouldUpdateName('SAM', 'sam sabky')).toBe(true);
+    });
+  });
+
+  describe('block — different person', () => {
+    it('blocks completely different name (third-party realtor case)', () => {
+      expect(shouldUpdateName('Sam Sabky', 'Lisa Hartley')).toBe(false);
+    });
+
+    it('blocks different first name even with shared last name', () => {
+      expect(shouldUpdateName('Sam Sabky', 'Tom Sabky')).toBe(false);
+    });
+
+    it('blocks unrelated single-token replacement', () => {
+      expect(shouldUpdateName('Sam', 'Tom')).toBe(false);
+    });
+  });
+
+  describe('block — degradation / no new info', () => {
+    it('blocks update with same number of tokens (typo correction is too risky)', () => {
+      expect(shouldUpdateName('Sam Sabky', 'Sam Saby')).toBe(false);
+    });
+
+    it('blocks shorter replacement', () => {
+      expect(shouldUpdateName('Sam Sabky', 'Sam')).toBe(false);
+    });
+
+    it('blocks identical name', () => {
+      expect(shouldUpdateName('Sam Sabky', 'Sam Sabky')).toBe(false);
+    });
+
+    it('blocks empty new name', () => {
+      expect(shouldUpdateName('Sam Sabky', '')).toBe(false);
+      expect(shouldUpdateName('Sam Sabky', undefined)).toBe(false);
+    });
+  });
+
+  describe('block — refinement that contradicts existing tokens', () => {
+    it('blocks when existing last name disappears in new name', () => {
+      // "Sam Sabky" → "Sam Pfalzer Hartley": adds tokens but Sabky is gone
+      expect(shouldUpdateName('Sam Sabky', 'Sam Pfalzer Hartley')).toBe(false);
+    });
+  });
+});
+
+describe('isNameRefinement', () => {
+  it('handles whitespace and casing', () => {
+    expect(isNameRefinement('  sam  ', 'SAM SABKY')).toBe(true);
+  });
+
+  it('does not allow the same first-name string when stripped', () => {
+    expect(isNameRefinement('Sam', 'Sam')).toBe(false);
   });
 });

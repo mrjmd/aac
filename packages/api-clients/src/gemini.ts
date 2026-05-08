@@ -81,25 +81,44 @@ const IMAGE_TIMEOUT_MS = 45_000;
 const TEXT_TIMEOUT_MS = 30_000;
 const IMAGE_MIN_DELAY_MS = 8_000;
 
-const EXTRACTION_PROMPT = `You are an entity extraction assistant. Extract contact information from the following conversation text.
+const EXTRACTION_PROMPT = `You are an entity extraction assistant. Extract contact information about THE SPEAKER ONLY from the following conversation text.
+
+The text is from the speaker's own messages (inbound SMS or their lines from a call transcript). Your job is to identify who the SPEAKER is — not anyone they mention.
 
 Return a JSON object with these fields (use null if not found):
-- firstName: The person's first name
-- lastName: The person's last name
-- fullName: The complete name if given as one string
-- email: Email address
-- streetAddress: Street address (number and street name only)
-- city: City name
-- state: State (2-letter abbreviation preferred)
-- zipCode: ZIP/postal code
+- firstName: The speaker's first name
+- lastName: The speaker's last name
+- fullName: The speaker's complete name if given as one string
+- email: The speaker's email address
+- streetAddress: The speaker's street address (number and street name only)
+- city: The speaker's city
+- state: The speaker's state (2-letter abbreviation preferred)
+- zipCode: The speaker's ZIP/postal code
 - confidence: Your confidence in the extractions ("high", "medium", or "low")
 
-Rules:
-- Only extract information the person explicitly states about themselves
-- Do not infer or guess information
-- If someone says "my name is John" extract firstName: "John"
-- If someone gives a full address, parse it into components
-- Set confidence to "high" if entities are clearly stated, "medium" if somewhat ambiguous, "low" if uncertain
+Critical rules:
+- Extract ONLY information that identifies the speaker themselves.
+- If a name belongs to a third party the speaker mentions (a relative, spouse, contractor, realtor, friend, neighbor, builder's client, anyone other than the speaker), DO NOT extract it. Set firstName/lastName/fullName to null in that case.
+- Same for addresses, emails, and phone numbers — only the speaker's own count.
+- Do not infer or guess. If unsure whether something belongs to the speaker, leave it null and lower confidence.
+
+Examples — DO extract (speaker-attributed):
+- "My name is John Smith" → firstName: "John", lastName: "Smith"
+- "I'm Sam" → firstName: "Sam"
+- "I live at 21 Cliff Road in Hingham" → streetAddress: "21 Cliff Road", city: "Hingham"
+- "You can reach me at jane@example.com" → email: "jane@example.com"
+
+Examples — DO NOT extract (third party):
+- "My realtor Lisa Hartley said to call you" → do not extract Lisa Hartley
+- "My builder Mike is handling the foundation" → do not extract Mike
+- "Tell my wife Susan when you arrive" → do not extract Susan
+- "The previous owner was a guy named Bob" → do not extract Bob
+- "My daughter's address is 100 Main St" → do not extract that address
+
+Confidence levels:
+- "high": speaker clearly states their own information ("My name is...", "I'm...", "I live at...")
+- "medium": information is present but speaker attribution is somewhat ambiguous
+- "low": uncertain whether information belongs to the speaker
 
 Respond with ONLY the JSON object, no markdown or explanation.
 

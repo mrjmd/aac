@@ -81,6 +81,42 @@ function extractPrimaryPhone(
 }
 
 /**
+ * Compute a unique QuickBooks DisplayName from the data we currently have.
+ *
+ * QB requires DisplayName to be unique across the customer base. When we only
+ * have a first name (or nothing yet), bare values like "Sam" or "Unknown" will
+ * collide with existing customers and fail. To keep all three systems in sync,
+ * we append a phone-last-4 disambiguator until a real full name is available.
+ *
+ * Returns a name that's either:
+ *   - a real multi-token name (used as-is)
+ *   - "<FirstName> (·1234)" when only a single token is available
+ *   - "Lead (·1234)" when no usable name has been extracted yet
+ *
+ * Subsequent webhooks should always recompute this — when the name fills in,
+ * the disambiguator naturally falls away on the next updateCustomer call.
+ */
+export function buildQbDisplayName(rawName: string, e164Phone: string): string {
+  const last4 = e164Phone.slice(-4);
+  const trimmed = (rawName || '').trim();
+  const isUnknownish =
+    !trimmed ||
+    trimmed.toLowerCase() === 'unknown' ||
+    trimmed.startsWith('Unknown Lead');
+
+  if (isUnknownish) {
+    return `Lead (·${last4})`;
+  }
+
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  if (tokens.length >= 2) {
+    return trimmed;
+  }
+
+  return `${tokens[0]} (·${last4})`;
+}
+
+/**
  * Main webhook handler
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -329,6 +365,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return null;
       }
 
+      // Compute the DisplayName to use for create AND update. When the Pipedrive
+      // name only has one token (or none), append a phone-last-4 disambiguator
+      // so QB's unique-DisplayName constraint doesn't reject the create. On
+      // subsequent updates this naturally rewrites to the full name once it fills in.
+      const qbDisplayName = buildQbDisplayName(personName, e164Phone);
+
       // Check Redis cache first, then fall back to Pipedrive custom field
       let qbCustomerId: string | null = await getQbCustomerIdFromPipedrive(String(data.id));
       if (!qbCustomerId) {
@@ -347,7 +389,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (qbCustomerId) {
-        // Update existing QuickBooks customer
+        // Update existing QuickBooks customer — recomputes DisplayName each time
+        // so the temp "(·1234)" suffix falls away once a full name is available.
         const existingCustomer = await qb.getCustomer(qbCustomerId);
         if (existingCustomer && existingCustomer.Id) {
           const syncToken = (existingCustomer as unknown as Record<string, unknown>)
@@ -355,7 +398,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           await qb.updateCustomer(qbCustomerId, {
             SyncToken: syncToken,
-            DisplayName: personName,
+            DisplayName: qbDisplayName,
             GivenName: firstName,
             FamilyName: lastName || undefined,
             CompanyName: company,
@@ -374,17 +417,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           log.info('Updated QuickBooks customer', {
             pipedriveId: data.id,
             qbCustomerId,
+            displayName: qbDisplayName,
           });
         }
       } else {
-        // Search by email first (most reliable)
+        // Search by email first (most reliable identity match)
         let existingCustomer = primaryEmail
           ? await qb.searchCustomerByEmail(primaryEmail)
           : null;
 
-        // If not found by email, try by display name
-        if (!existingCustomer && personName && personName !== 'Unknown') {
-          existingCustomer = await qb.searchCustomerByName(personName);
+        // Then by phone — also unique, and useful for reconciling against
+        // QB customers created manually before this contact came through us.
+        if (!existingCustomer) {
+          existingCustomer = await qb.searchCustomerByPhone(e164Phone);
+        }
+
+        // Last resort: by display name. Only meaningful for full names — a
+        // single-token search like "Sam" would either miss the right customer
+        // or match a wrong one, so we use the disambiguated form.
+        if (!existingCustomer) {
+          existingCustomer = await qb.searchCustomerByName(qbDisplayName);
         }
 
         if (existingCustomer && existingCustomer.Id) {
@@ -404,7 +456,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         } else {
           // Create new customer in QuickBooks
           const newCustomer = await qb.createCustomer({
-            displayName: personName,
+            displayName: qbDisplayName,
             firstName,
             lastName: lastName || undefined,
             companyName: company,
@@ -425,6 +477,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           log.info('Created new QuickBooks customer', {
             pipedriveId: data.id,
             qbCustomerId,
+            displayName: qbDisplayName,
           });
         }
       }

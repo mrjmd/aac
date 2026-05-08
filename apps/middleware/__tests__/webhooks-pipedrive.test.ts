@@ -35,6 +35,7 @@ const mockQuo = {
 const mockQuickBooks = {
   isConnected: vi.fn().mockResolvedValue(false),
   searchCustomerByEmail: vi.fn().mockResolvedValue(null),
+  searchCustomerByPhone: vi.fn().mockResolvedValue(null),
   searchCustomerByName: vi.fn().mockResolvedValue(null),
   createCustomer: vi.fn().mockResolvedValue({ Id: 'qb-1', DisplayName: 'Test' }),
   getCustomer: vi.fn().mockResolvedValue(null),
@@ -48,7 +49,7 @@ vi.mock('../lib/clients.js', () => ({
   getGemini: vi.fn(() => ({ extractEntities: vi.fn().mockResolvedValue(null) })),
 }));
 
-import handler from '../api/webhooks/pipedrive.js';
+import handler, { buildQbDisplayName } from '../api/webhooks/pipedrive.js';
 import { markEventProcessed, storePhoneMapping, trackWebhookProcessed } from '../lib/redis.js';
 
 function makeReq(body: Record<string, unknown>, method = 'POST') {
@@ -184,5 +185,30 @@ describe('pipedrive webhook', () => {
 
     // Should still return 200 — fail safe
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+describe('buildQbDisplayName', () => {
+  const phone = '+19087459554';
+
+  it('returns the name as-is when it has 2+ tokens', () => {
+    expect(buildQbDisplayName('Sam Sabky', phone)).toBe('Sam Sabky');
+    expect(buildQbDisplayName('Sam J Sabky', phone)).toBe('Sam J Sabky');
+  });
+
+  it('appends phone-last-4 disambiguator for single-token names', () => {
+    expect(buildQbDisplayName('Sam', phone)).toBe('Sam (·9554)');
+    expect(buildQbDisplayName('Tom', '+15558675309')).toBe('Tom (·5309)');
+  });
+
+  it('uses "Lead (·xxxx)" when no usable name has been extracted', () => {
+    expect(buildQbDisplayName('', phone)).toBe('Lead (·9554)');
+    expect(buildQbDisplayName('Unknown', phone)).toBe('Lead (·9554)');
+    expect(buildQbDisplayName('Unknown Lead 5478', phone)).toBe('Lead (·9554)');
+  });
+
+  it('trims whitespace before deciding token count', () => {
+    expect(buildQbDisplayName('  Sam  ', phone)).toBe('Sam (·9554)');
+    expect(buildQbDisplayName('  Sam Sabky  ', phone)).toBe('Sam Sabky');
   });
 });

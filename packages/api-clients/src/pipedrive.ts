@@ -64,6 +64,150 @@ export const PIPEDRIVE_CROSS_SYSTEM_FIELDS = {
   QB_CUSTOMER_ID: 'a02e76a3d2d7e38cacd476aaea1c2a8809264025',
 } as const;
 
+// ── Name refinement logic ────────────────────────────────────────────
+
+/**
+ * Common English first-name nickname groups. Names within a group are
+ * considered equivalent for refinement purposes (e.g. "Tom" → "Thomas Smith"
+ * is allowed, since Tom and Thomas are in the same group).
+ *
+ * Conservative by design — only well-established pairs. Edge cases (cultural
+ * variants, gender-shared roots) are intentionally limited.
+ */
+const NICKNAME_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
+  ['tom', 'thomas', 'tommy'],
+  ['mike', 'michael', 'mikey'],
+  ['bob', 'rob', 'robert', 'bobby', 'robbie'],
+  ['bill', 'will', 'william', 'billy', 'willy'],
+  ['jim', 'james', 'jimmy', 'jamie'],
+  ['liz', 'beth', 'elizabeth', 'eliza', 'lizzy', 'betty'],
+  ['kate', 'katie', 'kathy', 'katherine', 'kathryn', 'cathy', 'catherine'],
+  ['joe', 'joey', 'joseph'],
+  ['steve', 'stephen', 'steven'],
+  ['chris', 'christopher', 'christina', 'christine', 'christine'],
+  ['jen', 'jenny', 'jennifer'],
+  ['sue', 'suzy', 'susan', 'susanna', 'suzanne'],
+  ['sam', 'sammy', 'samuel', 'samantha'],
+  ['rick', 'ricky', 'rich', 'richard', 'dick'],
+  ['nick', 'nicky', 'nicholas'],
+  ['dan', 'danny', 'daniel'],
+  ['matt', 'matty', 'matthew'],
+  ['dave', 'davey', 'david'],
+  ['ed', 'eddie', 'eddy', 'edward'],
+  ['fred', 'freddy', 'frederick'],
+  ['greg', 'gregory'],
+  ['hank', 'henry'],
+  ['jack', 'johnny', 'john', 'jonathan'],
+  ['tony', 'anthony'],
+  ['pete', 'peter'],
+  ['phil', 'philip', 'phillip'],
+  ['ron', 'ronnie', 'ronald'],
+  ['vinny', 'vince', 'vincent'],
+  ['ben', 'benny', 'benjamin'],
+  ['pat', 'patty', 'patrick', 'patricia'],
+  ['gabe', 'gabriel'],
+  ['nate', 'nathan', 'nathaniel'],
+  ['alex', 'alexander', 'alexandra'],
+  ['andy', 'andrew', 'andrea'],
+  ['cindy', 'cynthia'],
+  ['debbie', 'deborah', 'debra'],
+  ['frank', 'francis', 'francisco'],
+  ['gerry', 'jerry', 'gerald'],
+  ['kim', 'kimberly'],
+  ['marg', 'maggie', 'meg', 'peggy', 'margaret'],
+  ['vicky', 'victoria'],
+  ['les', 'leslie', 'lester'],
+  ['charlie', 'chuck', 'charles'],
+  ['don', 'donny', 'donald'],
+  ['stan', 'stanley'],
+  ['walt', 'walter'],
+  ['abby', 'abigail'],
+  ['becky', 'rebecca'],
+  ['mel', 'melanie', 'melissa'],
+  ['mol', 'molly', 'mary'],
+];
+
+/** Flattened lookup: lowercased name → set of equivalent names. */
+const NICKNAME_LOOKUP: Map<string, Set<string>> = (() => {
+  const map = new Map<string, Set<string>>();
+  for (const group of NICKNAME_GROUPS) {
+    const set = new Set(group);
+    for (const name of group) {
+      // Last group wins on conflict — kept simple, groups are curated to not overlap badly.
+      map.set(name, set);
+    }
+  }
+  return map;
+})();
+
+/** Two first names are equivalent if they're identical or in the same nickname group. */
+function areEquivalentFirstNames(a: string, b: string): boolean {
+  if (a === b) return true;
+  const group = NICKNAME_LOOKUP.get(a);
+  return group ? group.has(b) : false;
+}
+
+/**
+ * A "placeholder" name is one we should freely overwrite with any extracted name.
+ * Includes our own disambiguator suffixes ("Sam (·9554)") and the "Unknown Lead..."
+ * pattern from initial contact creation.
+ */
+function isPlaceholderName(name: string): boolean {
+  if (!name || !name.trim()) return true;
+  const trimmed = name.trim();
+  if (trimmed.startsWith('Unknown Lead')) return true;
+  if (/^Lead\s*\(·\d{4}\)$/.test(trimmed)) return true;
+  // Our own single-token + phone-suffix disambiguator
+  if (/^\S+\s*\(·\d{4}\)$/.test(trimmed)) return true;
+  // Bare phone number used as a name
+  const stripped = trimmed.replace(/[\s()+\-.]/g, '');
+  if (/^\d{7,}$/.test(stripped)) return true;
+  return false;
+}
+
+/**
+ * A new name "refines" the current name if it adds tokens without contradicting
+ * any existing token. Specifically:
+ *   - new has strictly more tokens than current
+ *   - first tokens are equivalent (identical or known nicknames)
+ *   - every non-first token in current appears in new (in any position)
+ *
+ * Examples:
+ *   "Sam" → "Sam Sabky"           ✓ (same first, more tokens)
+ *   "Tom" → "Thomas Pfalzer"      ✓ (nickname pair)
+ *   "Sam Sabky" → "Sam J. Sabky"  ✓ (last-name preserved, middle initial added)
+ *   "Sam Sabky" → "Lisa Hartley"  ✗ (different first)
+ *   "Sam Sabky" → "Sam Saby"      ✗ (no extra tokens; degradation)
+ *   "Sam" → "Tom Sabky"           ✗ (different first, not nicknames)
+ */
+export function isNameRefinement(currentName: string, newName: string): boolean {
+  const cur = currentName.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const nu = newName.toLowerCase().trim().split(/\s+/).filter(Boolean);
+
+  if (cur.length === 0 || nu.length === 0) return false;
+  if (nu.length <= cur.length) return false;
+  if (!areEquivalentFirstNames(cur[0], nu[0])) return false;
+
+  for (let i = 1; i < cur.length; i++) {
+    if (!nu.includes(cur[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * Decide whether to overwrite a Pipedrive person's name with a newly-extracted one.
+ *
+ * Allows updates when the existing name is a placeholder, OR when the new name
+ * is a strict refinement (extends without contradicting). Blocks third-party
+ * names mentioned in conversation (different first name) and degradations
+ * (same/fewer tokens).
+ */
+export function shouldUpdateName(currentName: string | undefined, newName: string | undefined): boolean {
+  if (!newName || !newName.trim()) return false;
+  if (!currentName || isPlaceholderName(currentName)) return true;
+  return isNameRefinement(currentName, newName);
+}
+
 // ── Client ───────────────────────────────────────────────────────────
 
 export class PipedriveClient {
@@ -244,8 +388,10 @@ export class PipedriveClient {
     const body: Record<string, unknown> = {};
     const updatedFields: string[] = [];
 
-    // Only update name if current name is "Unknown Lead..." pattern
-    if (updates.name && person.name.startsWith('Unknown Lead')) {
+    // Update name if the existing name is a placeholder OR the new name strictly
+    // refines the existing one (same first name / known nickname + adds tokens).
+    // See shouldUpdateName / isNameRefinement above for the full rule set.
+    if (updates.name && shouldUpdateName(person.name, updates.name)) {
       body.name = updates.name;
       updatedFields.push('name');
     }
