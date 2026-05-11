@@ -426,13 +426,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ? await qb.searchCustomerByEmail(primaryEmail)
           : null;
 
-        // Then by phone — also unique, and useful for reconciling against
-        // QB customers created manually before this contact came through us.
-        if (!existingCustomer) {
-          existingCustomer = await qb.searchCustomerByPhone(e164Phone);
-        }
-
-        // Last resort: by display name. Only meaningful for full names — a
+        // Fall back to display name. Only meaningful for full names — a
         // single-token search like "Sam" would either miss the right customer
         // or match a wrong one, so we use the disambiguated form.
         if (!existingCustomer) {

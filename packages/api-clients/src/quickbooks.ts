@@ -179,26 +179,6 @@ export class QuickBooksClient {
     }
   }
 
-  async searchCustomerByPhone(phone: string): Promise<QBCustomer | null> {
-    try {
-      const query = `SELECT * FROM Customer WHERE PrimaryPhone = '${phone}'`;
-
-      const result = await this.request<QBResponse<QBCustomer>>(
-        `/query?query=${encodeURIComponent(query)}`
-      );
-
-      if (result.QueryResponse?.Customer && result.QueryResponse.Customer.length > 0) {
-        log.debug('Found customer by phone', { phone, customerId: result.QueryResponse.Customer[0].Id });
-        return result.QueryResponse.Customer[0];
-      }
-
-      return null;
-    } catch (error) {
-      log.error('Search customer by phone failed', error as Error, { phone });
-      throw error;
-    }
-  }
-
   async searchCustomerByName(displayName: string): Promise<QBCustomer | null> {
     try {
       const escapedName = displayName.replace(/'/g, "\\'");

@@ -35,7 +35,6 @@ const mockQuo = {
 const mockQuickBooks = {
   isConnected: vi.fn().mockResolvedValue(false),
   searchCustomerByEmail: vi.fn().mockResolvedValue(null),
-  searchCustomerByPhone: vi.fn().mockResolvedValue(null),
   searchCustomerByName: vi.fn().mockResolvedValue(null),
   createCustomer: vi.fn().mockResolvedValue({ Id: 'qb-1', DisplayName: 'Test' }),
   getCustomer: vi.fn().mockResolvedValue(null),
