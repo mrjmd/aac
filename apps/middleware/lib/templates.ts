@@ -23,14 +23,13 @@ const templates = {
   jobFollowUp: {
     name: 'Post-Job Follow-Up',
     body: [
-      'Hi {firstName}, this is Matt from Attack A Crack.',
-      'Just checking in to make sure everything went well with the repair.',
-      'I hope Mike took great care of you!',
-      '\n\nIf we did do a good job for you, I would very much appreciate a Google review.',
-      'We are a small family-run business, and each review is extremely impactful.',
-      'Here is the link where you can leave one.',
-      'Thank you so much again for your business!',
-      '\n\n{reviewLink}',
+      'Hey {firstName}, just checking back in to make sure everything is looking good',
+      'with the repair that Mike did {when}.',
+      'Let me know if you have any questions.',
+      '\n\nAlso, if we did a good job for you, we would really appreciate a quick Google review.',
+      'We are a small family business, and every review is very impactful.',
+      '{prompt}',
+      "\n\nHere's the link: {reviewLink}",
     ].join(' '),
   },
 

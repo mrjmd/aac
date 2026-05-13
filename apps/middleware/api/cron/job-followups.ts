@@ -19,11 +19,19 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
 import { PipedriveClient } from '@aac/api-clients/pipedrive';
-import { getCalendar, getPipedrive, getQuo } from '../../lib/clients.js';
+import { getCalendar, getGemini, getPipedrive, getQuo } from '../../lib/clients.js';
 import { getEnv } from '../../lib/env.js';
 import { verifyCronAuth } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
 import { renderTemplate } from '../../lib/templates.js';
+import {
+  classifyService,
+  extractCity,
+  formatWhen,
+  recordVariant,
+  selectVariant,
+  type FollowUpVariant,
+} from '../../lib/followup.js';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const log = createLogger('cron:job-followups');
@@ -50,6 +58,9 @@ interface FollowUpResult {
   location: string;
   personName: string | null;
   phone: string | null;
+  variant: FollowUpVariant | null;
+  city: string | null;
+  service: string | null;
   status: 'sent' | 'skipped_dedup' | 'skipped_no_person' | 'skipped_no_phone' | 'error';
   error?: string;
 }
@@ -182,7 +193,15 @@ async function processFollowUp(
     if (!isDryRun) {
       const isNew = await markCronAction('followup', event.id);
       if (!isNew) {
-        return { ...baseResult, personName: null, phone: null, status: 'skipped_dedup' };
+        return {
+          ...baseResult,
+          personName: null,
+          phone: null,
+          variant: null,
+          city: null,
+          service: null,
+          status: 'skipped_dedup',
+        };
       }
     }
 
@@ -206,7 +225,15 @@ async function processFollowUp(
         eventId: event.id,
         summary: event.summary,
       });
-      return { ...baseResult, personName: null, phone: null, status: 'skipped_no_person' };
+      return {
+        ...baseResult,
+        personName: null,
+        phone: null,
+        variant: null,
+        city: null,
+        service: null,
+        status: 'skipped_no_person',
+      };
     }
 
     const primaryPhone = PipedriveClient.getPrimaryPhone(person);
@@ -219,14 +246,24 @@ async function processFollowUp(
         ...baseResult,
         personName: person.name,
         phone: null,
+        variant: null,
+        city: null,
+        service: null,
         status: 'skipped_no_phone',
       };
     }
+
+    const city = extractCity(event.location);
+    const service = await classifyService(event.description, getGemini());
+    const { variant, prompt } = selectVariant(event.id, city, service);
+    const when = formatWhen(event.start);
 
     const firstName = extractFirstName(person.name);
     const message = renderTemplate('jobFollowUp', {
       firstName,
       reviewLink: REVIEW_LINK,
+      when,
+      prompt,
     });
 
     if (isDryRun) {
@@ -234,23 +271,33 @@ async function processFollowUp(
         ...baseResult,
         personName: person.name,
         phone: primaryPhone,
+        variant,
+        city,
+        service,
         status: 'sent',
       };
     }
 
     const quo = getQuo();
     await quo.sendMessage(primaryPhone, message);
+    await recordVariant(event.id, variant);
 
     log.info('Follow-up sent', {
       eventId: event.id,
       personName: person.name,
       phone: primaryPhone,
+      variant,
+      city,
+      service,
     });
 
     return {
       ...baseResult,
       personName: person.name,
       phone: primaryPhone,
+      variant,
+      city,
+      service,
       status: 'sent',
     };
   } catch (error) {
@@ -268,6 +315,9 @@ async function processFollowUp(
       ...baseResult,
       personName: null,
       phone: null,
+      variant: null,
+      city: null,
+      service: null,
       status: 'error',
       error: (error as Error).message,
     };

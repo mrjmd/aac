@@ -21,11 +21,15 @@ describe('templates', () => {
       const result = renderTemplate('jobFollowUp', {
         firstName: 'Jane',
         reviewLink: 'https://g.page/r/test/review',
+        when: 'yesterday',
+        prompt: 'And if you want to give Mike a shout-out by name, he\'d really appreciate it.',
       });
 
-      expect(result).toContain('Hi Jane');
+      expect(result).toContain('Hey Jane');
+      expect(result).toContain('Mike did yesterday');
+      expect(result).toContain('shout-out by name');
       expect(result).toContain('https://g.page/r/test/review');
-      expect(result).toContain('Attack A Crack');
+      expect(result).toContain('Google review');
     });
 
     it('throws when a variable is missing', () => {
@@ -37,7 +41,7 @@ describe('templates', () => {
     it('throws with specific missing variable names', () => {
       expect(() =>
         renderTemplate('jobFollowUp', { firstName: 'Jane' })
-      ).toThrow('missing variables: reviewLink');
+      ).toThrow(/missing variables: .*reviewLink/);
     });
   });
 
@@ -57,6 +61,8 @@ describe('templates', () => {
     it('jobFollowUp references expected variables', () => {
       expect(templates.jobFollowUp.body).toContain('{firstName}');
       expect(templates.jobFollowUp.body).toContain('{reviewLink}');
+      expect(templates.jobFollowUp.body).toContain('{when}');
+      expect(templates.jobFollowUp.body).toContain('{prompt}');
     });
   });
 });
