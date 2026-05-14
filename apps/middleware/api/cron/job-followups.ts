@@ -26,6 +26,7 @@ import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js
 import { renderTemplate } from '../../lib/templates.js';
 import {
   classifyService,
+  expandCompoundName,
   extractCity,
   formatWhen,
   recordVariant,
@@ -217,6 +218,18 @@ async function processFollowUp(
       const searchResult = await pipedrive.searchPersonByName(event.summary);
       if (searchResult) {
         person = await pipedrive.getPerson(searchResult.id);
+      }
+    }
+
+    // Compound title fallback: "Lisa & John Hendrickson" → try "Lisa Hendrickson", "John Hendrickson"
+    if (!person) {
+      for (const candidate of expandCompoundName(event.summary)) {
+        const searchResult = await pipedrive.searchPersonByName(candidate);
+        if (searchResult) {
+          person = await pipedrive.getPerson(searchResult.id);
+          log.info('Matched compound-name candidate', { original: event.summary, candidate });
+          break;
+        }
       }
     }
 

@@ -4,6 +4,7 @@ import {
   extractCity,
   classifyService,
   selectVariant,
+  expandCompoundName,
   CANONICAL_SERVICES,
 } from '../lib/followup.js';
 import type { GeminiClient } from '@aac/api-clients/gemini';
@@ -129,6 +130,62 @@ describe('classifyService', () => {
       const gemini = mockGemini(service);
       expect(await classifyService('test description', gemini)).toBe(service);
     }
+  });
+});
+
+describe('expandCompoundName', () => {
+  it('expands "First1 & First2 Last" with last name on the second part', () => {
+    expect(expandCompoundName('Lisa & John Hendrickson')).toEqual([
+      'Lisa Hendrickson',
+      'John Hendrickson',
+    ]);
+  });
+
+  it('expands "First1 First2 Last" pattern when last name is on the first part', () => {
+    // "Lisa Smith & John" — Smith is on Lisa's side
+    expect(expandCompoundName('Lisa Smith & John')).toEqual([
+      'Lisa Smith',
+      'John Smith',
+    ]);
+  });
+
+  it('handles slash as separator', () => {
+    expect(expandCompoundName('Bob/Alice Smith')).toEqual([
+      'Bob Smith',
+      'Alice Smith',
+    ]);
+  });
+
+  it('handles "and" as separator', () => {
+    expect(expandCompoundName('Lisa and John Hendrickson')).toEqual([
+      'Lisa Hendrickson',
+      'John Hendrickson',
+    ]);
+  });
+
+  it('handles ampersand without surrounding spaces', () => {
+    expect(expandCompoundName('Lisa&John Hendrickson')).toEqual([
+      'Lisa Hendrickson',
+      'John Hendrickson',
+    ]);
+  });
+
+  it('returns empty array for single name (no separator)', () => {
+    expect(expandCompoundName('John Smith')).toEqual([]);
+    expect(expandCompoundName('Dulce')).toEqual([]);
+  });
+
+  it('returns empty array when no shared last name can be derived', () => {
+    // Two single-word parts — can't construct candidate names
+    expect(expandCompoundName('Bob & Alice')).toEqual([]);
+  });
+
+  it('returns empty array for empty input', () => {
+    expect(expandCompoundName('')).toEqual([]);
+  });
+
+  it('does not match "and" inside a word like "Anderson"', () => {
+    expect(expandCompoundName('Mary Anderson')).toEqual([]);
   });
 });
 

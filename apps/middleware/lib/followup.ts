@@ -136,6 +136,57 @@ export function extractCity(location: string | undefined | null): string | null 
   return null;
 }
 
+// ── expandCompoundName ───────────────────────────────────────────────
+
+const COMPOUND_SEPARATOR = /\s*&\s*|\s*\/\s*|\s+and\s+/i;
+
+/**
+ * Expand a compound calendar title like "Lisa & John Hendrickson" into the
+ * individual person names a Pipedrive search would actually match.
+ *
+ * Strategy: split on &/and/, find the shared last name (the last word of any
+ * multi-word part), then attach that last name to single-word parts.
+ *
+ * Returns candidates in the original order. Returns [] if the title has no
+ * separator or no derivable shared last name.
+ *
+ * Examples:
+ *   "Lisa & John Hendrickson"        → ["Lisa Hendrickson", "John Hendrickson"]
+ *   "John & Lisa Hendrickson"        → ["John Hendrickson", "Lisa Hendrickson"]
+ *   "Bob/Alice Smith"                → ["Bob Smith", "Alice Smith"]
+ *   "Lisa and John Hendrickson"      → ["Lisa Hendrickson", "John Hendrickson"]
+ *   "John Smith"                     → []  (no separator)
+ *   "Bob & Alice"                    → []  (no shared last name)
+ */
+export function expandCompoundName(summary: string): string[] {
+  if (!summary || !COMPOUND_SEPARATOR.test(summary)) return [];
+
+  const parts = summary.split(COMPOUND_SEPARATOR).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return [];
+
+  // Find a shared last name from the first multi-word part.
+  let sharedLastName: string | null = null;
+  for (const part of parts) {
+    const words = part.split(/\s+/);
+    if (words.length >= 2) {
+      sharedLastName = words[words.length - 1];
+      break;
+    }
+  }
+  if (!sharedLastName) return [];
+
+  const candidates: string[] = [];
+  for (const part of parts) {
+    const words = part.split(/\s+/);
+    if (words.length >= 2) {
+      candidates.push(part);
+    } else {
+      candidates.push(`${part} ${sharedLastName}`);
+    }
+  }
+  return candidates;
+}
+
 // ── classifyService ──────────────────────────────────────────────────
 
 const SERVICE_PROMPT = `You classify a foundation repair job into a canonical service category based on a free-text description written by the company owner.
