@@ -196,11 +196,25 @@ ${CANONICAL_SERVICES.map((s) => `- ${s}`).join('\n')}
 - none
 
 Rules:
-- The description is the owner's planning shorthand, not customer-facing language. Map shorthand to the canonical category: "crack" / "injection" → crack injection; "spalling" / "resurface" → concrete resurfacing; "re-pointing" / "field stone" → fieldstone re-pointing; "stairway" → concrete stairway repair; "bulkhead" → bulkhead repair.
-- If the description clearly indicates one primary service, return that canonical name.
-- If multiple distinct services are mentioned, return the one that is described first or in more detail. When in doubt, return "none".
-- If the description is too vague, unrelated, or you cannot confidently classify, return "none".
-- Respond with ONLY the canonical name (lowercase) or "none". No quotes, no JSON, no explanation, no punctuation.
+
+1. **Distinguish the service performed from the location/area where work happens.** Features like patio, pool deck, garage, drywall, basement, stairway, walkway, and driveway can appear in the description as either:
+   (a) the thing being repaired — classify accordingly, OR
+   (b) a location reference describing where adjacent work is happening (work *near*, *adjacent to*, *next to*, *along*, *accessed through* the feature) — do NOT classify the service as that feature; classify based on the action being performed on the structure.
+
+   Examples:
+   - "concrete resurfacing on a wall near the patio" → concrete resurfacing (patio is location, NOT the service)
+   - "one crack in the garage, cut through drywall to access" → crack injection (garage and drywall are location/access, NOT the service)
+   - "spalling concrete along the grade next to the pool deck" → concrete resurfacing (pool deck is location)
+   - "resurface the pool deck" → pool deck resurfacing (pool deck IS the service)
+   - "stairway her son hit with a car needs repair" → concrete stairway repair (stairway IS the service)
+   - "patio resurfacing" → patio resurfacing (patio IS the service)
+
+2. The description is the owner's planning shorthand, not customer-facing language. Map shorthand to the canonical category: "crack" / "injection" → crack injection; "spalling" / "resurface" → concrete resurfacing; "re-pointing" / "field stone" → fieldstone re-pointing; "bulkhead" → bulkhead repair.
+
+3. If the description clearly indicates one primary service, return that canonical name.
+4. If multiple distinct services are mentioned, return the one that is described first or in more detail. When in doubt, return "none".
+5. If the description is too vague, unrelated, or you cannot confidently classify, return "none".
+6. Respond with ONLY the canonical name (lowercase) or "none". No quotes, no JSON, no explanation, no punctuation.
 
 Description:
 {description}
