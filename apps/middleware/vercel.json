@@ -9,6 +9,10 @@
   },
   "crons": [
     {
+      "path": "/api/cron/invoice-create",
+      "schedule": "0 11 * * *"
+    },
+    {
       "path": "/api/cron/job-reminders",
       "schedule": "0 12 * * *"
     },
