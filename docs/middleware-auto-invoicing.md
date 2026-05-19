@@ -1,8 +1,15 @@
 # Middleware — Auto-Invoicing Crons
 
-**Status:** Planning. Code to be written; deployment staged behind dry-run.
+**Status:** Cron A (invoice-create) LIVE on schedule as of 2026-05-19. Cron B (invoice-send) still OFF.
 **Created:** 2026-05-18
 **Owner:** Matt
+
+> **NEXT ACTION — target week of 2026-05-26:** Cron A has been running for ~1 week of clean firings.
+> Spot-check the invoices it created against what Matt would have done manually.
+> If clean, enable Cron B by adding `{ "path": "/api/cron/invoice-send", "schedule": "5 11 * * *" }`
+> to `apps/middleware/vercel.json` (5 min after Cron A, same UTC offset).
+> If NOT clean (wrong amounts, wrong customers, unexpected skips), pause and fix before enabling B —
+> B is the irreversible one because it sends customer email.
 
 Two new daily crons that automate the manual invoice-management flow Matt is
 doing every morning:
