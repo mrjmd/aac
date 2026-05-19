@@ -351,14 +351,15 @@ export class QuickBooksClient {
     status?: QBEstimateStatus
   ): Promise<QBEstimate[]> {
     const escapedId = customerId.replace(/'/g, "\\'");
-    let sql = `SELECT * FROM Estimate WHERE CustomerRef = '${escapedId}'`;
-    if (status) sql += ` AND TxnStatus = '${status}'`;
-    sql += ' ORDER BY MetaData.CreateTime DESC MAXRESULTS 100';
+    // QB does NOT allow filtering Estimate by TxnStatus in the query API
+    // ("property 'TxnStatus' is not queryable"). Fetch all, filter client-side.
+    const sql = `SELECT * FROM Estimate WHERE CustomerRef = '${escapedId}' ORDER BY MetaData.CreateTime DESC MAXRESULTS 100`;
 
     const result = await this.request<{ QueryResponse?: { Estimate?: QBEstimate[] } }>(
       `/query?query=${encodeURIComponent(sql)}&minorversion=70`
     );
-    return result.QueryResponse?.Estimate ?? [];
+    const estimates = result.QueryResponse?.Estimate ?? [];
+    return status ? estimates.filter((e) => e.TxnStatus === status) : estimates;
   }
 
   // ── Invoices ────────────────────────────────────────────────────

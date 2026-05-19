@@ -178,12 +178,14 @@ describe('QuickBooksClient', () => {
   });
 
   describe('getEstimatesByCustomer', () => {
-    it('builds a SQL query filtered by customer and status', async () => {
+    it('queries by customer and filters status client-side (TxnStatus not queryable in QB SQL)', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(mockResponse({
         QueryResponse: {
           Estimate: [
             { Id: 'est-1', SyncToken: '0', TxnStatus: 'Accepted', CustomerRef: { value: 'c-1' }, Line: [] },
+            { Id: 'est-2', SyncToken: '0', TxnStatus: 'Pending', CustomerRef: { value: 'c-1' }, Line: [] },
+            { Id: 'est-3', SyncToken: '0', TxnStatus: 'Rejected', CustomerRef: { value: 'c-1' }, Line: [] },
           ],
         },
       }));
@@ -192,10 +194,12 @@ describe('QuickBooksClient', () => {
 
       const url = mockFetch.mock.calls[0][0] as string;
       const decoded = decodeURIComponent(url.split('query=')[1].split('&')[0]);
-      expect(decoded).toContain("FROM Estimate");
+      expect(decoded).toContain('FROM Estimate');
       expect(decoded).toContain("CustomerRef = 'c-1'");
-      expect(decoded).toContain("TxnStatus = 'Accepted'");
       expect(decoded).toContain('ORDER BY MetaData.CreateTime DESC');
+      // TxnStatus filter is NOT in the SQL — QB rejects it as not queryable
+      expect(decoded).not.toContain('TxnStatus');
+      // Client-side filter narrowed the result set
       expect(result).toHaveLength(1);
       expect(result[0].Id).toBe('est-1');
     });
@@ -208,15 +212,19 @@ describe('QuickBooksClient', () => {
       expect(result).toEqual([]);
     });
 
-    it('omits the status filter when not provided', async () => {
+    it('returns all estimates when status filter omitted', async () => {
       const client = makeClient();
-      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: { Estimate: [] } }));
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: {
+          Estimate: [
+            { Id: 'est-1', SyncToken: '0', TxnStatus: 'Accepted', CustomerRef: { value: 'c-1' }, Line: [] },
+            { Id: 'est-2', SyncToken: '0', TxnStatus: 'Pending', CustomerRef: { value: 'c-1' }, Line: [] },
+          ],
+        },
+      }));
 
-      await client.getEstimatesByCustomer('c-1');
-
-      const url = mockFetch.mock.calls[0][0] as string;
-      const decoded = decodeURIComponent(url.split('query=')[1].split('&')[0]);
-      expect(decoded).not.toContain('TxnStatus');
+      const result = await client.getEstimatesByCustomer('c-1');
+      expect(result).toHaveLength(2);
     });
   });
 
