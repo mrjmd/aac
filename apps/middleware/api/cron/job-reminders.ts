@@ -24,6 +24,7 @@ import { getEnv } from '../../lib/env.js';
 import { verifyCronAuth } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
 import { renderTemplate } from '../../lib/templates.js';
+import { matchEventToPerson } from '../../lib/job-customer-match.js';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const log = createLogger('cron:job-reminders');
@@ -76,16 +77,6 @@ function formatDate(isoDateTime: string): string {
     day: 'numeric',
     timeZone: 'America/New_York',
   });
-}
-
-/**
- * Check if a calendar event description contains a Pipedrive ID.
- * Returns the ID if found, null otherwise.
- */
-function extractPipedriveId(description: string | undefined): string | null {
-  if (!description) return null;
-  const match = description.match(/PipedriveID:\s*(\d+)/i);
-  return match ? match[1] : null;
 }
 
 /**
@@ -227,24 +218,7 @@ async function processReminder(
       }
     }
 
-    // Try to find the Pipedrive person
-    // First check for PipedriveID in description, then fall back to name search.
-    // Always use getPerson() for the full record — search results have a
-    // different shape (phone may be a string, not an array).
-    let person = null;
-    const pipedriveId = extractPipedriveId(event.description);
-
-    if (pipedriveId) {
-      person = await pipedrive.getPerson(parseInt(pipedriveId, 10));
-    }
-
-    if (!person) {
-      const searchResult = await pipedrive.searchPersonByName(event.summary);
-      if (searchResult) {
-        // Re-fetch full person record by ID for consistent shape
-        person = await pipedrive.getPerson(searchResult.id);
-      }
-    }
+    const person = await matchEventToPerson(event, pipedrive);
 
     if (!person) {
       log.warn('No Pipedrive person found for event', {

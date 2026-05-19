@@ -26,13 +26,13 @@ import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js
 import { renderTemplate } from '../../lib/templates.js';
 import {
   classifyService,
-  expandCompoundName,
   extractCity,
   formatWhen,
   recordVariant,
   selectVariant,
   type FollowUpVariant,
 } from '../../lib/followup.js';
+import { matchEventToPerson } from '../../lib/job-customer-match.js';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const log = createLogger('cron:job-followups');
@@ -71,13 +71,6 @@ function extractFirstName(fullName: string): string {
   if (!trimmed) return 'there';
   return trimmed.split(/\s+/)[0];
 }
-
-function extractPipedriveId(description: string | undefined): string | null {
-  if (!description) return null;
-  const match = description.match(/PipedriveID:\s*(\d+)/i);
-  return match ? match[1] : null;
-}
-
 
 /**
  * Get a past date range in Eastern time.
@@ -206,32 +199,7 @@ async function processFollowUp(
       }
     }
 
-    // Find the Pipedrive person — always re-fetch full record by ID
-    let person = null;
-    const pipedriveId = extractPipedriveId(event.description);
-
-    if (pipedriveId) {
-      person = await pipedrive.getPerson(parseInt(pipedriveId, 10));
-    }
-
-    if (!person) {
-      const searchResult = await pipedrive.searchPersonByName(event.summary);
-      if (searchResult) {
-        person = await pipedrive.getPerson(searchResult.id);
-      }
-    }
-
-    // Compound title fallback: "Lisa & John Hendrickson" → try "Lisa Hendrickson", "John Hendrickson"
-    if (!person) {
-      for (const candidate of expandCompoundName(event.summary)) {
-        const searchResult = await pipedrive.searchPersonByName(candidate);
-        if (searchResult) {
-          person = await pipedrive.getPerson(searchResult.id);
-          log.info('Matched compound-name candidate', { original: event.summary, candidate });
-          break;
-        }
-      }
-    }
+    const person = await matchEventToPerson(event, pipedrive);
 
     if (!person) {
       log.warn('No Pipedrive person found for follow-up', {
