@@ -46,6 +46,11 @@ pnpm-debug.log*
 docs/candidate-review-*
 docs/indeed-candidates-*
 
+# Business analysis — contains financials, customer data, tax docs.
+# Local only; never committed. Back up via iCloud/Dropbox separately if desired.
+# Anchored to repo root so tools/src/analysis/ (code) isn't matched.
+/analysis/
+
 # Claude
 .claude/
 .vercel

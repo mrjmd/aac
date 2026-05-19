@@ -227,6 +227,33 @@ describe('PipedriveClient', () => {
       expect(PIPEDRIVE_CROSS_SYSTEM_FIELDS.QB_CUSTOMER_ID).toBeDefined();
     });
   });
+
+  describe('rawGet', () => {
+    it('builds URL with api_token + params and returns full response', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({
+          success: true,
+          data: [{ id: 1 }, { id: 2 }],
+          additional_data: { pagination: { start: 0, limit: 100, more_items_in_collection: true, next_start: 100 } },
+        }),
+        text: () => Promise.resolve(''),
+      }));
+
+      const res = await client.rawGet<Array<{ id: number }>>('/deals', { start: 0, limit: 100, status: 'won' });
+      expect(res.success).toBe(true);
+      expect(res.data).toHaveLength(2);
+      expect(res.additional_data?.pagination?.more_items_in_collection).toBe(true);
+
+      const url = mockFetch.mock.calls[0][0];
+      expect(url).toContain('api.pipedrive.com/v1/deals');
+      expect(url).toContain('api_token=test-api-key');
+      expect(url).toContain('start=0');
+      expect(url).toContain('limit=100');
+      expect(url).toContain('status=won');
+    });
+  });
 });
 
 describe('shouldUpdateName', () => {

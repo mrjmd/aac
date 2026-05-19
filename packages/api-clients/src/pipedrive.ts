@@ -600,6 +600,39 @@ export class PipedriveClient {
     });
   }
 
+  // ── General read access ──────────────────────────────────────────
+  // Escape hatches so callers can pull arbitrary entities + custom
+  // fields without us having to wrap every Pipedrive resource.
+
+  async rawGet<T = unknown>(
+    endpoint: string,
+    params: Record<string, string | number> = {}
+  ): Promise<{
+    success: boolean;
+    data: T;
+    additional_data?: {
+      pagination?: {
+        start: number;
+        limit: number;
+        more_items_in_collection: boolean;
+        next_start?: number;
+      };
+    };
+  }> {
+    const baseUrl = 'https://api.pipedrive.com/v1';
+    const url = new URL(`${baseUrl}${endpoint}`);
+    url.searchParams.set('api_token', this.config.apiKey);
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
+
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      const error = await response.text();
+      log.error('Pipedrive raw GET failed', new Error(error), { endpoint, status: response.status });
+      throw new Error(`Pipedrive API error: ${response.status} - ${error}`);
+    }
+    return response.json();
+  }
+
   // ── Static utilities ────────────────────────────────────────────
 
   static getPrimaryPhone(person: PipedrivePerson): string | null {

@@ -56,6 +56,72 @@ interface QBResponse<T> {
   Customer?: T;
 }
 
+// ── Estimate / Invoice shared types ──────────────────────────────────
+
+export interface QBRef {
+  value: string;
+  name?: string;
+}
+
+export interface QBSalesItemLineDetail {
+  ItemRef?: QBRef;
+  Qty?: number;
+  UnitPrice?: number;
+  TaxCodeRef?: QBRef;
+}
+
+export interface QBLine {
+  Id?: string;
+  LineNum?: number;
+  Description?: string;
+  Amount: number;
+  DetailType: string;
+  SalesItemLineDetail?: QBSalesItemLineDetail;
+}
+
+export interface QBLinkedTxn {
+  TxnId: string;
+  TxnType: 'Estimate' | 'Invoice' | 'Payment' | 'CreditMemo';
+}
+
+export type QBEstimateStatus =
+  | 'Pending'
+  | 'Accepted'
+  | 'Rejected'
+  | 'Converted'
+  | 'Closed';
+
+export interface QBEstimate {
+  Id: string;
+  SyncToken: string;
+  DocNumber?: string;
+  TxnDate?: string;
+  TxnStatus?: QBEstimateStatus;
+  CustomerRef: QBRef;
+  Line: QBLine[];
+  TotalAmt?: number;
+  BillEmail?: { Address: string };
+  LinkedTxn?: QBLinkedTxn[];
+  MetaData?: { CreateTime?: string; LastUpdatedTime?: string };
+}
+
+export type QBInvoiceEmailStatus = 'NotSet' | 'NeedToSend' | 'EmailSent';
+
+export interface QBInvoice {
+  Id: string;
+  SyncToken: string;
+  DocNumber?: string;
+  TxnDate?: string;
+  CustomerRef: QBRef;
+  Line: QBLine[];
+  TotalAmt?: number;
+  Balance?: number;
+  EmailStatus?: QBInvoiceEmailStatus;
+  BillEmail?: { Address: string };
+  LinkedTxn?: QBLinkedTxn[];
+  MetaData?: { CreateTime?: string; LastUpdatedTime?: string };
+}
+
 // ── Client ───────────────────────────────────────────────────────────
 
 export class QuickBooksClient {
@@ -278,6 +344,109 @@ export class QuickBooksClient {
     }
   }
 
+  // ── Estimates ───────────────────────────────────────────────────
+
+  async getEstimatesByCustomer(
+    customerId: string,
+    status?: QBEstimateStatus
+  ): Promise<QBEstimate[]> {
+    const escapedId = customerId.replace(/'/g, "\\'");
+    let sql = `SELECT * FROM Estimate WHERE CustomerRef = '${escapedId}'`;
+    if (status) sql += ` AND TxnStatus = '${status}'`;
+    sql += ' ORDER BY MetaData.CreateTime DESC MAXRESULTS 100';
+
+    const result = await this.request<{ QueryResponse?: { Estimate?: QBEstimate[] } }>(
+      `/query?query=${encodeURIComponent(sql)}&minorversion=70`
+    );
+    return result.QueryResponse?.Estimate ?? [];
+  }
+
+  // ── Invoices ────────────────────────────────────────────────────
+
+  async getInvoicesByCustomer(
+    customerId: string,
+    sinceISODate?: string
+  ): Promise<QBInvoice[]> {
+    const escapedId = customerId.replace(/'/g, "\\'");
+    let sql = `SELECT * FROM Invoice WHERE CustomerRef = '${escapedId}'`;
+    if (sinceISODate) sql += ` AND TxnDate >= '${sinceISODate}'`;
+    sql += ' ORDER BY MetaData.CreateTime DESC MAXRESULTS 100';
+
+    const result = await this.request<{ QueryResponse?: { Invoice?: QBInvoice[] } }>(
+      `/query?query=${encodeURIComponent(sql)}&minorversion=70`
+    );
+    return result.QueryResponse?.Invoice ?? [];
+  }
+
+  /**
+   * Convert an Accepted estimate into an Invoice, preserving the link.
+   * Copies the estimate's customer, line items, and bill-email; sets
+   * LinkedTxn so QB shows the invoice as derived from the estimate.
+   *
+   * Does NOT send the invoice — call sendInvoice() separately.
+   */
+  async createInvoiceFromEstimate(estimateId: string): Promise<QBInvoice> {
+    log.info('Creating invoice from estimate', { estimateId });
+
+    const estRes = await this.request<{ Estimate?: QBEstimate }>(
+      `/estimate/${encodeURIComponent(estimateId)}`
+    );
+    const estimate = estRes.Estimate;
+    if (!estimate) {
+      throw new Error(`QuickBooks estimate ${estimateId} not found`);
+    }
+
+    // Drop subtotal/group summary lines — QB recalculates them on the invoice.
+    const lines = estimate.Line.filter(
+      (l) => l.DetailType !== 'SubTotalLineDetail' && l.DetailType !== 'GroupLineDetail'
+    );
+
+    const body: Record<string, unknown> = {
+      CustomerRef: estimate.CustomerRef,
+      Line: lines,
+      LinkedTxn: [{ TxnId: estimate.Id, TxnType: 'Estimate' }],
+    };
+    if (estimate.BillEmail) body.BillEmail = estimate.BillEmail;
+
+    const result = await this.request<{ Invoice?: QBInvoice }>('/invoice', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    if (!result.Invoice) {
+      throw new Error('QuickBooks did not return invoice after creation');
+    }
+
+    log.info('Created invoice from estimate', {
+      estimateId,
+      invoiceId: result.Invoice.Id,
+      amount: result.Invoice.TotalAmt,
+    });
+
+    return result.Invoice;
+  }
+
+  /**
+   * Send an invoice via QB's default branded email template.
+   * If `email` is omitted, uses the invoice's BillEmail on file.
+   */
+  async sendInvoice(invoiceId: string, email?: string): Promise<QBInvoice> {
+    log.info('Sending invoice', { invoiceId, email: email ?? '(default)' });
+
+    const qs = email ? `?sendTo=${encodeURIComponent(email)}` : '';
+    const result = await this.request<{ Invoice?: QBInvoice }>(
+      `/invoice/${encodeURIComponent(invoiceId)}/send${qs}`,
+      { method: 'POST', body: '' }
+    );
+
+    if (!result.Invoice) {
+      throw new Error('QuickBooks did not return invoice after send');
+    }
+
+    log.info('Sent invoice', { invoiceId, emailStatus: result.Invoice.EmailStatus });
+    return result.Invoice;
+  }
+
   async isConnected(): Promise<boolean> {
     try {
       await this.getValidAccessToken();
@@ -285,5 +454,23 @@ export class QuickBooksClient {
     } catch {
       return false;
     }
+  }
+
+  // ── General read access ──────────────────────────────────────────
+  // Two escape hatches so callers can pull arbitrary data without us
+  // having to wrap every QBO entity and report individually.
+
+  async query<T = unknown>(sql: string): Promise<T> {
+    return this.request<T>(`/query?query=${encodeURIComponent(sql)}&minorversion=70`);
+  }
+
+  async report<T = unknown>(
+    name: string,
+    params: Record<string, string> = {}
+  ): Promise<T> {
+    const search = new URLSearchParams(params);
+    search.set('minorversion', '70');
+    const qs = search.toString();
+    return this.request<T>(`/reports/${encodeURIComponent(name)}?${qs}`);
   }
 }
