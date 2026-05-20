@@ -87,6 +87,104 @@ describe('QuoClient', () => {
       expect(result.id).toBe('quo-2');
       expect(mockFetch.mock.calls[0][1].method).toBe('POST');
     });
+
+    it('forwards externalId and source so future lookups can use the fast index', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        data: {
+          id: 'quo-3',
+          defaultFields: {
+            firstName: 'Jane', lastName: null, company: null,
+            emails: [], phoneNumbers: [{ value: '+15551234567' }], role: null,
+          },
+          createdAt: '2026-01-01', updatedAt: '2026-01-01',
+        },
+      }));
+
+      await client.createContact({
+        defaultFields: {
+          firstName: 'Jane',
+          phoneNumbers: [{ value: '+15551234567', name: 'mobile' }],
+        },
+        externalId: '+15551234567',
+        source: 'aac-middleware',
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.externalId).toBe('+15551234567');
+      expect(body.source).toBe('aac-middleware');
+    });
+  });
+
+  describe('findContactByExternalId', () => {
+    it('queries with externalIds[]= and returns the first match', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        data: [{
+          id: 'quo-9',
+          defaultFields: {
+            firstName: 'Nick', lastName: 'Puccio', company: null,
+            emails: [], phoneNumbers: [{ value: '+15085231758' }], role: null,
+          },
+          createdAt: '2026-05-20', updatedAt: '2026-05-20',
+        }],
+      }));
+
+      const result = await client.findContactByExternalId('+15085231758');
+
+      expect(result?.id).toBe('quo-9');
+      const url = mockFetch.mock.calls[0][0] as string;
+      expect(url).toContain('externalIds%5B%5D=%2B15085231758');
+    });
+
+    it('returns null when nothing matches', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ data: [] }));
+
+      const result = await client.findContactByExternalId('+15559999999');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('findContactByPhone', () => {
+    it('returns immediately on externalId hit without paginating', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        data: [{
+          id: 'quo-fast',
+          defaultFields: {
+            firstName: 'Fast', lastName: 'Path', company: null,
+            emails: [], phoneNumbers: [{ value: '+15551234567' }], role: null,
+          },
+          createdAt: '2026-01-01', updatedAt: '2026-01-01',
+        }],
+      }));
+
+      const result = await client.findContactByPhone('+15551234567');
+      expect(result?.id).toBe('quo-fast');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to linear scan when externalId misses', async () => {
+      const client = makeClient();
+      // First call: externalId lookup returns no match
+      mockFetch.mockReturnValueOnce(mockResponse({ data: [] }));
+      // Second call: full-scan first page returns the contact
+      mockFetch.mockReturnValueOnce(mockResponse({
+        data: [{
+          id: 'quo-legacy',
+          defaultFields: {
+            firstName: 'Legacy', lastName: 'Contact', company: null,
+            emails: [], phoneNumbers: [{ value: '+15551234567' }], role: null,
+          },
+          createdAt: '2026-01-01', updatedAt: '2026-01-01',
+        }],
+      }));
+
+      const result = await client.findContactByPhone('+15551234567');
+      expect(result?.id).toBe('quo-legacy');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('sendMessage', () => {

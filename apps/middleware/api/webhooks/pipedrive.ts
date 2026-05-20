@@ -267,8 +267,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           },
         });
       } else {
-        // Check if contact exists in Quo by phone
-        const existingContact = await quo.searchContactByPhone(e164Phone);
+        // Check if contact exists in Quo by phone — tries the fast externalId
+        // index first, falls back to full scan for legacy contacts.
+        const existingContact = await quo.findContactByPhone(e164Phone);
 
         if (existingContact) {
           // Link existing contact
@@ -307,7 +308,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               phone: e164Phone,
             });
             await new Promise((r) => setTimeout(r, 2000));
-            const retryContact = await quo.searchContactByPhone(e164Phone);
+            const retryContact = await quo.findContactByPhone(e164Phone);
             if (retryContact) {
               quoContactId = retryContact.id;
               await storeIdMapping(String(data.id), quoContactId);
@@ -327,7 +328,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               });
             }
           } else {
-            // We hold the lock — create the contact
+            // We hold the lock — create the contact. Set externalId = E.164
+            // phone so subsequent lookups go through findContactByExternalId
+            // (O(1)) instead of paginating every Quo contact (O(N), times out
+            // at ~30s once the contact list gets large).
             const newContact = await quo.createContact({
               defaultFields: {
                 firstName,
@@ -337,6 +341,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 phoneNumbers: [{ value: e164Phone, name: 'mobile' }],
                 emails: primaryEmail ? [{ value: primaryEmail, name: 'email' }] : undefined,
               },
+              externalId: e164Phone,
+              source: 'aac-middleware',
             });
 
             quoContactId = newContact.id;

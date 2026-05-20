@@ -56,6 +56,11 @@ export interface QuoContactCreate {
     phoneNumbers: Array<{ value: string; name: string }>;
   };
   customFields?: QuoCustomFieldValue[];
+  // Quo lets external systems set their own ID + source. We use externalId =
+  // E.164 phone so future lookups can use the fast ?externalIds[]= query
+  // instead of paginating every contact. See findContactByExternalId.
+  externalId?: string;
+  source?: string;
 }
 
 // ── Client ───────────────────────────────────────────────────────────
@@ -102,7 +107,36 @@ export class QuoClient {
 
   // ── Contact CRUD ────────────────────────────────────────────────
 
+  /**
+   * O(1) lookup using Quo's externalId index. Returns the contact whose
+   * externalId matches (we use E.164 phone), or null. Single API call, no
+   * pagination. Prefer this over searchContactByPhone whenever possible.
+   */
+  async findContactByExternalId(externalId: string): Promise<QuoContact | null> {
+    const params = new URLSearchParams({ maxResults: '50' });
+    params.append('externalIds[]', externalId);
+
+    const result = await this.request<{ data: QuoContact[] }>(`/contacts?${params.toString()}`);
+    const match = result.data?.[0] ?? null;
+    if (match) {
+      log.debug('Found contact by externalId', { externalId, contactId: match.id });
+    }
+    return match;
+  }
+
+  /**
+   * Linear scan of every Quo contact, filtering client-side because Quo's
+   * /v1/contacts endpoint does not accept a phone filter. O(N) in total
+   * contacts and gets slower as the contact list grows. Use this only as
+   * a fallback for contacts created before we started setting externalId
+   * on every create. The internal AbortController guards against the
+   * Vercel 30s function timeout by failing fast at 15s — a thrown error
+   * surfaces in logHealthError instead of getting silently killed.
+   */
   async searchContactByPhone(phone: string): Promise<QuoContact | null> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
     try {
       let pageToken: string | undefined;
 
@@ -113,9 +147,16 @@ export class QuoClient {
         let result: { data: QuoContact[]; nextPageToken?: string };
         try {
           result = await this.request<{ data: QuoContact[]; nextPageToken?: string }>(
-            `/contacts?${params.toString()}`
+            `/contacts?${params.toString()}`,
+            { signal: controller.signal }
           );
         } catch (pageError) {
+          if (controller.signal.aborted) {
+            throw new Error(
+              `searchContactByPhone timeout (15s) — too many Quo contacts to scan. ` +
+              `Set externalId on contact create so findContactByExternalId can be used.`
+            );
+          }
           log.warn('Contacts page failed, skipping', { pageToken, error: (pageError as Error).message });
           break;
         }
@@ -135,10 +176,20 @@ export class QuoClient {
 
       log.debug('No contact found for phone', { phone });
       return null;
-    } catch (error) {
-      log.error('Search contact failed', error as Error, { phone });
-      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
+  }
+
+  /**
+   * Fast lookup-by-phone with safe fallback. Tries externalId first (O(1)),
+   * falls back to the slow linear scan if that misses — covers legacy
+   * contacts created before we started setting externalId.
+   */
+  async findContactByPhone(phone: string): Promise<QuoContact | null> {
+    const byExternal = await this.findContactByExternalId(phone);
+    if (byExternal) return byExternal;
+    return this.searchContactByPhone(phone);
   }
 
   async getContact(id: string): Promise<QuoContact | null> {
