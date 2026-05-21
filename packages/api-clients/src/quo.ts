@@ -23,6 +23,8 @@ export interface QuoConfig {
 
 export interface QuoContact {
   id: string;
+  externalId?: string | null;
+  source?: string | null;
   defaultFields: {
     firstName: string | null;
     lastName: string | null;
@@ -31,8 +33,21 @@ export interface QuoContact {
     phoneNumbers: Array<{ value: string; name?: string; id?: string }>;
     role: string | null;
   };
+  customFields?: Array<{ key: string; value: unknown }>;
   createdAt: string;
   updatedAt: string;
+}
+
+// Quo rejects these source values on PATCH (system-reserved). When a
+// contact's existing source matches, we omit `source` from the PATCH
+// body entirely so Quo preserves its own value.
+const RESERVED_SOURCE_VALUES = new Set(['csv', 'device', 'openphone', 'other', 'zapier', 'google-people']);
+const RESERVED_SOURCE_PREFIXES = ['openphone', 'csv'];
+function isReservedSource(s: string | null | undefined): boolean {
+  if (!s) return false;
+  const lower = s.toLowerCase();
+  if (RESERVED_SOURCE_VALUES.has(lower)) return true;
+  return RESERVED_SOURCE_PREFIXES.some(p => lower.startsWith(p));
 }
 
 export interface QuoCustomFieldValue {
@@ -221,12 +236,26 @@ export class QuoClient {
   /**
    * Update an existing contact.
    *
-   * IMPORTANT: The Quo/OpenPhone PATCH API replaces the entire contact state,
-   * not just the fields you send. We must read-merge-write to avoid data loss.
+   * IMPORTANT: Quo's PATCH API replaces the entire contact state, not
+   * just the fields you send — any field omitted from the body gets
+   * cleared (or in the case of nested arrays, emptied). We read-merge-
+   * write the full contact to avoid data loss.
+   *
+   * That includes the top-level `externalId` and `source` fields, which
+   * Quo also wipes when omitted. Pass `externalId: null` to explicitly
+   * clear it; omit the key to preserve the current value. Reserved
+   * source values (openphone, csv, etc.) are omitted from the PATCH
+   * body because Quo rejects them; Quo preserves the existing value in
+   * that case.
    */
   async updateContact(
     id: string,
-    updates: { defaultFields?: Partial<QuoContactCreate['defaultFields']>; customFields?: QuoCustomFieldValue[] }
+    updates: {
+      defaultFields?: Partial<QuoContactCreate['defaultFields']>;
+      customFields?: QuoCustomFieldValue[];
+      externalId?: string | null;
+      source?: string | null;
+    }
   ): Promise<QuoContact> {
     log.info('Updating contact', { contactId: id });
 
@@ -253,7 +282,7 @@ export class QuoClient {
         }
       }
 
-      const existingCustom = (current as unknown as { customFields?: QuoCustomFieldValue[] }).customFields || [];
+      const existingCustom = current.customFields || [];
       const mergedCustom = [...existingCustom];
       if (updates.customFields) {
         for (const update of updates.customFields) {
@@ -270,11 +299,27 @@ export class QuoClient {
       if (mergedCustom.length > 0) {
         body.customFields = mergedCustom;
       }
+
+      // externalId: explicit update wins, else preserve current
+      const nextExternalId = updates.externalId !== undefined ? updates.externalId : current.externalId;
+      if (nextExternalId !== undefined && nextExternalId !== null) {
+        body.externalId = nextExternalId;
+      } else if (updates.externalId === null) {
+        body.externalId = null;
+      }
+
+      // source: explicit update wins (subject to reserved-value omit), else preserve current
+      const nextSource = updates.source !== undefined ? updates.source : current.source;
+      if (nextSource && !isReservedSource(nextSource)) {
+        body.source = nextSource;
+      }
     } else {
       log.warn('Cannot read contact for merge, sending partial update', { contactId: id });
       body = {};
       if (updates.defaultFields) body.defaultFields = updates.defaultFields;
       if (updates.customFields) body.customFields = updates.customFields;
+      if (updates.externalId !== undefined) body.externalId = updates.externalId;
+      if (updates.source !== undefined && !isReservedSource(updates.source)) body.source = updates.source;
     }
 
     const result = await this.request<{ data: QuoContact }>(`/contacts/${id}`, {

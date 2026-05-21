@@ -187,6 +187,94 @@ describe('QuoClient', () => {
     });
   });
 
+  describe('updateContact (read-merge-write preserves externalId/source)', () => {
+    function mockGetThenPatch(current: Record<string, unknown>, patched: Record<string, unknown>) {
+      mockFetch.mockReturnValueOnce(mockResponse({ data: current })); // GET
+      mockFetch.mockReturnValueOnce(mockResponse({ data: patched })); // PATCH
+    }
+
+    it('preserves externalId in PATCH body when not in updates', async () => {
+      const client = makeClient();
+      mockGetThenPatch(
+        {
+          id: 'c-1',
+          externalId: '+15551234567',
+          source: 'aac-middleware',
+          defaultFields: { firstName: 'Nick', lastName: 'Puccio', company: null, role: null, emails: [{ value: 'a@b.com' }], phoneNumbers: [{ value: '+15551234567' }] },
+          customFields: [{ key: 'addr-key', value: '1 Main St' }],
+          createdAt: '2026-01-01', updatedAt: '2026-01-01',
+        },
+        { id: 'c-1', externalId: '+15551234567', source: 'aac-middleware', defaultFields: { firstName: 'Updated', lastName: 'Puccio', company: null, role: null, emails: [], phoneNumbers: [] }, customFields: [], createdAt: '2026-01-01', updatedAt: '2026-01-02' },
+      );
+
+      await client.updateContact('c-1', { defaultFields: { firstName: 'Updated' } });
+
+      const patchBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(patchBody.externalId).toBe('+15551234567');
+      expect(patchBody.source).toBe('aac-middleware');
+      expect(patchBody.defaultFields.firstName).toBe('Updated');
+      // Other defaultFields preserved through merge
+      expect(patchBody.defaultFields.phoneNumbers).toEqual([{ value: '+15551234567' }]);
+      expect(patchBody.defaultFields.emails).toEqual([{ value: 'a@b.com' }]);
+      // CustomFields preserved
+      expect(patchBody.customFields).toEqual([{ key: 'addr-key', value: '1 Main St' }]);
+    });
+
+    it('allows explicitly setting externalId via updates', async () => {
+      const client = makeClient();
+      mockGetThenPatch(
+        { id: 'c-2', externalId: null, source: 'public-api', defaultFields: { firstName: 'A', lastName: null, company: null, role: null, emails: [], phoneNumbers: [{ value: '+15551112222' }] }, customFields: [], createdAt: 'x', updatedAt: 'x' },
+        { id: 'c-2', externalId: '+15551112222', source: 'public-api', defaultFields: { firstName: 'A', lastName: null, company: null, role: null, emails: [], phoneNumbers: [{ value: '+15551112222' }] }, customFields: [], createdAt: 'x', updatedAt: 'y' },
+      );
+
+      await client.updateContact('c-2', { externalId: '+15551112222' });
+
+      const patchBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(patchBody.externalId).toBe('+15551112222');
+    });
+
+    it('omits reserved source (OpenPhone) from the PATCH body so Quo preserves it', async () => {
+      const client = makeClient();
+      mockGetThenPatch(
+        { id: 'c-3', externalId: '+15553334444', source: 'OpenPhone', defaultFields: { firstName: 'Michael', lastName: 'Harrington', company: 'Attack A Crack', role: null, emails: [], phoneNumbers: [{ value: '+15553334444' }] }, customFields: [], createdAt: 'x', updatedAt: 'x' },
+        { id: 'c-3', externalId: '+15553334444', source: 'OpenPhone', defaultFields: { firstName: 'Michael', lastName: 'Harrington', company: 'Attack A Crack', role: null, emails: [{ value: 'mike@x.com' }], phoneNumbers: [{ value: '+15553334444' }] }, customFields: [], createdAt: 'x', updatedAt: 'y' },
+      );
+
+      await client.updateContact('c-3', { defaultFields: { emails: [{ value: 'mike@x.com', name: 'work' }] } });
+
+      const patchBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(patchBody.source).toBeUndefined();
+      // But externalId still preserved
+      expect(patchBody.externalId).toBe('+15553334444');
+    });
+
+    it('preserves non-reserved source values', async () => {
+      const client = makeClient();
+      mockGetThenPatch(
+        { id: 'c-4', externalId: null, source: 'aac-middleware', defaultFields: { firstName: 'A', lastName: null, company: null, role: null, emails: [], phoneNumbers: [] }, customFields: [], createdAt: 'x', updatedAt: 'x' },
+        { id: 'c-4', externalId: null, source: 'aac-middleware', defaultFields: { firstName: 'A', lastName: null, company: null, role: null, emails: [], phoneNumbers: [] }, customFields: [], createdAt: 'x', updatedAt: 'y' },
+      );
+
+      await client.updateContact('c-4', { defaultFields: { firstName: 'A' } });
+
+      const patchBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(patchBody.source).toBe('aac-middleware');
+    });
+
+    it('allows explicitly clearing externalId via null', async () => {
+      const client = makeClient();
+      mockGetThenPatch(
+        { id: 'c-5', externalId: '+15559998888', source: 'public-api', defaultFields: { firstName: 'A', lastName: null, company: null, role: null, emails: [], phoneNumbers: [] }, customFields: [], createdAt: 'x', updatedAt: 'x' },
+        { id: 'c-5', externalId: null, source: 'public-api', defaultFields: { firstName: 'A', lastName: null, company: null, role: null, emails: [], phoneNumbers: [] }, customFields: [], createdAt: 'x', updatedAt: 'y' },
+      );
+
+      await client.updateContact('c-5', { externalId: null });
+
+      const patchBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(patchBody.externalId).toBeNull();
+    });
+  });
+
   describe('sendMessage', () => {
     it('sends SMS with default from number', async () => {
       const client = makeClient();
