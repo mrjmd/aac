@@ -26,7 +26,7 @@ const mockPipedrive = {
 };
 
 const mockQuo = {
-  searchContactByPhone: vi.fn().mockResolvedValue(null),
+  findContactByExternalId: vi.fn().mockResolvedValue(null),
   createContact: vi.fn().mockResolvedValue({ id: 'quo-1', defaultFields: {} }),
   updateContact: vi.fn().mockResolvedValue({ id: 'quo-1', defaultFields: {} }),
   sendMessage: vi.fn().mockResolvedValue({ id: 'msg-1' }),
@@ -97,7 +97,7 @@ beforeEach(async () => {
   const redis = await import('../lib/redis.js');
   (redis.tryAcquireContactCreateLock as any).mockResolvedValue(true);
   (redis.getQuoIdFromPipedrive as any).mockResolvedValue(null);
-  mockQuo.searchContactByPhone.mockResolvedValue(null);
+  mockQuo.findContactByExternalId.mockResolvedValue(null);
   mockQuo.createContact.mockResolvedValue({ id: 'quo-new', defaultFields: {} });
   mockQuickBooks.isConnected.mockResolvedValue(false);
 });
@@ -163,9 +163,9 @@ describe('pipedrive webhook', () => {
     (getQuoIdFromPipedrive as any).mockResolvedValue(null);
     (tryAcquireContactCreateLock as any).mockResolvedValue(false);
     // After waiting, the re-search should find the contact created by the other handler
-    mockQuo.searchContactByPhone
-      .mockResolvedValueOnce(null) // First search (before lock)
-      .mockResolvedValueOnce({ id: 'quo-from-other', defaultFields: {} }); // Re-search after wait
+    mockQuo.findContactByExternalId
+      .mockResolvedValueOnce(null) // First lookup (before lock)
+      .mockResolvedValueOnce({ id: 'quo-from-other', defaultFields: {} }); // Re-lookup after wait
 
     const res = makeRes();
     await handler(makeReq(makePayload()), res);

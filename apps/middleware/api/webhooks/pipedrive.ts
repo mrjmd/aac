@@ -267,9 +267,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           },
         });
       } else {
-        // Check if contact exists in Quo by phone — tries the fast externalId
-        // index first, falls back to full scan for legacy contacts.
-        const existingContact = await quo.findContactByPhone(e164Phone);
+        // Look up Quo contact by externalId only (O(1)). We deliberately
+        // skip the slow phone-scan fallback: at ~9,000+ contacts it times
+        // out the Vercel function before any sync can complete, which was
+        // silently breaking every new lead. Trade-off: if a Quo contact
+        // already exists for this phone without externalId set, we'll
+        // create a duplicate. The externalId backfill closes that gap
+        // for all legacy contacts.
+        const existingContact = await quo.findContactByExternalId(e164Phone);
 
         if (existingContact) {
           // Link existing contact
@@ -308,7 +313,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               phone: e164Phone,
             });
             await new Promise((r) => setTimeout(r, 2000));
-            const retryContact = await quo.findContactByPhone(e164Phone);
+            const retryContact = await quo.findContactByExternalId(e164Phone);
             if (retryContact) {
               quoContactId = retryContact.id;
               await storeIdMapping(String(data.id), quoContactId);
