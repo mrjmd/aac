@@ -90,30 +90,34 @@ Return a JSON object with these fields (use null if not found):
 - lastName: The speaker's last name
 - fullName: The speaker's complete name if given as one string
 - email: The speaker's email address
-- streetAddress: The speaker's street address (number and street name only)
-- city: The speaker's city
-- state: The speaker's state (2-letter abbreviation preferred)
-- zipCode: The speaker's ZIP/postal code
+- streetAddress: Street address of the property that is the subject of this inquiry (number and street name only)
+- city: City of the property in question
+- state: State of that property (2-letter abbreviation preferred)
+- zipCode: ZIP/postal code of that property
 - confidence: Your confidence in the extractions ("high", "medium", or "low")
 
 Critical rules:
-- Extract ONLY information that identifies the speaker themselves.
-- If a name belongs to a third party the speaker mentions (a relative, spouse, contractor, realtor, friend, neighbor, builder's client, anyone other than the speaker), DO NOT extract it. Set firstName/lastName/fullName to null in that case.
-- Same for addresses, emails, and phone numbers — only the speaker's own count.
-- Do not infer or guess. If unsure whether something belongs to the speaker, leave it null and lower confidence.
+- For NAME and EMAIL: extract ONLY information that identifies the speaker themselves. If a name or email belongs to a third party the speaker mentions (a relative, spouse, contractor, realtor, friend, neighbor, builder's client), DO NOT extract it.
+- For ADDRESS: extract the property that is the subject of THIS inquiry — the location where AAC would be doing the work. Usually the speaker's own home, but for pre-purchase inspections it's the property they're evaluating, for commercial inquiries it's the commercial property in question, and for "look at my mom's basement" requests it's the relative's property that is the subject of the work. Do NOT extract addresses mentioned in passing or unrelated to the work being inquired about (a realtor's office, a past residence, etc.).
+- Do not infer or guess. If unsure, leave the field null and lower confidence.
 
-Examples — DO extract (speaker-attributed):
+Examples — DO extract:
 - "My name is John Smith" → firstName: "John", lastName: "Smith"
 - "I'm Sam" → firstName: "Sam"
-- "I live at 21 Cliff Road in Hingham" → streetAddress: "21 Cliff Road", city: "Hingham"
 - "You can reach me at jane@example.com" → email: "jane@example.com"
+- "I live at 21 Cliff Road in Hingham" → streetAddress: "21 Cliff Road", city: "Hingham" (homeowner — speaker's own home is the subject)
+- "I'm looking at a house at 22 Edwardel Rd in Needham — can you check it out?" → streetAddress: "22 Edwardel Rd", city: "Needham" (pre-purchase — the property they're evaluating is the subject)
+- "The property address is 22 Edwardel Rd" → streetAddress: "22 Edwardel Rd"
+- "Can you come look at my mom's basement at 5 Oak Lane, Wellesley?" → streetAddress: "5 Oak Lane", city: "Wellesley" (work would happen at mom's house — that property is the subject)
+- "We have a commercial property at 100 Industrial Way that needs sealing" → streetAddress: "100 Industrial Way" (commercial site is the subject)
 
-Examples — DO NOT extract (third party):
-- "My realtor Lisa Hartley said to call you" → do not extract Lisa Hartley
-- "My builder Mike is handling the foundation" → do not extract Mike
-- "Tell my wife Susan when you arrive" → do not extract Susan
-- "The previous owner was a guy named Bob" → do not extract Bob
-- "My daughter's address is 100 Main St" → do not extract that address
+Examples — DO NOT extract:
+- "My realtor Lisa Hartley said to call you" → do not extract Lisa Hartley (third-party name)
+- "My builder Mike is handling the foundation" → do not extract Mike (third-party name)
+- "Tell my wife Susan when you arrive" → do not extract Susan (third-party name)
+- "The previous owner was a guy named Bob" → do not extract Bob (third-party name)
+- "My realtor's office is at 100 Main St" → do not extract 100 Main St (unrelated to the work)
+- "I used to live at 50 Old Way" → do not extract 50 Old Way (past residence, not subject of inquiry)
 
 Confidence levels:
 - "high": speaker clearly states their own information ("My name is...", "I'm...", "I live at...")
