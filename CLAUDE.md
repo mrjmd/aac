@@ -1,7 +1,9 @@
 # AAC Business Automation System — Monorepo Governance
 
-This is the root of the AAC four-pillar monorepo. Read this document at the
-start of every session.
+This is the root of the AAC monorepo. Read this document at the start of every
+session, alongside `docs/PLAN.md` (current priorities, four-priority sequence,
+what's deferred) and `docs/DECISIONS.md` (running log of architectural decisions
+with reasoning).
 
 ## Architecture
 
@@ -11,6 +13,8 @@ apps/
   website/           Pillar 2: Public Website (Astro 5)
   marketing/         Pillar 3: Marketing Engine (Content Production)
   command-center/    Pillar 4: Analytics/BI Dashboard (Next.js 15)
+  field/             Pillar 5: Tech-facing Job-Completion App (Next.js 15)
+  agent/             Pillar 6: Conversational Agent Platform (Next.js 15)
 packages/
   api-clients/       @aac/api-clients — Shared API clients
   shared-utils/      @aac/shared-utils — Phone, Redis, Logger, Types
@@ -81,6 +85,8 @@ pnpm turbo typecheck      # Type-check everything
 
 ## Reference Documents
 
+- **`docs/PLAN.md`** — Current state, four active priorities, what's deferred. Read at start of every session.
+- **`docs/DECISIONS.md`** — Running log of architectural decisions with reasoning + alternatives considered.
 - `docs/meta-architecture.md` — The master architecture spec
 - `docs/alt-architecture-multi-repo.md` — The alternative we considered (and why we chose monorepo)
 - Each app and package has its own CLAUDE.md with specific rules.

@@ -204,6 +204,14 @@ No data loss — both systems use the same Redis.
 
 ## Future State
 
+> **Note (2026-05-27):** Items in this section that involve LLM judgment, deal-spine
+> state, or scheduling proposals are migrating to `apps/agent/` (see `docs/PLAN.md`
+> and the apps-agent project spec). Items that involve tech-facing UI for job
+> completion (photos, payment status, mark-complete) are moving to `apps/field/`.
+> Items that are pure webhook-relay, stateless transformations, or shared safety
+> layers stay in middleware. The deal-spine specifically is OUT of middleware
+> scope per the 2026-05-27 architecture decision (see `docs/DECISIONS.md`).
+
 Things we know we want this middleware to do but haven't built yet:
 
 ### Near-term (rebuild from aac-slim)
