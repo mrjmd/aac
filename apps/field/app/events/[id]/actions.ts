@@ -1,102 +1,138 @@
 'use server';
 
-import { put } from '@vercel/blob';
 import { revalidatePath } from 'next/cache';
 import { getCalendar } from '@/lib/clients';
-import { setCompletion, type CompletionPhoto, type PaymentStatus } from '@/lib/completion';
+import {
+  getCompletion,
+  setCompletion,
+  type CompletionPhoto,
+  type CompletionRecord,
+  type PaymentStatus,
+} from '@/lib/completion';
 import { classifyEvent } from '@/lib/event-classification';
 
-export interface SubmitState {
+export interface ActionState {
   ok: boolean;
   error?: string;
 }
 
 const ALLOWED_PAYMENT: PaymentStatus[] = ['cash', 'check', 'card', 'not_yet_paid'];
+// TODO: replace with authenticated session email once magic-link auth ships.
+const PLACEHOLDER_EMAIL = 'mike@attackacrack.com';
 
-export async function submitCompletion(
-  _prev: SubmitState | null,
-  formData: FormData,
-): Promise<SubmitState> {
+async function loadEvent(eventId: string) {
+  try {
+    return await getCalendar().getEvent(eventId);
+  } catch {
+    return null;
+  }
+}
+
+/** Step 1: Mike arrives — record the check-in. Works for any event type. */
+export async function checkIn(_prev: ActionState | null, formData: FormData): Promise<ActionState> {
   const eventId = String(formData.get('eventId') || '');
   if (!eventId) return { ok: false, error: 'Missing eventId' };
 
-  let event;
-  try {
-    event = await getCalendar().getEvent(eventId);
-  } catch {
-    return { ok: false, error: `Could not load calendar event ${eventId}` };
+  const existing = await getCompletion(eventId);
+  if (existing) {
+    return { ok: false, error: `Already checked in at ${existing.checkedInAt}` };
   }
 
-  const eventType = classifyEvent(event.colorId);
+  const evt = await loadEvent(eventId);
+  if (!evt) return { ok: false, error: `Could not load calendar event ${eventId}` };
+
+  const record: CompletionRecord = {
+    eventId,
+    eventType: classifyEvent(evt.colorId),
+    eventSummary: evt.summary,
+    phase: 'checked_in',
+    checkedInAt: new Date().toISOString(),
+    checkedInByEmail: PLACEHOLDER_EMAIL,
+    photos: [],
+  };
+  await setCompletion(record);
+  revalidatePath(`/events/${eventId}`);
+  return { ok: true };
+}
+
+/** Step 2 (jobs only): record the Before photo (already uploaded to Blob). */
+export async function submitBeforePhoto(_prev: ActionState | null, formData: FormData): Promise<ActionState> {
+  const eventId = String(formData.get('eventId') || '');
+  const url = String(formData.get('photoUrl') || '');
+  if (!eventId) return { ok: false, error: 'Missing eventId' };
+  if (!url) return { ok: false, error: 'Photo upload incomplete — please retry.' };
+
+  const existing = await getCompletion(eventId);
+  if (!existing) return { ok: false, error: 'Not checked in yet.' };
+  if (existing.eventType !== 'job') {
+    return { ok: false, error: 'Before photo only applies to jobs.' };
+  }
+  if (existing.phase === 'completed') {
+    return { ok: false, error: 'Already completed.' };
+  }
+
+  const photo: CompletionPhoto = { url, label: 'before', takenAt: new Date().toISOString() };
+  const updated: CompletionRecord = {
+    ...existing,
+    phase: 'before_photo_taken',
+    photos: [...existing.photos.filter((p) => p.label !== 'before'), photo],
+  };
+  await setCompletion(updated);
+  revalidatePath(`/events/${eventId}`);
+  return { ok: true };
+}
+
+/**
+ * Step 3: finalize completion. Records:
+ *   - After photo (jobs)    OR    photo (assessments / other)
+ *   - Payment status (jobs only, required)
+ *   - Optional note
+ *
+ * NOTE: backend payment branching (QB Payment creation, sendInvoice, alert
+ * SMS) is NOT wired here yet — payment status is just recorded. That ships
+ * in Step B of the field-app build (apps-field.md Phase 5).
+ */
+export async function submitCompletion(_prev: ActionState | null, formData: FormData): Promise<ActionState> {
+  const eventId = String(formData.get('eventId') || '');
+  const photoUrl = String(formData.get('photoUrl') || '');
   const note = (String(formData.get('note') || '').trim()) || undefined;
   const paymentRaw = String(formData.get('paymentStatus') || '');
-  const paymentStatus =
-    eventType === 'job'
-      ? (ALLOWED_PAYMENT.includes(paymentRaw as PaymentStatus) ? (paymentRaw as PaymentStatus) : undefined)
-      : undefined;
 
-  if (eventType === 'job' && !paymentStatus) {
-    return { ok: false, error: 'Please choose a payment status (Cash / Check / Card / Not Yet Paid).' };
+  if (!eventId) return { ok: false, error: 'Missing eventId' };
+  if (!photoUrl) return { ok: false, error: 'Photo upload incomplete — please retry.' };
+
+  const existing = await getCompletion(eventId);
+  if (!existing) return { ok: false, error: 'Not checked in yet.' };
+  if (existing.phase === 'completed') return { ok: false, error: 'Already completed.' };
+
+  const isJob = existing.eventType === 'job';
+  let paymentStatus: PaymentStatus | undefined;
+  if (isJob) {
+    if (!ALLOWED_PAYMENT.includes(paymentRaw as PaymentStatus)) {
+      return { ok: false, error: 'Please choose a payment status (Cash / Check / Card / Not Yet Paid).' };
+    }
+    paymentStatus = paymentRaw as PaymentStatus;
+
+    if (!existing.photos.some((p) => p.label === 'before')) {
+      return { ok: false, error: 'Before photo missing — please take it first.' };
+    }
   }
 
-  // Photo handling — server-side validation of required count
-  const photoFiles: { file: File; label: CompletionPhoto['label'] }[] = [];
-  if (eventType === 'job') {
-    const before = formData.get('photoBefore');
-    const after = formData.get('photoAfter');
-    if (!(before instanceof File) || before.size === 0) {
-      return { ok: false, error: 'Before photo is required for jobs.' };
-    }
-    if (!(after instanceof File) || after.size === 0) {
-      return { ok: false, error: 'After photo is required for jobs.' };
-    }
-    photoFiles.push({ file: before, label: 'before' });
-    photoFiles.push({ file: after, label: 'after' });
-  } else {
-    const photo = formData.get('photo');
-    if (!(photo instanceof File) || photo.size === 0) {
-      return { ok: false, error: 'A photo is required.' };
-    }
-    photoFiles.push({ file: photo, label: 'photo' });
-  }
+  const newPhoto: CompletionPhoto = {
+    url: photoUrl,
+    label: isJob ? 'after' : 'photo',
+    takenAt: new Date().toISOString(),
+  };
 
-  // Upload to Vercel Blob
-  const ts = Date.now();
-  const uploaded: CompletionPhoto[] = [];
-  try {
-    for (const { file, label } of photoFiles) {
-      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const path = `field/${eventId}/${label}-${ts}.${ext}`;
-      const blob = await put(path, file, {
-        access: 'public',
-        contentType: file.type || 'image/jpeg',
-        addRandomSuffix: false,
-      });
-      uploaded.push({ url: blob.url, label });
-    }
-  } catch (err) {
-    console.error('Blob upload failed', err);
-    return { ok: false, error: `Photo upload failed: ${err instanceof Error ? err.message : String(err)}` };
-  }
-
-  // Persist completion record
-  try {
-    await setCompletion({
-      eventId,
-      eventType,
-      eventSummary: event.summary,
-      completedAt: new Date().toISOString(),
-      // TODO: replace with authenticated user email once magic-link auth ships
-      completedByEmail: 'mike@attackacrack.com',
-      photos: uploaded,
-      paymentStatus,
-      note,
-    });
-  } catch (err) {
-    console.error('Completion record save failed', err);
-    return { ok: false, error: `Saving completion failed: ${err instanceof Error ? err.message : String(err)}` };
-  }
-
+  const updated: CompletionRecord = {
+    ...existing,
+    phase: 'completed',
+    photos: [...existing.photos.filter((p) => p.label !== newPhoto.label), newPhoto],
+    completedAt: new Date().toISOString(),
+    paymentStatus,
+    note,
+  };
+  await setCompletion(updated);
   revalidatePath(`/events/${eventId}`);
   return { ok: true };
 }

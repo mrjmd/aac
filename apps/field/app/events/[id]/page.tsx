@@ -5,7 +5,7 @@ import { getCalendar } from '@/lib/clients';
 import { getCompletion } from '@/lib/completion';
 import { formatEventTime, formatDateDisplay } from '@/lib/dates';
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
-import CompletionForm from './completion-form';
+import CompletionFlow from './completion-flow';
 
 export const dynamic = 'force-dynamic';
 
@@ -128,13 +128,17 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
         )}
 
         <div className="pt-2 border-t border-zinc-200">
-          {completion ? (
+          <h2 className="text-lg font-semibold mb-3 mt-4">
+            {completion?.phase === 'completed'
+              ? 'Completed'
+              : completion === null
+                ? `Start this ${labelForType(type).toLowerCase()}`
+                : `Continue this ${labelForType(type).toLowerCase()}`}
+          </h2>
+          {completion?.phase === 'completed' ? (
             <CompletedView completion={completion} />
           ) : (
-            <>
-              <h2 className="text-lg font-semibold mb-3 mt-4">Complete this {labelForType(type).toLowerCase()}</h2>
-              <CompletionForm eventId={id} eventType={type} />
-            </>
+            <CompletionFlow eventId={id} eventType={type} completion={completion} />
           )}
         </div>
       </section>
@@ -142,8 +146,12 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
   );
 }
 
-function CompletedView({ completion }: { completion: NonNullable<Awaited<ReturnType<typeof getCompletion>>> }) {
-  const completedAt = new Date(completion.completedAt);
+function CompletedView({
+  completion,
+}: {
+  completion: NonNullable<Awaited<ReturnType<typeof getCompletion>>>;
+}) {
+  const completedAt = new Date(completion.completedAt ?? completion.checkedInAt);
   const completedAtFmt = completedAt.toLocaleString('en-US', {
     weekday: 'long',
     month: 'long',
