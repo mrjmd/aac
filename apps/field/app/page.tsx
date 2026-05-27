@@ -123,7 +123,6 @@ export default async function DayPage({ searchParams }: PageProps) {
                       rel="noreferrer"
                       aria-label={`Open directions to ${city ?? evt.location}`}
                       className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-md border border-aac-blue/20 bg-white text-aac-blue shadow-sm active:bg-aac-blue/5"
-                      onClick={(e) => e.stopPropagation()}
                     >
                       <PinIcon className="h-5 w-5" />
                     </a>
