@@ -7,9 +7,19 @@
  */
 
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import { Redis } from '@upstash/redis';
 import { getEnv } from './env';
 
 let _calendar: GoogleCalendarClient | null = null;
+let _redis: Redis | null = null;
+
+export function getRedis(): Redis {
+  if (!_redis) {
+    const env = getEnv();
+    _redis = new Redis({ url: env.redis.url, token: env.redis.token });
+  }
+  return _redis;
+}
 
 export function getCalendar(): GoogleCalendarClient {
   if (!_calendar) {

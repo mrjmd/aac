@@ -1,8 +1,11 @@
+import Image from 'next/image';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getCalendar } from '@/lib/clients';
+import { getCompletion } from '@/lib/completion';
 import { formatEventTime, formatDateDisplay } from '@/lib/dates';
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
+import CompletionForm from './completion-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,6 +61,7 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
 
   const type = classifyEvent(evt.colorId);
   const eventDateLabel = dateLabelFromISO(evt.start);
+  const completion = await getCompletion(id);
 
   return (
     <main className="min-h-dvh">
@@ -123,21 +127,88 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
           </DetailRow>
         )}
 
-        <div className="pt-4">
-          <button
-            type="button"
-            disabled
-            className="w-full py-4 rounded-lg bg-zinc-300 text-zinc-600 font-medium cursor-not-allowed"
-          >
-            Mark Complete (coming soon)
-          </button>
-          <p className="text-xs text-center text-zinc-500 mt-2">
-            Photo upload + payment branching ships next.
-          </p>
+        <div className="pt-2 border-t border-zinc-200">
+          {completion ? (
+            <CompletedView completion={completion} />
+          ) : (
+            <>
+              <h2 className="text-lg font-semibold mb-3 mt-4">Complete this {labelForType(type).toLowerCase()}</h2>
+              <CompletionForm eventId={id} eventType={type} />
+            </>
+          )}
         </div>
       </section>
     </main>
   );
+}
+
+function CompletedView({ completion }: { completion: NonNullable<Awaited<ReturnType<typeof getCompletion>>> }) {
+  const completedAt = new Date(completion.completedAt);
+  const completedAtFmt = completedAt.toLocaleString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'America/New_York',
+  });
+  return (
+    <div className="space-y-4 mt-4">
+      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+        <p className="font-semibold text-emerald-900">✓ Completed</p>
+        <p className="text-sm text-emerald-800 mt-1">{completedAtFmt}</p>
+        {completion.paymentStatus && (
+          <p className="text-sm text-emerald-800 mt-1">
+            Payment: <span className="font-medium">{labelForPayment(completion.paymentStatus)}</span>
+          </p>
+        )}
+        {completion.note && (
+          <p className="text-sm text-emerald-900 mt-2 whitespace-pre-wrap">
+            “{completion.note}”
+          </p>
+        )}
+      </div>
+
+      {completion.photos.length > 0 && (
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 mb-2">Photos</p>
+          <div className="grid grid-cols-2 gap-2">
+            {completion.photos.map((p) => (
+              <a
+                key={p.url}
+                href={p.url}
+                target="_blank"
+                rel="noreferrer"
+                className="block bg-zinc-100 rounded-lg overflow-hidden aspect-square relative"
+              >
+                <Image
+                  src={p.url}
+                  alt={p.label}
+                  fill
+                  sizes="(max-width: 640px) 50vw, 240px"
+                  className="object-cover"
+                />
+                <span className="absolute bottom-1 left-1 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded">
+                  {p.label}
+                </span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function labelForPayment(s: string): string {
+  switch (s) {
+    case 'cash': return 'Cash';
+    case 'check': return 'Check';
+    case 'card': return 'Card';
+    case 'not_yet_paid': return 'Not Yet Paid (invoice sent)';
+    default: return s;
+  }
 }
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {

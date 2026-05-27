@@ -93,6 +93,11 @@ export const keys = {
   /** Attribution — 1y TTL */
   attribution: (invoiceId: string) => `attribution:${invoiceId}` as const,
   attributionProcessed: (invoiceId: string) => `attribution:processed:${invoiceId}` as const,
+
+  // ── Field App (Job Completion) ─────────────────────────────────────
+
+  /** Completion record for a calendar event — written by apps/field when tech marks complete */
+  fieldCompletion: (calendarEventId: string) => `field:completion:${calendarEventId}` as const,
 } as const;
 
 /**
