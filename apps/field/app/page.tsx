@@ -11,6 +11,7 @@ import {
   isValidDateLabel,
 } from '@/lib/dates';
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
+import { extractCity, buildDirectionsUrl } from '@/lib/location';
 
 export const dynamic = 'force-dynamic';
 
@@ -91,18 +92,19 @@ export default async function DayPage({ searchParams }: PageProps) {
           <ul className="space-y-2">
             {events.map((evt) => {
               const type = classifyEvent(evt.colorId);
+              const city = extractCity(evt.location);
               return (
-                <li key={evt.id}>
+                <li key={evt.id} className="relative">
                   <Link
                     href={`/events/${evt.id}?from=${dateLabel}`}
-                    className="block bg-white rounded-lg border border-zinc-200 p-4 shadow-sm active:bg-zinc-50"
+                    className="block rounded-lg border border-zinc-200 bg-white p-4 shadow-sm active:bg-zinc-50"
                   >
-                    <div className="flex items-start justify-between gap-3 mb-1">
-                      <h2 className="font-medium text-base leading-snug">
+                    <div className="mb-1 flex items-start justify-between gap-3 pr-12">
+                      <h2 className="text-base font-medium leading-snug">
                         {evt.summary || '(untitled)'}
                       </h2>
                       <span
-                        className={`shrink-0 inline-block text-xs font-medium px-2 py-0.5 rounded border ${badgeColorClasses(type)}`}
+                        className={`inline-block shrink-0 rounded border px-2 py-0.5 text-xs font-medium ${badgeColorClasses(type)}`}
                       >
                         {labelForType(type)}
                       </span>
@@ -110,12 +112,22 @@ export default async function DayPage({ searchParams }: PageProps) {
                     <p className="text-sm text-zinc-600">
                       {formatEventTimeRange(evt.start, evt.end)}
                     </p>
-                    {evt.location && (
-                      <p className="text-sm text-zinc-500 mt-1 truncate">
-                        {evt.location}
-                      </p>
+                    {city && (
+                      <p className="mt-1 text-sm text-zinc-500">{city}</p>
                     )}
                   </Link>
+                  {evt.location && (
+                    <a
+                      href={buildDirectionsUrl(evt.location)}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`Open directions to ${city ?? evt.location}`}
+                      className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-md border border-aac-blue/20 bg-white text-aac-blue shadow-sm active:bg-aac-blue/5"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <PinIcon className="h-5 w-5" />
+                    </a>
+                  )}
                 </li>
               );
             })}
@@ -123,5 +135,19 @@ export default async function DayPage({ searchParams }: PageProps) {
         )}
       </section>
     </main>
+  );
+}
+
+function PinIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 2C7.6 2 4 5.6 4 10c0 5.4 7 11.6 7.3 11.9.2.1.5.1.7 0C12.3 21.6 20 15.4 20 10c0-4.4-3.6-8-8-8zm0 11a3 3 0 110-6 3 3 0 010 6z" />
+    </svg>
   );
 }

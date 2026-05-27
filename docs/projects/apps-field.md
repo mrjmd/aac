@@ -191,6 +191,22 @@ demands it.
   what's still-in-pocket vs. actually-at-the-bank. Captured 2026-05-27 after
   the first successful cash-payment write surfaced the tracking gap.
 
+- **Estimated travel time between same-day jobs.** Between each pair of
+  consecutive events with locations on the today's-jobs list, show a small
+  inline chip with the drive duration + distance. Tap → opens Google Maps
+  directions. Most valuable variant: surface a red warning when the gap
+  between two scheduled events is smaller than the drive time ("⚠ only
+  10 min gap, drive is 20 min") so Mike can call ahead before he's late.
+  Cost is essentially free (~\$0.30/month at expected volume, comfortably
+  inside Google's \$200/mo Maps Platform free tier). Cache results in
+  Redis keyed by `(originAddress, destinationAddress, hour-of-day)` —
+  same trip stays same cost.
+
+  Requires: Distance Matrix API enabled in the Google Cloud project +
+  billing card on Maps Platform + a separate Maps API key (Maps uses
+  API keys, not OAuth). Captured 2026-05-27 alongside the city-only
+  display + map-icon button.
+
 ## Related
 
 - Architecture decisions: `docs/DECISIONS.md` (2026-05-27 entries on field app + Cron B kill)
