@@ -110,6 +110,9 @@ export const keys = {
 
   /** Short-lived OAuth state nonce → return-to path, for CSRF protection during the OAuth round-trip */
   fieldOAuthState: (state: string) => `field:oauth-state:${state}` as const,
+
+  /** Resolved customer info for a calendar event (PD person ID + structured city/state). 1d TTL. */
+  fieldEventCustomer: (calendarEventId: string) => `field:event-customer:${calendarEventId}` as const,
 } as const;
 
 /**
@@ -125,4 +128,5 @@ export const ttl = {
   attribution: 31_536_000,   // 1 year
   fieldSession: 31_536_000,  // 1 year (renewed on activity — effectively forever)
   fieldOAuthState: 600,      // 10 minutes (just long enough to complete the redirect)
+  fieldEventCustomer: 86_400, // 24h — PD address edits propagate within a day
 } as const;

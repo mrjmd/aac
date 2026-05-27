@@ -11,7 +11,8 @@ import {
   isValidDateLabel,
 } from '@/lib/dates';
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
-import { extractCity, buildDirectionsUrl } from '@/lib/location';
+import { buildDirectionsUrl } from '@/lib/location';
+import { resolveEventCity } from '@/lib/event-city';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,7 @@ export default async function DayPage({ searchParams }: PageProps) {
 
   let events: Awaited<ReturnType<ReturnType<typeof getCalendar>['listEvents']>> = [];
   let loadError: string | null = null;
+  let citiesByEventId: Record<string, string | null> = {};
   try {
     const env = getEnv();
     const { timeMin, timeMax } = getEasternRangeForDate(dateLabel);
@@ -35,6 +37,12 @@ export default async function DayPage({ searchParams }: PageProps) {
       timeMax,
       attendeeEmails: env.technicianEmails,
     });
+    // Resolve all event cities in parallel (cached per event ID in Redis,
+    // so the first load of a day is the slow one; subsequent loads are instant).
+    const cityPairs = await Promise.all(
+      events.map(async (evt) => [evt.id, await resolveEventCity(evt)] as const),
+    );
+    citiesByEventId = Object.fromEntries(cityPairs);
   } catch (err) {
     console.error('Failed to load calendar for', dateLabel, err);
     loadError = err instanceof Error ? err.message : String(err);
@@ -92,7 +100,7 @@ export default async function DayPage({ searchParams }: PageProps) {
           <ul className="space-y-2">
             {events.map((evt) => {
               const type = classifyEvent(evt.colorId);
-              const city = extractCity(evt.location);
+              const city = citiesByEventId[evt.id];
               return (
                 <li key={evt.id} className="relative">
                   <Link
