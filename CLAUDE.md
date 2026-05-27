@@ -83,6 +83,40 @@ pnpm turbo test           # Run all tests
 pnpm turbo typecheck      # Type-check everything
 ```
 
+## Deploy Convention (Vercel)
+
+Every app deploys via a script in its own `package.json` that sets
+`VERCEL_ORG_ID` + `VERCEL_PROJECT_ID` and runs `vercel deploy` from the repo
+root. This is uniform across all apps and works around pnpm-workspace
+monorepo issues (where Vercel can't auto-detect parent files when linked from
+a subdirectory).
+
+```bash
+pnpm --filter @aac/field      deploy            # prod
+pnpm --filter @aac/field      deploy:preview    # preview URL, no prod impact
+pnpm --filter @aac/middleware deploy            # prod
+pnpm --filter @aac/marketing  deploy            # prod
+```
+
+There are **no `.vercel/` link directories committed anywhere** — they are
+git-ignored at the root. Each app's project ID lives in its `package.json`
+deploy script (project IDs are not secrets; the Vercel auth token in
+`~/Library/Application Support/com.vercel.cli/` is).
+
+For each Vercel project in the team, the project settings must be:
+- `rootDirectory = apps/{name}`
+- `sourceFilesOutsideRootDirectory = true`
+
+When adding a new app:
+1. Create the Vercel project in the dashboard (or via `vercel link`, then
+   delete the resulting `.vercel/` after extracting the project ID)
+2. Set `rootDirectory` and `sourceFilesOutsideRootDirectory` on the project
+   (via dashboard or PATCH to `https://api.vercel.com/v9/projects/{id}`)
+3. Add `deploy` + `deploy:preview` scripts to the app's `package.json` using
+   the new project ID
+
+See `apps/field/package.json` for the canonical script template.
+
 ## Reference Documents
 
 - **`docs/PLAN.md`** — Current state, four active priorities, what's deferred. Read at start of every session.

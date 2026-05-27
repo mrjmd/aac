@@ -23,12 +23,12 @@ The field app produces:
 
 ## User flow (MVP)
 
-1. Mike opens the app on his phone (subdomain TBD — likely `tech.attackacrack.com` or `field.attackacrack.com`)
-2. Logs in (auth method TBD — see decisions below)
-3. Sees today's jobs — list of green calendar events with him as attendee
-4. Taps a job → detail view: customer name, address, linked QB Estimate ID + total if known, any prior photos
-5. Performs the job
-6. Taps "Mark Complete" → form:
+1. Mike opens the app on his phone at `field.attackacrack.com`
+2. Logs in via magic link sent to `mike@attackacrack.com`
+3. Sees **today's calendar — every event he is invited to**, not just green/job events. This covers jobs, assessments, callbacks, anything Mike is the attendee on.
+4. Taps an event → detail view: customer name, address, event type, linked QB Estimate ID + total if known, any prior photos
+5. Performs the job (or assessment, or callback)
+6. Taps "Mark Complete" → form (behavior depends on event type — see below):
    - **Before photo** (camera capture)
    - **After photo** (camera capture)
    - **Optional additional photos** (0+ more)
@@ -53,7 +53,7 @@ When Mike submits a completion:
 - Photos → Vercel Blob
 - Look up customer's most-recent invoice
 - If Balance == 0 (already paid via QB Payments processing or other card flow): accept, log completion
-- If Balance > 0: alert Matt via SMS — "Mike marked Card paid for {customer} but QB still shows balance \${X}. Verify."
+- If Balance > 0: **abort the completion**. SMS Matt: "Mike marked Card paid for {customer} but QB still shows balance \${X}." Mike sees an error: "Card payment not yet visible in QB — Matt has been notified, please wait for him to confirm before re-submitting." Matt reconciles, then Mike resubmits.
 
 ### Not Yet Paid
 - Photos → Vercel Blob
@@ -66,14 +66,27 @@ When Mike submits a completion:
 - Same skip-and-alert pattern Cron A uses
 - Don't guess; SMS Matt the ambiguity description and let him resolve
 
+### No invoice exists for the customer
+- Block Mike from submitting
+- Show error: "No invoice found for {customer}. Please contact Matt to create the invoice, then re-submit."
+- This is intentionally the same UX as today's manual flow — Mike escalates to Matt by phone/text. With Cron A live this should be rare.
+- Do NOT auto-create the invoice in the field app (keeps Cron A as the single source of invoice-creation logic).
+
 ## Auth (MVP)
 
-| Option | Time | Pros | Cons |
-|---|---|---|---|
-| Shared password | <30 min | Trivial to ship | Bad multi-tech story; password leaks are silent |
-| Magic link via email | \~1-2 hr | Per-user identification; standard pattern | Email reception delay if Mike's email is slow |
+**Decision (locked 2026-05-27):** Magic link via email for v1. Whitelist of
+authorized emails in env (just Mike's email at MVP).
 
-**Recommendation:** Magic link. Sets up multi-tech cleanly when needed. Whitelist of authorized emails configured in env (just Mike's email at MVP).
+**Session behavior:** Long-lived sessions with "trust this device" checkbox at
+login → 90+ day session token. Mike should not have to re-authenticate
+day-to-day. Re-auth only on explicit logout or device change.
+
+**Forward-looking — Google OAuth migration:** Magic-link is fine indefinitely.
+The original concern (v2 needing Drive access for photo attachment) was
+sidestepped by the v2 photo design (see Photo storage architecture below):
+photos stay in Blob, calendar event description links back to a field-app
+page. Drive never enters the picture. Migrate to Google OAuth only if a
+different feature later forces it.
 
 ## Photo upload
 
@@ -84,9 +97,25 @@ When Mike submits a completion:
 
 ### Photo storage architecture
 
-**v1:** URLs stored in Redis keyed by `{calendar-event-id}` and/or written to QB invoice description / PD deal custom field.
+**v1:** Photos live in Vercel Blob, written only by the field app. Each blob
+has explicit metadata: `{ jobId, calendarEventId, uploaderEmail, timestamp,
+label: 'before' | 'after' | 'extra' }`. Index in Redis keyed by
+`{calendar-event-id}`.
 
-**v2:** Photos attached to the Google Calendar event itself (via Drive API — file upload to Drive → attach to event). Defer to v2 because Drive integration adds 0.5-1 day.
+Field-app photos and customer-sent photos (which live in Quo / Matt's texts /
+calendar event attachments today) never mix. No attribution ambiguity.
+
+**v2:** Calendar event description gets a deep-link to
+`field.attackacrack.com/jobs/{eventId}/photos`, which renders the gallery from
+Blob. Photos are NOT attached to the calendar event itself, and NOT written to
+Drive. This sidesteps three problems:
+- No need for Mike to OAuth Google
+- No mixing with photos Matt manually attached to events
+- No Drive API integration work
+
+Auth migration to Google OAuth (mentioned in Auth section) is therefore *not*
+forced by photo storage. It only becomes worth doing if a different feature
+demands it.
 
 ## Job-to-invoice matching
 
@@ -110,14 +139,20 @@ When Mike submits a completion:
 | 6 | Mike training + first-week shadowing | 1 day (operational) |
 | **Total** | **3-4 engineering days + 1 training day** | |
 
-## Open questions for Matt
+## Locked decisions (2026-05-27)
 
-1. **Subdomain:** `tech.attackacrack.com`? `field.attackacrack.com`? Other?
-2. **Brand fidelity:** Pull website CSS / Tailwind config OR Tailwind-from-scratch with logo + brand colors only?
-3. **Required photos: hard block or warning?** "Must upload 2" prevents submission OR allows submission with a "you didn't upload photos" warning that fires an SMS to Matt.
-4. **Card branch — what if QB shows the invoice unpaid?** Alert Matt and abort (don't mark complete)? Or accept Mike's word and create a QB Payment for Card (overriding QB's state)?
-5. **What if there's no QB invoice yet for the customer?** (e.g., Cron A didn't run because no Accepted estimate matched, or job was added to calendar same-day.) MVP options: (a) skip + alert Matt, (b) create invoice on the fly from the most-recent estimate, (c) prompt Mike for the estimate ID. Recommendation: (a).
-6. **PD deal logging:** when Mike marks complete, write a PD activity on which entity? The person? A deal? (v1: person, since deals aren't fully integrated yet.)
+| # | Decision | Notes |
+|---|---|---|
+| Subdomain | `field.attackacrack.com` | Generic; extends beyond just Mike (Edward eventually) |
+| Auth | Magic link via email | See Auth section above; long sessions, OAuth migration deferred to v2 |
+| Required photos | **Hard block** — must upload both before + after to submit | Enforce discipline at the UI |
+| Card branch (QB shows balance > 0) | **Abort + alert Matt** | Mike can't mark complete; you reconcile manually before he can submit |
+| No QB invoice exists | **Block Mike + force escalation** | Same as today's manual flow: Mike calls/texts Matt, Matt fixes upstream, then Mike submits. Should be rare now that Cron A runs. |
+| PD activity logging | On the person (v1) | Migrate to deal-attached in v2 when apps/agent ships |
+
+## Still open
+
+- **Brand fidelity:** Pull website CSS / Tailwind config OR Tailwind-from-scratch with logo + brand colors only? (Defer until scaffold phase; low-stakes.)
 
 ## Related
 

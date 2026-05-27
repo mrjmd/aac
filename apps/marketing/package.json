@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "deploy": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_SqMMo8yODXQJaF0K4g0Jy20gh7av vercel deploy --prod --yes",
+    "deploy:preview": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_SqMMo8yODXQJaF0K4g0Jy20gh7av vercel deploy --yes"
   },
   "dependencies": {
     "@aac/api-clients": "workspace:*",

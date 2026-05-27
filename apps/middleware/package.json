@@ -8,7 +8,9 @@
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "deploy": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_Zc0XcG1aTVHgln7WsXGatd7I7BiN vercel deploy --prod --yes",
+    "deploy:preview": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_Zc0XcG1aTVHgln7WsXGatd7I7BiN vercel deploy --yes"
   },
   "dependencies": {
     "@aac/api-clients": "workspace:*",

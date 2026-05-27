@@ -1,0 +1,35 @@
+{
+  "name": "@aac/field",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "deploy": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_URMxWdQ7HXIjBpjWo1vTB4jCqh7z vercel deploy --prod --yes",
+    "deploy:preview": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_URMxWdQ7HXIjBpjWo1vTB4jCqh7z vercel deploy --yes"
+  },
+  "dependencies": {
+    "@aac/api-clients": "workspace:*",
+    "@aac/shared-utils": "workspace:*",
+    "@aac/ui": "workspace:*",
+    "@upstash/redis": "^1.34.3",
+    "@vercel/blob": "^0.27.0",
+    "next": "^15",
+    "react": "^19",
+    "react-dom": "^19",
+    "resend": "^4.0.0"
+  },
+  "devDependencies": {
+    "@aac/tsconfig": "workspace:*",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "postcss": "^8",
+    "tailwindcss": "^4",
+    "typescript": "^5.8"
+  }
+}

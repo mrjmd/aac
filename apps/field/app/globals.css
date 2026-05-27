@@ -1,0 +1,8 @@
+@import "tailwindcss";
+@import "@aac/ui/tokens.css";
+
+@source "../../../packages/ui/src";
+
+body {
+  @apply bg-zinc-50 font-sans text-aac-dark antialiased;
+}
