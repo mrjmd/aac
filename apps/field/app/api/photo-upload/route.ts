@@ -30,8 +30,13 @@ export async function POST(request: Request): Promise<NextResponse> {
           throw new Error('Upload path must begin with "field/"');
         }
         return {
-          allowedContentTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'],
-          maximumSizeInBytes: 20 * 1024 * 1024,
+          allowedContentTypes: [
+            'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif',
+            'video/mp4', 'video/quicktime', 'video/webm', 'video/3gpp',
+          ],
+          // 100 MB cap so a 1–2 minute phone video fits. Vercel Blob will
+          // reject anything larger.
+          maximumSizeInBytes: 100 * 1024 * 1024,
         };
       },
       onUploadCompleted: async () => {

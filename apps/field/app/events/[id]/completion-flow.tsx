@@ -34,8 +34,8 @@ export default function CompletionChecklist({ eventId, eventType, completion }: 
   const beforeState: RowState = beforeTaken ? 'done' : checkedIn ? 'current' : 'pending';
   const completeState: RowState = (() => {
     if (completed) return 'done';
-    if (eventType === 'job' && beforeTaken) return 'current';
-    if (eventType !== 'job' && checkedIn) return 'current';
+    if (eventType === 'repair' && beforeTaken) return 'current';
+    if (eventType !== 'repair' && checkedIn) return 'current';
     return 'pending';
   })();
 
@@ -43,7 +43,7 @@ export default function CompletionChecklist({ eventId, eventType, completion }: 
     <div className="space-y-3">
       {allDone && (
         <div className="bg-emerald-100 border border-emerald-300 rounded-lg px-4 py-3 text-emerald-900 font-semibold text-center">
-          ✓ Job complete
+          ✓ Complete
         </div>
       )}
 
@@ -52,7 +52,7 @@ export default function CompletionChecklist({ eventId, eventType, completion }: 
         {/* No expanded content for done — summary is in the row header */}
       </StepRow>
 
-      {eventType === 'job' && (
+      {eventType === 'repair' && (
         <StepRow
           number={2}
           state={beforeState}
@@ -72,19 +72,24 @@ export default function CompletionChecklist({ eventId, eventType, completion }: 
       )}
 
       <StepRow
-        number={eventType === 'job' ? 3 : 2}
+        number={eventType === 'repair' ? 3 : 2}
         state={completeState}
-        title={eventType === 'job' ? 'Complete job' : 'Complete'}
+        title={eventType === 'repair' ? 'Complete repair' : 'Complete'}
         doneSummary={completed ? `at ${formatTime(completion!.completedAt ?? completion!.checkedInAt)}` : undefined}
       >
         {completeState === 'current' && (
           <PhotoUploadStep
             eventId={eventId}
-            kind={eventType === 'job' ? 'after' : 'photo'}
+            kind={eventType === 'repair' ? 'after' : 'photo'}
             action={submitCompletion}
             submitLabel="Mark Complete"
             pendingLabel="Submitting…"
-            renderExtras={eventType === 'job' ? <PaymentSection /> : null}
+            renderExtras={
+              <>
+                <ExtrasSection eventId={eventId} />
+                {eventType === 'repair' && <PaymentSection />}
+              </>
+            }
             renderNoteField
           />
         )}
@@ -182,14 +187,29 @@ function CompletedDetails({ completion }: { completion: CompletionRecord }) {
   const afterPhoto = completion.photos.find((p) => p.label === 'after' || p.label === 'photo');
   return (
     <div className="space-y-3">
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {completion.photos.map((p) => (
-          <a key={p.url} href={p.url} target="_blank" rel="noreferrer">
-            <img
-              src={p.url}
-              alt={p.label}
-              className="size-20 object-cover rounded-md border border-emerald-200"
-            />
+          <a key={p.url} href={p.url} target="_blank" rel="noreferrer" className="block">
+            {p.kind === 'video' ? (
+              <div className="relative size-20 overflow-hidden rounded-md border border-emerald-200 bg-black">
+                <video
+                  src={p.url}
+                  className="h-full w-full object-cover"
+                  muted
+                  playsInline
+                  preload="metadata"
+                />
+                <span className="absolute inset-0 flex items-center justify-center text-2xl text-white">
+                  ▶
+                </span>
+              </div>
+            ) : (
+              <img
+                src={p.url}
+                alt={p.label}
+                className="size-20 rounded-md border border-emerald-200 object-cover"
+              />
+            )}
           </a>
         ))}
       </div>
@@ -404,6 +424,118 @@ function PhotoUploadStep({
 
       <ErrorBox error={state?.error} />
     </form>
+  );
+}
+
+interface Extra {
+  url: string;
+  kind: 'image' | 'video';
+  localPreview: string;
+}
+
+/**
+ * Optional grid of additional photos/videos Mike captures during the job.
+ * Each file uploads to Vercel Blob as soon as it's picked, then renders as
+ * a thumbnail with a remove button. Hidden inputs make the list available
+ * to the enclosing <form>'s server action under extraUrl[] / extraKind[].
+ */
+function ExtrasSection({ eventId }: { eventId: string }) {
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [items, setItems] = useState<Extra[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    e.target.value = ''; // allow picking the same file again later
+    setError(null);
+    for (const file of files) {
+      const isVideo = file.type.startsWith('video/');
+      const ext = file.name.split('.').pop() || (isVideo ? 'mp4' : 'jpg');
+      const localPreview = URL.createObjectURL(file);
+      setUploading(true);
+      try {
+        const path = `field/${eventId}/extra-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const blob = await upload(path, file, {
+          access: 'public',
+          handleUploadUrl: '/api/photo-upload',
+        });
+        setItems((prev) => [...prev, { url: blob.url, kind: isVideo ? 'video' : 'image', localPreview }]);
+      } catch (err) {
+        console.error('extra upload failed', err);
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setUploading(false);
+      }
+    }
+  }
+
+  function remove(url: string) {
+    setItems((prev) => prev.filter((it) => it.url !== url));
+  }
+
+  return (
+    <div className="space-y-2 border-t border-zinc-200 pt-3">
+      <p className="text-sm font-medium text-zinc-800">
+        More photos/videos <span className="font-normal text-zinc-500">(optional)</span>
+      </p>
+      {items.length > 0 && (
+        <ul className="grid grid-cols-3 gap-2">
+          {items.map((it) => (
+            <li key={it.url} className="relative aspect-square">
+              {it.kind === 'video' ? (
+                <video
+                  src={it.localPreview}
+                  className="h-full w-full rounded-md border border-zinc-200 object-cover"
+                  muted
+                  playsInline
+                />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={it.localPreview}
+                  alt=""
+                  className="h-full w-full rounded-md border border-zinc-200 object-cover"
+                />
+              )}
+              <button
+                type="button"
+                aria-label="Remove"
+                onClick={() => remove(it.url)}
+                className="absolute -right-1.5 -top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-zinc-900 text-xs font-bold leading-none text-white shadow"
+              >
+                ×
+              </button>
+              {it.kind === 'video' && (
+                <span className="absolute bottom-1 left-1 rounded bg-black/70 px-1 text-[10px] uppercase tracking-wide text-white">
+                  video
+                </span>
+              )}
+              <input type="hidden" name="extraUrl" value={it.url} />
+              <input type="hidden" name="extraKind" value={it.kind} />
+            </li>
+          ))}
+        </ul>
+      )}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
+        disabled={uploading}
+        className="block w-full rounded-lg border-2 border-dashed border-zinc-300 py-2 text-sm text-zinc-600 hover:border-aac-blue hover:text-aac-blue active:bg-zinc-50 disabled:opacity-50"
+      >
+        {uploading ? 'Uploading…' : '+ Add photo or video'}
+      </button>
+      {error && <p className="text-xs text-red-700">Upload failed: {error}</p>}
+    </div>
   );
 }
 

@@ -11,10 +11,21 @@ import { getRedis } from './clients';
 export type PaymentStatus = 'cash' | 'check' | 'card' | 'not_yet_paid';
 export type Phase = 'checked_in' | 'before_photo_taken' | 'completed';
 
+/**
+ * One uploaded media item attached to a completion.
+ *
+ *   label='before' — the required Before photo (repairs only)
+ *   label='after'  — the required After photo on Mark Complete (repairs)
+ *   label='photo'  — the required photo on Mark Complete (non-repairs)
+ *   label='extra'  — optional additional media Mike captured at job time
+ *
+ * `kind` lets the UI render videos as <video> instead of <img>.
+ */
 export interface CompletionPhoto {
   url: string;
-  label: 'before' | 'after' | 'photo';
+  label: 'before' | 'after' | 'photo' | 'extra';
   takenAt: string;
+  kind?: 'image' | 'video';
 }
 
 export interface GeoCoords {
@@ -30,7 +41,7 @@ export interface GeoCoords {
 
 export interface CompletionRecord {
   eventId: string;
-  eventType: 'job' | 'assessment' | 'other';
+  eventType: 'repair' | 'assessment' | 'callback' | 'other';
   eventSummary: string;
   phase: Phase;
   checkedInAt: string;

@@ -84,8 +84,8 @@ export async function submitBeforePhoto(_prev: ActionState | null, formData: For
 
   const existing = await getCompletion(eventId);
   if (!existing) return { ok: false, error: 'Not checked in yet.' };
-  if (existing.eventType !== 'job') {
-    return { ok: false, error: 'Before photo only applies to jobs.' };
+  if (existing.eventType !== 'repair') {
+    return { ok: false, error: 'Before photo only applies to repairs.' };
   }
   if (existing.phase === 'completed') {
     return { ok: false, error: 'Already completed.' };
@@ -128,9 +128,9 @@ export async function submitCompletion(_prev: ActionState | null, formData: Form
   if (!existing) return { ok: false, error: 'Not checked in yet.' };
   if (existing.phase === 'completed') return { ok: false, error: 'Already completed.' };
 
-  const isJob = existing.eventType === 'job';
+  const isRepair = existing.eventType === 'repair';
   let paymentStatus: PaymentStatus | undefined;
-  if (isJob) {
+  if (isRepair) {
     if (!ALLOWED_PAYMENT.includes(paymentRaw as PaymentStatus)) {
       return { ok: false, error: 'Please choose a payment status (Cash / Check / Card / Not Yet Paid).' };
     }
@@ -141,13 +141,13 @@ export async function submitCompletion(_prev: ActionState | null, formData: Form
     }
   }
 
-  // For jobs: run the payment branch BEFORE recording completion. If it
+  // For repairs: run the payment branch BEFORE recording completion. If it
   // fails (no invoice, ambiguity, card-unpaid, QB error), the completion
   // is NOT marked done — the tech sees the error and either retries or
   // escalates to Matt. After photo is already in Blob; harmless if orphaned.
   let linkedInvoiceId: string | undefined;
   let linkedPaymentId: string | null | undefined;
-  if (isJob && paymentStatus) {
+  if (isRepair && paymentStatus) {
     const evt = await loadEvent(eventId);
     if (!evt) {
       return { ok: false, error: `Could not reload calendar event ${eventId} to run payment branch.` };
@@ -162,14 +162,33 @@ export async function submitCompletion(_prev: ActionState | null, formData: Form
 
   const newPhoto: CompletionPhoto = {
     url: photoUrl,
-    label: isJob ? 'after' : 'photo',
+    label: isRepair ? 'after' : 'photo',
     takenAt: new Date().toISOString(),
   };
+
+  // Optional extras: any number of paired (url, kind) entries posted as
+  // extraUrl / extraKind. Each tech-uploaded item already lives in Blob;
+  // here we just attach its URL + kind onto the record.
+  const extraUrls = formData.getAll('extraUrl').map(String).filter(Boolean);
+  const extraKinds = formData.getAll('extraKind').map(String);
+  const nowIso = new Date().toISOString();
+  const extras: CompletionPhoto[] = extraUrls.map((url, i) => ({
+    url,
+    label: 'extra',
+    takenAt: nowIso,
+    kind: extraKinds[i] === 'video' ? 'video' : 'image',
+  }));
 
   const updated: CompletionRecord = {
     ...existing,
     phase: 'completed',
-    photos: [...existing.photos.filter((p) => p.label !== newPhoto.label), newPhoto],
+    photos: [
+      // Keep the Before photo on repairs; replace the main After/photo;
+      // drop and re-add extras (so re-submitting doesn't double them).
+      ...existing.photos.filter((p) => p.label !== newPhoto.label && p.label !== 'extra'),
+      newPhoto,
+      ...extras,
+    ],
     completedAt: new Date().toISOString(),
     paymentStatus,
     note,
