@@ -443,6 +443,111 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('listAccounts', () => {
+    it('queries for accounts of a given type, active only by default', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: {
+          Account: [
+            { Id: '17', Name: 'Business Checking', AccountType: 'Bank', Active: true, CurrentBalance: 127161 },
+          ],
+        },
+      }));
+
+      const accts = await client.listAccounts({ type: 'Bank' });
+
+      const url = decodeURIComponent(mockFetch.mock.calls[0][0] as string);
+      expect(url).toContain("AccountType = 'Bank'");
+      expect(url).toContain('Active = true');
+      expect(accts[0].Name).toBe('Business Checking');
+    });
+
+    it('omits the Active filter when activeOnly=false', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: { Account: [] } }));
+      await client.listAccounts({ type: 'Bank', activeOnly: false });
+      const url = decodeURIComponent(mockFetch.mock.calls[0][0] as string);
+      expect(url).not.toContain('Active = true');
+    });
+  });
+
+  describe('createDeposit', () => {
+    it('POSTs /deposit with one DepositLine per payment, each linked via LinkedTxn', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Deposit: {
+          Id: 'dep-1', SyncToken: '0', TotalAmt: 2050,
+          DepositToAccountRef: { value: '17' },
+          Line: [],
+        },
+      }));
+
+      const dep = await client.createDeposit({
+        depositToAccountId: '17',
+        payments: [
+          { paymentId: '2353', amount: 1175 },
+          { paymentId: '2350', amount: 875 },
+        ],
+      });
+
+      const [url, init] = mockFetch.mock.calls[0] as [string, { method: string; body: string }];
+      expect(url).toContain('/deposit');
+      expect(init.method).toBe('POST');
+      const body = JSON.parse(init.body);
+      expect(body.DepositToAccountRef).toEqual({ value: '17' });
+      expect(body.Line).toHaveLength(2);
+      expect(body.Line[0]).toMatchObject({
+        Amount: 1175,
+        DetailType: 'DepositLineDetail',
+        LinkedTxn: [{ TxnId: '2353', TxnType: 'Payment' }],
+      });
+      expect(body.Line[1]).toMatchObject({
+        Amount: 875,
+        LinkedTxn: [{ TxnId: '2350', TxnType: 'Payment' }],
+      });
+      expect(dep.Id).toBe('dep-1');
+    });
+
+    it('throws when called with no payments', async () => {
+      const client = makeClient();
+      await expect(
+        client.createDeposit({ depositToAccountId: '17', payments: [] })
+      ).rejects.toThrow(/at least one payment/);
+    });
+
+    it('includes TxnDate when provided', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Deposit: { Id: 'dep-2', SyncToken: '0', TotalAmt: 100, DepositToAccountRef: { value: '17' }, Line: [] },
+      }));
+      await client.createDeposit({
+        depositToAccountId: '17',
+        payments: [{ paymentId: 'p1', amount: 100 }],
+        txnDate: '2026-05-27',
+      });
+      const init = mockFetch.mock.calls[0][1] as { body: string };
+      expect(JSON.parse(init.body).TxnDate).toBe('2026-05-27');
+    });
+  });
+
+  describe('listRecentDeposits', () => {
+    it('queries Deposit table ordered by TxnDate', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: {
+          Deposit: [
+            { Id: 'd-1', SyncToken: '0', TotalAmt: 100, DepositToAccountRef: { value: '17' }, Line: [] },
+          ],
+        },
+      }));
+      const deps = await client.listRecentDeposits(50);
+      const url = decodeURIComponent(mockFetch.mock.calls[0][0] as string);
+      expect(url).toContain('SELECT * FROM Deposit');
+      expect(url).toContain('MAXRESULTS 50');
+      expect(deps).toHaveLength(1);
+    });
+  });
+
   describe('getPayment', () => {
     it('GETs /payment/{id} and returns the payment', async () => {
       const client = makeClient();

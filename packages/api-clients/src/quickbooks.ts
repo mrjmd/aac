@@ -136,10 +136,39 @@ export interface QBPayment {
   TotalAmt: number;
   CustomerRef: QBRef;
   PaymentMethodRef?: QBRef;
+  DepositToAccountRef?: QBRef;
+  /** "Reference #" the user typed at payment time — usually the check number for Check payments. */
+  PaymentRefNum?: string;
   Line?: Array<{
     Amount: number;
     LinkedTxn?: QBLinkedTxn[];
   }>;
+  MetaData?: { CreateTime?: string; LastUpdatedTime?: string };
+}
+
+export interface QBAccount {
+  Id: string;
+  Name: string;
+  AccountType: string;
+  AccountSubType?: string;
+  CurrentBalance?: number;
+  Active?: boolean;
+}
+
+export interface QBDepositLine {
+  Amount: number;
+  DetailType: 'DepositLineDetail';
+  DepositLineDetail?: Record<string, unknown>;
+  LinkedTxn?: QBLinkedTxn[];
+}
+
+export interface QBDeposit {
+  Id: string;
+  SyncToken: string;
+  TxnDate?: string;
+  TotalAmt: number;
+  DepositToAccountRef: QBRef;
+  Line: QBDepositLine[];
   MetaData?: { CreateTime?: string; LastUpdatedTime?: string };
 }
 
@@ -553,6 +582,86 @@ export class QuickBooksClient {
     });
 
     return result.Payment;
+  }
+
+  // ── Accounts ────────────────────────────────────────────────────────
+
+  /** List accounts of a given AccountType (e.g. 'Bank'). Active accounts only by default. */
+  async listAccounts(opts: { type?: string; activeOnly?: boolean } = {}): Promise<QBAccount[]> {
+    const where: string[] = [];
+    if (opts.type) where.push(`AccountType = '${opts.type.replace(/'/g, "\\'")}'`);
+    if (opts.activeOnly !== false) where.push(`Active = true`);
+    const sql =
+      `SELECT Id, Name, AccountType, AccountSubType, CurrentBalance, Active FROM Account` +
+      (where.length ? ` WHERE ${where.join(' AND ')}` : ``) +
+      ` MAXRESULTS 100`;
+    const result = await this.request<{ QueryResponse?: { Account?: QBAccount[] } }>(
+      `/query?query=${encodeURIComponent(sql)}&minorversion=70`
+    );
+    return result.QueryResponse?.Account ?? [];
+  }
+
+  // ── Deposits ────────────────────────────────────────────────────────
+
+  /**
+   * Create a QB Deposit that pulls one or more existing Payments out of
+   * Undeposited Funds and into a bank account. The total Amount of the
+   * Deposit lines must equal the sum of the linked Payments' totals.
+   *
+   * This is the "at the bank" workflow: Mike picks 3 cash and 2 check
+   * payments, app POSTs a single Deposit grouping them. After this runs,
+   * the QB bank-feed reconciliation will match this Deposit to one line on
+   * the bank statement.
+   */
+  async createDeposit(args: {
+    depositToAccountId: string;
+    payments: Array<{ paymentId: string; amount: number }>;
+    txnDate?: string;
+  }): Promise<QBDeposit> {
+    if (args.payments.length === 0) {
+      throw new Error('createDeposit requires at least one payment');
+    }
+    log.info('Creating QuickBooks deposit', {
+      depositToAccountId: args.depositToAccountId,
+      paymentCount: args.payments.length,
+      total: args.payments.reduce((s, p) => s + p.amount, 0),
+    });
+
+    const body: Record<string, unknown> = {
+      DepositToAccountRef: { value: args.depositToAccountId },
+      Line: args.payments.map((p) => ({
+        Amount: p.amount,
+        DetailType: 'DepositLineDetail',
+        DepositLineDetail: {},
+        LinkedTxn: [{ TxnId: p.paymentId, TxnType: 'Payment' as const }],
+      })),
+    };
+    if (args.txnDate) body.TxnDate = args.txnDate;
+
+    const result = await this.request<{ Deposit?: QBDeposit }>('/deposit', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    if (!result.Deposit) {
+      throw new Error('QuickBooks did not return deposit after creation');
+    }
+
+    log.info('Created QuickBooks deposit', {
+      depositId: result.Deposit.Id,
+      total: result.Deposit.TotalAmt,
+    });
+
+    return result.Deposit;
+  }
+
+  /** List recent deposits — used to figure out which Payments have already been deposited. */
+  async listRecentDeposits(maxResults = 200): Promise<QBDeposit[]> {
+    const sql = `SELECT * FROM Deposit ORDER BY TxnDate DESC MAXRESULTS ${Math.min(Math.max(1, maxResults), 1000)}`;
+    const result = await this.request<{ QueryResponse?: { Deposit?: QBDeposit[] } }>(
+      `/query?query=${encodeURIComponent(sql)}&minorversion=70`
+    );
+    return result.QueryResponse?.Deposit ?? [];
   }
 
   async getPayment(paymentId: string): Promise<QBPayment | null> {
