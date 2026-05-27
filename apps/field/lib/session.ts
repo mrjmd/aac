@@ -14,8 +14,9 @@ import 'server-only';
 import { cookies } from 'next/headers';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { getRedis } from './clients';
+import { SESSION_COOKIE_NAME } from './session-cookie';
 
-export const SESSION_COOKIE_NAME = 'field_session';
+export { SESSION_COOKIE_NAME, sessionCookieAttributes } from './session-cookie';
 
 export interface FieldSession {
   email: string;
@@ -95,13 +96,3 @@ export async function destroySession(): Promise<void> {
   }
 }
 
-/** Cookie attributes used when setting the session cookie. */
-export function sessionCookieAttributes() {
-  return {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax' as const,
-    path: '/',
-    maxAge: ttl.fieldSession,
-  };
-}

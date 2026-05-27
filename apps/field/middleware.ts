@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { SESSION_COOKIE_NAME } from '@/lib/session';
+import { SESSION_COOKIE_NAME } from '@/lib/session-cookie';
 
 /**
  * Edge middleware — gate every request behind a session cookie.
