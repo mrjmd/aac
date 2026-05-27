@@ -101,6 +101,15 @@ export const keys = {
 
   /** Cached Drive file metadata (owner, thumbnail) for calendar attachments */
   driveFileInfo: (fileId: string) => `drive:file-info:${fileId}` as const,
+
+  /** Session for the field app (opaque cookie ID → { email, name }) — renewed on each request */
+  fieldSession: (sessionId: string) => `field:session:${sessionId}` as const,
+
+  /** Per-user Google OAuth refresh tokens, keyed by lowercased email. Refresh tokens don't expire. */
+  fieldUserGoogleTokens: (email: string) => `field:google-tokens:${email.toLowerCase()}` as const,
+
+  /** Short-lived OAuth state nonce → return-to path, for CSRF protection during the OAuth round-trip */
+  fieldOAuthState: (state: string) => `field:oauth-state:${state}` as const,
 } as const;
 
 /**
@@ -114,4 +123,6 @@ export const ttl = {
   webhookCount: 172_800,     // 48 hours (keep yesterday + today)
   campaign: 7_776_000,       // 90 days
   attribution: 31_536_000,   // 1 year
+  fieldSession: 31_536_000,  // 1 year (renewed on activity — effectively forever)
+  fieldOAuthState: 600,      // 10 minutes (just long enough to complete the redirect)
 } as const;
