@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getCalendar } from '@/lib/clients';
 import { getCompletion } from '@/lib/completion';
-import { extractDriveFileId, driveThumbnailUrl } from '@/lib/drive';
+import { extractDriveFileId, getDriveInfos, thumbnailUrl } from '@/lib/drive';
+import { getEnv } from '@/lib/env';
 import { formatEventTime, formatDateDisplay } from '@/lib/dates';
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
 import CompletionChecklist from './completion-flow';
@@ -61,9 +62,30 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
   const type = classifyEvent(evt.colorId);
   const eventDateLabel = dateLabelFromISO(evt.start);
   const completion = await getCompletion(id);
+  const env = getEnv();
+
+  // Resolve calendar attachments → Drive metadata so we can filter out tech
+  // uploads (only show context photos Matt pre-attached) and use Drive's
+  // signed thumbnail URLs (which work on Mike's phone without him being
+  // logged into Matt's Google account).
   const imageAttachments = evt.attachments.filter(
     (a) => a.mimeType?.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(a.title),
   );
+  const fileIds = imageAttachments
+    .map((a) => extractDriveFileId(a.fileUrl))
+    .filter((id): id is string => !!id);
+  const infos = await getDriveInfos(fileIds);
+
+  const techEmails = new Set(env.technicianEmails);
+  const contextPhotos = imageAttachments
+    .map((a) => ({ attachment: a, info: infos.get(extractDriveFileId(a.fileUrl) || '') ?? null }))
+    .filter(({ info }) => {
+      // Drop anything we couldn't enrich, AND anything uploaded by a tech.
+      if (!info) return false;
+      const owner = info.ownerEmail?.toLowerCase() ?? '';
+      const editor = info.lastModifiedByEmail?.toLowerCase() ?? '';
+      return !techEmails.has(owner) && !techEmails.has(editor);
+    });
 
   return (
     <main className="min-h-dvh">
@@ -118,35 +140,33 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
           </DetailRow>
         )}
 
-        {imageAttachments.length > 0 && (
-          <DetailRow label={`Job context (${imageAttachments.length})`}>
+        {contextPhotos.length > 0 && (
+          <DetailRow label={`Job context (${contextPhotos.length})`}>
             <ul className="grid grid-cols-3 gap-2">
-              {imageAttachments.map((a) => {
-                const fid = extractDriveFileId(a.fileUrl);
-                const thumb = fid ? driveThumbnailUrl(fid, 400) : a.iconLink;
+              {contextPhotos.map(({ attachment, info }) => {
+                const thumb = info ? thumbnailUrl(info, 400) : undefined;
                 return (
-                  <li key={a.fileUrl}>
+                  <li key={attachment.fileUrl}>
                     <a
-                      href={a.fileUrl}
+                      href={attachment.fileUrl}
                       target="_blank"
                       rel="noreferrer"
                       className="block aspect-square rounded-md overflow-hidden bg-zinc-100 border border-zinc-200"
-                      title={a.title}
+                      title={attachment.title}
                     >
                       {thumb ? (
-                        // Plain <img>: avoids configuring next/image for
-                        // every Drive subdomain and gracefully degrades to
-                        // alt text if the thumbnail isn't accessible.
+                        // Plain <img>: googleusercontent.com is signed +
+                        // public, no next/image domain config needed.
                         <img
                           src={thumb}
-                          alt={a.title}
+                          alt={attachment.title}
                           className="w-full h-full object-cover"
                           loading="lazy"
                           referrerPolicy="no-referrer"
                         />
                       ) : (
                         <div className="flex items-center justify-center h-full text-xs text-zinc-500 px-2 text-center">
-                          {a.title}
+                          {attachment.title}
                         </div>
                       )}
                     </a>

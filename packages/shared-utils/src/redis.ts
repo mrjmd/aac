@@ -98,6 +98,9 @@ export const keys = {
 
   /** Completion record for a calendar event — written by apps/field when tech marks complete */
   fieldCompletion: (calendarEventId: string) => `field:completion:${calendarEventId}` as const,
+
+  /** Cached Drive file metadata (owner, thumbnail) for calendar attachments */
+  driveFileInfo: (fileId: string) => `drive:file-info:${fileId}` as const,
 } as const;
 
 /**

@@ -42,6 +42,9 @@ export type {
 export { GoogleAdsClient } from './google-ads.js';
 export type { GoogleAdsConfig } from './google-ads.js';
 
+export { GoogleDriveClient } from './google-drive.js';
+export type { GoogleDriveConfig, DriveFileInfo } from './google-drive.js';
+
 export { GoogleAnalyticsClient } from './google-analytics.js';
 export type { GoogleAnalyticsConfig } from './google-analytics.js';
 

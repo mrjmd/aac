@@ -7,10 +7,12 @@
  */
 
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import { Redis } from '@upstash/redis';
 import { getEnv } from './env';
 
 let _calendar: GoogleCalendarClient | null = null;
+let _drive: GoogleDriveClient | null = null;
 let _redis: Redis | null = null;
 
 export function getRedis(): Redis {
@@ -19,6 +21,20 @@ export function getRedis(): Redis {
     _redis = new Redis({ url: env.redis.url, token: env.redis.token });
   }
   return _redis;
+}
+
+export function getDrive(): GoogleDriveClient {
+  if (!_drive) {
+    const env = getEnv();
+    _drive = new GoogleDriveClient({
+      oauth: {
+        clientId: env.google.clientId,
+        clientSecret: env.google.clientSecret,
+        refreshToken: env.google.refreshToken,
+      },
+    });
+  }
+  return _drive;
 }
 
 export function getCalendar(): GoogleCalendarClient {

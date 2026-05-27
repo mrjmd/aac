@@ -265,13 +265,20 @@ export class QuoClient {
 
     if (current) {
       const currentDefaults = current.defaultFields || {};
+
+      // Quo returns phoneNumbers/emails with an internal `id` field on GET,
+      // but rejects the same id on PATCH with "Item with ID … does not match".
+      // Strip everything except value/name before echoing back.
+      const stripIds = <T extends { value?: string; name?: string }>(items: T[] | undefined) =>
+        (items || []).map(({ value, name }) => ({ value, name } as T));
+
       const mergedDefaults: Record<string, unknown> = {
         firstName: currentDefaults.firstName,
         lastName: currentDefaults.lastName,
         company: currentDefaults.company,
         role: currentDefaults.role,
-        phoneNumbers: currentDefaults.phoneNumbers || [],
-        emails: currentDefaults.emails || [],
+        phoneNumbers: stripIds(currentDefaults.phoneNumbers),
+        emails: stripIds(currentDefaults.emails),
       };
 
       if (updates.defaultFields) {

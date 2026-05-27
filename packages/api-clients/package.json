@@ -14,6 +14,7 @@
     "./gemini": "./dist/gemini.js",
     "./google-calendar": "./dist/google-calendar.js",
     "./google-ads": "./dist/google-ads.js",
+    "./google-drive": "./dist/google-drive.js",
     "./google-analytics": "./dist/google-analytics.js",
     "./google-search-console": "./dist/google-search-console.js"
   },
