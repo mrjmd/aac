@@ -3,7 +3,7 @@
 import { useActionState, useRef, useState, useTransition } from 'react';
 import { upload } from '@vercel/blob/client';
 import { checkIn, submitBeforePhoto, submitCompletion, type ActionState } from './actions';
-import type { CompletionRecord, Phase } from '@/lib/completion';
+import type { CompletionPhoto, CompletionRecord, PaymentStatus } from '@/lib/completion';
 import type { EventType } from '@/lib/event-classification';
 
 interface Props {
@@ -12,38 +12,232 @@ interface Props {
   completion: CompletionRecord | null;
 }
 
-export default function CompletionFlow({ eventId, eventType, completion }: Props) {
-  const phase: Phase | null = completion?.phase ?? null;
+/**
+ * Always-visible checklist of every step in the field flow. Each row shows
+ * one of three states:
+ *
+ *   pending — greyed placeholder, no interaction yet
+ *   current — expanded with the action UI (form / button)
+ *   done    — checkmark + summary (timestamp, photo thumb, payment label)
+ *
+ * Non-job events (assessments, callbacks) skip the Before-Photo row.
+ */
+export default function CompletionChecklist({ eventId, eventType, completion }: Props) {
+  const phase = completion?.phase ?? null;
+  const checkedIn = phase !== null;
+  const beforeTaken = phase === 'before_photo_taken' || phase === 'completed';
+  const completed = phase === 'completed';
+  const allDone = completed;
 
-  if (phase === null) {
-    return <CheckInStep eventId={eventId} />;
-  }
-  if (phase === 'checked_in' && eventType === 'job') {
-    return <BeforePhotoStep eventId={eventId} checkedInAt={completion!.checkedInAt} />;
-  }
-  if (phase === 'checked_in' || phase === 'before_photo_taken') {
-    return (
-      <CompleteStep
-        eventId={eventId}
-        eventType={eventType}
-        completion={completion!}
-      />
-    );
-  }
-  return null; // 'completed' is handled by the parent server component
+  // Row states
+  const checkInState: RowState = checkedIn ? 'done' : 'current';
+  const beforeState: RowState = beforeTaken ? 'done' : checkedIn ? 'current' : 'pending';
+  const completeState: RowState = (() => {
+    if (completed) return 'done';
+    if (eventType === 'job' && beforeTaken) return 'current';
+    if (eventType !== 'job' && checkedIn) return 'current';
+    return 'pending';
+  })();
+
+  return (
+    <div className="space-y-3">
+      {allDone && (
+        <div className="bg-emerald-100 border border-emerald-300 rounded-lg px-4 py-3 text-emerald-900 font-semibold text-center">
+          ✓ Job complete
+        </div>
+      )}
+
+      <StepRow number={1} state={checkInState} title="Check in" doneSummary={checkedIn ? `at ${formatTime(completion!.checkedInAt)}` : undefined}>
+        {checkInState === 'current' && <CheckInStep eventId={eventId} />}
+        {/* No expanded content for done — summary is in the row header */}
+      </StepRow>
+
+      {eventType === 'job' && (
+        <StepRow
+          number={2}
+          state={beforeState}
+          title="Before photo"
+          doneSummary={beforeTaken ? 'captured' : undefined}
+        >
+          {beforeState === 'current' && (
+            <PhotoUploadStep
+              eventId={eventId}
+              kind="before"
+              action={submitBeforePhoto}
+              autoSubmit
+            />
+          )}
+          {beforeState === 'done' && completion && <BeforeThumbnail completion={completion} />}
+        </StepRow>
+      )}
+
+      <StepRow
+        number={eventType === 'job' ? 3 : 2}
+        state={completeState}
+        title={eventType === 'job' ? 'Complete job' : 'Complete'}
+        doneSummary={completed ? `at ${formatTime(completion!.completedAt ?? completion!.checkedInAt)}` : undefined}
+      >
+        {completeState === 'current' && (
+          <PhotoUploadStep
+            eventId={eventId}
+            kind={eventType === 'job' ? 'after' : 'photo'}
+            action={submitCompletion}
+            submitLabel="Mark Complete"
+            pendingLabel="Submitting…"
+            renderExtras={eventType === 'job' ? <PaymentSection /> : null}
+            renderNoteField
+          />
+        )}
+        {completeState === 'done' && completion && <CompletedDetails completion={completion} />}
+      </StepRow>
+    </div>
+  );
 }
 
-// ─── Step 1: Check In ────────────────────────────────────────────────────
+// ─── Step row chrome ─────────────────────────────────────────────────────
+
+type RowState = 'pending' | 'current' | 'done';
+
+function StepRow({
+  number,
+  state,
+  title,
+  doneSummary,
+  children,
+}: {
+  number: number;
+  state: RowState;
+  title: string;
+  doneSummary?: string;
+  children?: React.ReactNode;
+}) {
+  const bg =
+    state === 'done' ? 'bg-emerald-50 border-emerald-200'
+    : state === 'pending' ? 'bg-zinc-50 border-zinc-200'
+    : 'bg-white border-zinc-300 shadow-sm';
+  const labelColor =
+    state === 'done' ? 'text-emerald-900'
+    : state === 'pending' ? 'text-zinc-400'
+    : 'text-zinc-900';
+
+  return (
+    <div className={`rounded-lg border p-4 ${bg}`}>
+      <div className="flex items-center gap-3">
+        <StepIcon number={number} state={state} />
+        <div className="flex-1">
+          <p className={`font-medium leading-tight ${labelColor}`}>{title}</p>
+          {doneSummary && (
+            <p className="text-xs text-emerald-700 mt-0.5">{doneSummary}</p>
+          )}
+        </div>
+      </div>
+      {children && (
+        <div className="mt-3">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StepIcon({ number, state }: { number: number; state: RowState }) {
+  if (state === 'done') {
+    return (
+      <span className="inline-flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-base font-bold">
+        ✓
+      </span>
+    );
+  }
+  if (state === 'pending') {
+    return (
+      <span className="inline-flex items-center justify-center size-7 rounded-full border-2 border-zinc-300 text-zinc-400 text-sm font-semibold">
+        {number}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center justify-center size-7 rounded-full bg-blue-600 text-white text-sm font-semibold">
+      {number}
+    </span>
+  );
+}
+
+// ─── Done-state sub-views ────────────────────────────────────────────────
+
+function BeforeThumbnail({ completion }: { completion: CompletionRecord }) {
+  const before = completion.photos.find((p) => p.label === 'before');
+  if (!before) return null;
+  return (
+    <a href={before.url} target="_blank" rel="noreferrer">
+      <img
+        src={before.url}
+        alt="Before"
+        className="size-24 object-cover rounded-md border border-emerald-200"
+      />
+    </a>
+  );
+}
+
+function CompletedDetails({ completion }: { completion: CompletionRecord }) {
+  const afterPhoto = completion.photos.find((p) => p.label === 'after' || p.label === 'photo');
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        {completion.photos.map((p) => (
+          <a key={p.url} href={p.url} target="_blank" rel="noreferrer">
+            <img
+              src={p.url}
+              alt={p.label}
+              className="size-20 object-cover rounded-md border border-emerald-200"
+            />
+          </a>
+        ))}
+      </div>
+      {completion.paymentStatus && (
+        <p className="text-sm text-emerald-900">
+          Payment: <span className="font-medium">{labelForPayment(completion.paymentStatus)}</span>
+        </p>
+      )}
+      {completion.checkInLocation && (
+        <p className="text-xs text-emerald-700">
+          <a
+            href={`https://www.google.com/maps?q=${completion.checkInLocation.latitude},${completion.checkInLocation.longitude}`}
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >
+            Check-in location on map
+          </a>{' '}
+          (±{Math.round(completion.checkInLocation.accuracy)}m)
+        </p>
+      )}
+      {completion.note && (
+        <p className="text-sm text-emerald-900 whitespace-pre-wrap italic">
+          “{completion.note}”
+        </p>
+      )}
+      {!afterPhoto && null /* afterPhoto unused — silences lint */}
+    </div>
+  );
+}
+
+function labelForPayment(s: PaymentStatus): string {
+  switch (s) {
+    case 'cash': return 'Cash';
+    case 'check': return 'Check';
+    case 'card': return 'Card';
+    case 'not_yet_paid': return 'Not Yet Paid (invoice sent)';
+  }
+}
+
+// ─── Current-step interactive widgets ────────────────────────────────────
 
 function CheckInStep({ eventId }: { eventId: string }) {
   const [state, formAction] = useActionState<ActionState | null, FormData>(checkIn, null);
   const [isPending, startTransition] = useTransition();
 
   async function handleCheckIn() {
-    // Capture a single GPS fix — best-effort, never blocks check-in.
-    // 5s timeout, accept cached fixes <60s old.
     const geo = await getGeolocationOnce({ timeoutMs: 5000, maxAgeMs: 60_000 });
-
     const fd = new FormData();
     fd.set('eventId', eventId);
     if (geo.ok) {
@@ -54,20 +248,16 @@ function CheckInStep({ eventId }: { eventId: string }) {
     } else {
       fd.set('geoError', geo.error);
     }
-
     startTransition(() => formAction(fd));
   }
 
   return (
-    <div className="space-y-3">
-      <p className="text-sm text-zinc-600">
-        Tap when you arrive at the job site.
-      </p>
+    <div className="space-y-2">
       <button
         type="button"
         onClick={handleCheckIn}
         disabled={isPending}
-        className="w-full py-4 rounded-lg bg-blue-600 text-white font-medium active:bg-blue-700 disabled:bg-zinc-300 disabled:text-zinc-600"
+        className="w-full py-3 rounded-lg bg-blue-600 text-white font-medium active:bg-blue-700 disabled:bg-zinc-300 disabled:text-zinc-600"
       >
         {isPending ? 'Checking in…' : 'Check In'}
       </button>
@@ -76,137 +266,11 @@ function CheckInStep({ eventId }: { eventId: string }) {
   );
 }
 
-type GeoResult =
-  | { ok: true; coords: { latitude: number; longitude: number; accuracy: number } }
-  | { ok: false; error: string };
-
-function getGeolocationOnce({ timeoutMs, maxAgeMs }: { timeoutMs: number; maxAgeMs: number }): Promise<GeoResult> {
-  return new Promise((resolve) => {
-    if (typeof window === 'undefined' || !navigator.geolocation) {
-      resolve({ ok: false, error: 'Geolocation API not available' });
-      return;
-    }
-    // Safety net: if neither callback fires within the timeout window, resolve
-    // anyway so check-in is never blocked.
-    const safetyTimer = setTimeout(() => {
-      resolve({ ok: false, error: 'Geolocation timed out (safety)' });
-    }, timeoutMs + 1000);
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        clearTimeout(safetyTimer);
-        resolve({
-          ok: true,
-          coords: {
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-            accuracy: pos.coords.accuracy,
-          },
-        });
-      },
-      (err) => {
-        clearTimeout(safetyTimer);
-        const reason =
-          err.code === err.PERMISSION_DENIED ? 'permission_denied'
-          : err.code === err.POSITION_UNAVAILABLE ? 'position_unavailable'
-          : err.code === err.TIMEOUT ? 'timeout'
-          : 'unknown';
-        resolve({ ok: false, error: reason });
-      },
-      { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: maxAgeMs },
-    );
-  });
-}
-
-// ─── Step 2: Before Photo (jobs only) ────────────────────────────────────
-
-function BeforePhotoStep({ eventId, checkedInAt }: { eventId: string; checkedInAt: string }) {
-  return (
-    <div className="space-y-3">
-      <CheckedInBanner checkedInAt={checkedInAt} />
-      <p className="text-sm text-zinc-800 font-medium">
-        Step 2 — Take the BEFORE photo before you start.
-      </p>
-      <PhotoUploadStep
-        eventId={eventId}
-        kind="before"
-        action={submitBeforePhoto}
-        autoSubmit
-      />
-    </div>
-  );
-}
-
-// ─── Step 3: Complete ────────────────────────────────────────────────────
-
-function CompleteStep({
-  eventId,
-  eventType,
-  completion,
-}: {
-  eventId: string;
-  eventType: EventType;
-  completion: CompletionRecord;
-}) {
-  return (
-    <div className="space-y-3">
-      <CheckedInBanner checkedInAt={completion.checkedInAt} />
-      {eventType === 'job' && (
-        <>
-          <BeforePhotoThumb photos={completion.photos} />
-          <p className="text-sm text-zinc-800 font-medium pt-2">
-            Step 3 — Finish up with the AFTER photo, payment, and any notes.
-          </p>
-        </>
-      )}
-      <PhotoUploadStep
-        eventId={eventId}
-        kind={eventType === 'job' ? 'after' : 'photo'}
-        action={submitCompletion}
-        submitLabel="Mark Complete"
-        pendingLabel="Submitting…"
-        renderExtras={eventType === 'job' ? <PaymentSection /> : null}
-        renderNoteField
-      />
-    </div>
-  );
-}
-
-// ─── Shared step UI ─────────────────────────────────────────────────────
-
-function CheckedInBanner({ checkedInAt }: { checkedInAt: string }) {
-  return (
-    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-sm text-emerald-900">
-      ✓ Checked in at {formatTime(checkedInAt)}
-    </div>
-  );
-}
-
-function BeforePhotoThumb({ photos }: { photos: CompletionRecord['photos'] }) {
-  const before = photos.find((p) => p.label === 'before');
-  if (!before) return null;
-  return (
-    <div className="flex items-center gap-3 text-sm">
-      <a href={before.url} target="_blank" rel="noreferrer" className="block">
-        {/* Plain <img> — keeps client bundle small for what's just a thumb */}
-        <img
-          src={before.url}
-          alt="Before"
-          className="size-20 object-cover rounded-md border border-zinc-300"
-        />
-      </a>
-      <span className="text-emerald-800">✓ Before photo captured</span>
-    </div>
-  );
-}
-
 interface PhotoUploadStepProps {
   eventId: string;
   kind: 'before' | 'after' | 'photo';
   action: (prev: ActionState | null, fd: FormData) => Promise<ActionState>;
-  /** If true, the form auto-submits as soon as the photo finishes uploading. */
   autoSubmit?: boolean;
-  /** Required when autoSubmit is false. */
   submitLabel?: string;
   pendingLabel?: string;
   renderExtras?: React.ReactNode;
@@ -224,7 +288,6 @@ function PhotoUploadStep({
   renderNoteField,
 }: PhotoUploadStepProps) {
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const formRef = useRef<HTMLFormElement | null>(null);
   const [localPreview, setLocalPreview] = useState<string | null>(null);
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -247,7 +310,6 @@ function PhotoUploadStep({
         handleUploadUrl: '/api/photo-upload',
       });
       setUploadedUrl(blob.url);
-
       if (autoSubmit) {
         const fd = new FormData();
         fd.set('eventId', eventId);
@@ -276,7 +338,7 @@ function PhotoUploadStep({
       : 'Take or Choose Photo';
 
   return (
-    <form ref={formRef} action={handleManualSubmit} className="space-y-4">
+    <form action={handleManualSubmit} className="space-y-3">
       <input
         ref={fileRef}
         type="file"
@@ -289,25 +351,20 @@ function PhotoUploadStep({
         type="button"
         onClick={() => fileRef.current?.click()}
         disabled={isUploading || isPending}
-        className="block w-full text-center py-4 px-4 rounded-lg bg-zinc-900 text-white font-medium active:bg-zinc-700 disabled:bg-zinc-400"
+        className="block w-full text-center py-3 px-4 rounded-lg bg-zinc-900 text-white font-medium active:bg-zinc-700 disabled:bg-zinc-400"
       >
         {pickerLabel}
       </button>
 
       {localPreview && (
-        // Plain <img>: object URL revokes naturally, no optimization needed.
         <img
           src={localPreview}
           alt="Selected"
-          className="w-full rounded-lg object-cover max-h-64 border border-zinc-200"
+          className="w-full rounded-lg object-cover max-h-56 border border-zinc-200"
         />
       )}
-      {uploadError && (
-        <p className="text-sm text-red-700">Upload failed: {uploadError}</p>
-      )}
-      {autoSubmit && isPending && (
-        <p className="text-sm text-zinc-500">Saving…</p>
-      )}
+      {uploadError && <p className="text-sm text-red-700">Upload failed: {uploadError}</p>}
+      {autoSubmit && isPending && <p className="text-sm text-zinc-500">Saving…</p>}
       {autoSubmit && uploadedUrl && !isPending && !state?.error && (
         <p className="text-sm text-emerald-700">✓ Saved — next step loading…</p>
       )}
@@ -333,7 +390,7 @@ function PhotoUploadStep({
         <button
           type="submit"
           disabled={!uploadedUrl || isUploading || isPending}
-          className="w-full py-4 rounded-lg bg-blue-600 text-white font-medium active:bg-blue-700 disabled:bg-zinc-300 disabled:text-zinc-600"
+          className="w-full py-3 rounded-lg bg-blue-600 text-white font-medium active:bg-blue-700 disabled:bg-zinc-300 disabled:text-zinc-600"
         >
           {isPending ? pendingLabel : submitLabel}
         </button>
@@ -387,5 +444,32 @@ function formatTime(iso: string): string {
     minute: '2-digit',
     hour12: true,
     timeZone: 'America/New_York',
+  });
+}
+
+function getGeolocationOnce({ timeoutMs, maxAgeMs }: { timeoutMs: number; maxAgeMs: number }):
+  Promise<{ ok: true; coords: { latitude: number; longitude: number; accuracy: number } } | { ok: false; error: string }> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || !navigator.geolocation) {
+      resolve({ ok: false, error: 'Geolocation API not available' });
+      return;
+    }
+    const safety = setTimeout(() => resolve({ ok: false, error: 'Geolocation timed out (safety)' }), timeoutMs + 1000);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        clearTimeout(safety);
+        resolve({ ok: true, coords: { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy } });
+      },
+      (err) => {
+        clearTimeout(safety);
+        const reason =
+          err.code === err.PERMISSION_DENIED ? 'permission_denied'
+          : err.code === err.POSITION_UNAVAILABLE ? 'position_unavailable'
+          : err.code === err.TIMEOUT ? 'timeout'
+          : 'unknown';
+        resolve({ ok: false, error: reason });
+      },
+      { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: maxAgeMs },
+    );
   });
 }

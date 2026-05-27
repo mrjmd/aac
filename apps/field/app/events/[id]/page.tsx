@@ -1,11 +1,11 @@
-import Image from 'next/image';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getCalendar } from '@/lib/clients';
 import { getCompletion } from '@/lib/completion';
+import { extractDriveFileId, driveThumbnailUrl } from '@/lib/drive';
 import { formatEventTime, formatDateDisplay } from '@/lib/dates';
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
-import CompletionFlow from './completion-flow';
+import CompletionChecklist from './completion-flow';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +15,6 @@ interface Props {
 }
 
 function dateLabelFromISO(iso: string): string {
-  // Take the date portion in ET (event.start is full ISO with offset)
   const d = new Date(iso);
   const y = d.toLocaleString('en-CA', { year: 'numeric', timeZone: 'America/New_York' });
   const m = d.toLocaleString('en-CA', { month: '2-digit', timeZone: 'America/New_York' });
@@ -62,6 +61,9 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
   const type = classifyEvent(evt.colorId);
   const eventDateLabel = dateLabelFromISO(evt.start);
   const completion = await getCompletion(id);
+  const imageAttachments = evt.attachments.filter(
+    (a) => a.mimeType?.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(a.title),
+  );
 
   return (
     <main className="min-h-dvh">
@@ -90,7 +92,6 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
           <p className="text-base text-zinc-700">
             {formatDateDisplay(eventDateLabel)} · {formatEventTime(evt.start)}
             {evt.end && (() => {
-              // Show end time if different from start
               const startTime = formatEventTime(evt.start);
               const endTime = formatEventTime(evt.end);
               return endTime !== startTime ? ` – ${endTime}` : '';
@@ -111,133 +112,65 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
           </DetailRow>
         )}
 
-        {evt.attendees.length > 0 && (
-          <DetailRow label="Attendees">
-            <ul className="space-y-1">
-              {evt.attendees.map((a) => (
-                <li key={a} className="text-zinc-700 break-all">{a}</li>
-              ))}
-            </ul>
-          </DetailRow>
-        )}
-
         {evt.description && (
           <DetailRow label="Notes">
             <p className="text-zinc-700 whitespace-pre-wrap text-sm">{evt.description}</p>
           </DetailRow>
         )}
 
+        {imageAttachments.length > 0 && (
+          <DetailRow label={`Job context (${imageAttachments.length})`}>
+            <ul className="grid grid-cols-3 gap-2">
+              {imageAttachments.map((a) => {
+                const fid = extractDriveFileId(a.fileUrl);
+                const thumb = fid ? driveThumbnailUrl(fid, 400) : a.iconLink;
+                return (
+                  <li key={a.fileUrl}>
+                    <a
+                      href={a.fileUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block aspect-square rounded-md overflow-hidden bg-zinc-100 border border-zinc-200"
+                      title={a.title}
+                    >
+                      {thumb ? (
+                        // Plain <img>: avoids configuring next/image for
+                        // every Drive subdomain and gracefully degrades to
+                        // alt text if the thumbnail isn't accessible.
+                        <img
+                          src={thumb}
+                          alt={a.title}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="flex items-center justify-center h-full text-xs text-zinc-500 px-2 text-center">
+                          {a.title}
+                        </div>
+                      )}
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="text-xs text-zinc-500 mt-2">Tap a thumbnail to view in Drive.</p>
+          </DetailRow>
+        )}
+
         <div className="pt-2 border-t border-zinc-200">
           <h2 className="text-lg font-semibold mb-3 mt-4">
             {completion?.phase === 'completed'
-              ? 'Completed'
+              ? 'Done'
               : completion === null
                 ? `Start this ${labelForType(type).toLowerCase()}`
                 : `Continue this ${labelForType(type).toLowerCase()}`}
           </h2>
-          {completion?.phase === 'completed' ? (
-            <CompletedView completion={completion} />
-          ) : (
-            <CompletionFlow eventId={id} eventType={type} completion={completion} />
-          )}
+          <CompletionChecklist eventId={id} eventType={type} completion={completion} />
         </div>
       </section>
     </main>
   );
-}
-
-function CompletedView({
-  completion,
-}: {
-  completion: NonNullable<Awaited<ReturnType<typeof getCompletion>>>;
-}) {
-  const completedAt = new Date(completion.completedAt ?? completion.checkedInAt);
-  const completedAtFmt = completedAt.toLocaleString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-    timeZone: 'America/New_York',
-  });
-  return (
-    <div className="space-y-4 mt-4">
-      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-        <p className="font-semibold text-emerald-900">✓ Completed</p>
-        <p className="text-sm text-emerald-800 mt-1">{completedAtFmt}</p>
-        {completion.paymentStatus && (
-          <p className="text-sm text-emerald-800 mt-1">
-            Payment: <span className="font-medium">{labelForPayment(completion.paymentStatus)}</span>
-          </p>
-        )}
-        {completion.checkInLocation && (
-          <p className="text-sm text-emerald-800 mt-1">
-            Check-in location:{' '}
-            <a
-              href={`https://www.google.com/maps?q=${completion.checkInLocation.latitude},${completion.checkInLocation.longitude}`}
-              target="_blank"
-              rel="noreferrer"
-              className="underline"
-            >
-              view on map
-            </a>{' '}
-            <span className="text-xs text-emerald-700">
-              (±{Math.round(completion.checkInLocation.accuracy)}m)
-            </span>
-          </p>
-        )}
-        {!completion.checkInLocation && completion.checkInLocationError && (
-          <p className="text-xs text-emerald-700 mt-1">
-            GPS unavailable at check-in ({completion.checkInLocationError})
-          </p>
-        )}
-        {completion.note && (
-          <p className="text-sm text-emerald-900 mt-2 whitespace-pre-wrap">
-            “{completion.note}”
-          </p>
-        )}
-      </div>
-
-      {completion.photos.length > 0 && (
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 mb-2">Photos</p>
-          <div className="grid grid-cols-2 gap-2">
-            {completion.photos.map((p) => (
-              <a
-                key={p.url}
-                href={p.url}
-                target="_blank"
-                rel="noreferrer"
-                className="block bg-zinc-100 rounded-lg overflow-hidden aspect-square relative"
-              >
-                <Image
-                  src={p.url}
-                  alt={p.label}
-                  fill
-                  sizes="(max-width: 640px) 50vw, 240px"
-                  className="object-cover"
-                />
-                <span className="absolute bottom-1 left-1 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded">
-                  {p.label}
-                </span>
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function labelForPayment(s: string): string {
-  switch (s) {
-    case 'cash': return 'Cash';
-    case 'check': return 'Check';
-    case 'card': return 'Card';
-    case 'not_yet_paid': return 'Not Yet Paid (invoice sent)';
-    default: return s;
-  }
 }
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {

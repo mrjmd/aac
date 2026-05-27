@@ -9,7 +9,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "deploy": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_URMxWdQ7HXIjBpjWo1vTB4jCqh7z vercel deploy --prod --yes",
-    "deploy:preview": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_URMxWdQ7HXIjBpjWo1vTB4jCqh7z vercel deploy --yes"
+    "deploy:preview": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_URMxWdQ7HXIjBpjWo1vTB4jCqh7z vercel deploy --yes",
+    "deploy:fresh": "bash scripts/deploy-fresh.sh"
   },
   "dependencies": {
     "@aac/api-clients": "workspace:*",
@@ -30,6 +31,7 @@
     "@types/react-dom": "^19",
     "postcss": "^8",
     "tailwindcss": "^4",
+    "tsx": "^4.19.2",
     "typescript": "^5.8"
   }
 }

@@ -41,7 +41,16 @@ export interface CalendarEvent {
   colorId?: string;
   attendees: string[];
   htmlLink: string;
-  attachments: Array<{ fileUrl: string; title: string }>;
+  attachments: Array<{
+    fileUrl: string;
+    title: string;
+    /** MIME type from Drive (e.g. 'image/jpeg', 'application/pdf'). */
+    mimeType?: string;
+    /** Google-supplied icon URL for the file type. */
+    iconLink?: string;
+    /** Drive file ID — useful for constructing thumbnail URLs. */
+    fileId?: string;
+  }>;
 }
 
 export interface ListEventsOptions {
@@ -133,6 +142,9 @@ export class GoogleCalendarClient {
       attachments: (event.attachments || []).map((a) => ({
         fileUrl: a.fileUrl || '',
         title: a.title || '',
+        mimeType: a.mimeType || undefined,
+        iconLink: a.iconLink || undefined,
+        fileId: a.fileId || undefined,
       })),
     };
   }
