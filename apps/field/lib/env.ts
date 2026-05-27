@@ -56,7 +56,10 @@ export interface EnvConfig {
 }
 
 function requireEnv(key: string): string {
-  const value = process.env[key];
+  // Trim whitespace defensively — `echo ... | vercel env add` quietly
+  // includes a trailing newline that breaks string-match calls (Google
+  // OAuth returned 401 invalid_client until this was added).
+  const value = process.env[key]?.trim();
   if (!value) {
     throw new Error(`Missing required environment variable: ${key}`);
   }
