@@ -8,11 +8,17 @@
 
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { GoogleDriveClient } from '@aac/api-clients/google-drive';
+import { PipedriveClient } from '@aac/api-clients/pipedrive';
+import { QuickBooksClient } from '@aac/api-clients/quickbooks';
+import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import { Redis } from '@upstash/redis';
+import { keys } from '@aac/shared-utils/redis';
 import { getEnv } from './env';
 
 let _calendar: GoogleCalendarClient | null = null;
 let _drive: GoogleDriveClient | null = null;
+let _pipedrive: PipedriveClient | null = null;
+let _quickbooks: QuickBooksClient | null = null;
 let _redis: Redis | null = null;
 
 export function getRedis(): Redis {
@@ -35,6 +41,43 @@ export function getDrive(): GoogleDriveClient {
     });
   }
   return _drive;
+}
+
+export function getPipedrive(): PipedriveClient {
+  if (!_pipedrive) {
+    const env = getEnv();
+    _pipedrive = new PipedriveClient({
+      apiKey: env.pipedrive.apiKey,
+      companyDomain: env.pipedrive.companyDomain,
+    });
+  }
+  return _pipedrive;
+}
+
+export function getQuickBooks(): QuickBooksClient {
+  if (!_quickbooks) {
+    const env = getEnv();
+    _quickbooks = new QuickBooksClient({
+      clientId: env.quickbooks.clientId,
+      clientSecret: env.quickbooks.clientSecret,
+      realmId: env.quickbooks.realmId,
+      // OAuth connect flow is owned by middleware; field never initiates it.
+      redirectUri: '',
+      getTokens: getQBTokens,
+      saveTokens: storeQBTokens,
+    });
+  }
+  return _quickbooks;
+}
+
+// ── QuickBooks token storage (shared with middleware) ─────────────────
+
+async function getQBTokens(): Promise<QBOAuthTokens | null> {
+  return (await getRedis().get<QBOAuthTokens>(keys.qbOAuthTokens)) ?? null;
+}
+
+async function storeQBTokens(tokens: QBOAuthTokens): Promise<void> {
+  await getRedis().set(keys.qbOAuthTokens, tokens);
 }
 
 export function getCalendar(): GoogleCalendarClient {

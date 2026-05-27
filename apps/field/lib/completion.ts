@@ -48,6 +48,10 @@ export interface CompletionRecord {
   completedAt?: string;
   paymentStatus?: PaymentStatus;
   note?: string;
+  /** QB Invoice the payment branch acted on (all branches set this on success). */
+  linkedInvoiceId?: string;
+  /** QB Payment ID created by Cash/Check branch (null for Card / Not Yet Paid). */
+  linkedPaymentId?: string | null;
 }
 
 export async function getCompletion(eventId: string): Promise<CompletionRecord | null> {

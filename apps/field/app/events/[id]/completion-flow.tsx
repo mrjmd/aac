@@ -196,6 +196,12 @@ function CompletedDetails({ completion }: { completion: CompletionRecord }) {
       {completion.paymentStatus && (
         <p className="text-sm text-emerald-900">
           Payment: <span className="font-medium">{labelForPayment(completion.paymentStatus)}</span>
+          {completion.linkedInvoiceId && (
+            <span className="text-xs text-emerald-700">
+              {' '}· QB Invoice {completion.linkedInvoiceId}
+              {completion.linkedPaymentId && ` · Payment ${completion.linkedPaymentId}`}
+            </span>
+          )}
         </p>
       )}
       {completion.checkInLocation && (

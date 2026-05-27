@@ -122,6 +122,27 @@ export interface QBInvoice {
   MetaData?: { CreateTime?: string; LastUpdatedTime?: string };
 }
 
+export interface QBPaymentMethod {
+  Id: string;
+  Name: string;
+  Type?: 'CREDIT_CARD' | 'NON_CREDIT_CARD';
+  Active?: boolean;
+}
+
+export interface QBPayment {
+  Id: string;
+  SyncToken: string;
+  TxnDate?: string;
+  TotalAmt: number;
+  CustomerRef: QBRef;
+  PaymentMethodRef?: QBRef;
+  Line?: Array<{
+    Amount: number;
+    LinkedTxn?: QBLinkedTxn[];
+  }>;
+  MetaData?: { CreateTime?: string; LastUpdatedTime?: string };
+}
+
 // ── Client ───────────────────────────────────────────────────────────
 
 export class QuickBooksClient {
@@ -446,6 +467,84 @@ export class QuickBooksClient {
 
     log.info('Sent invoice', { invoiceId, emailStatus: result.Invoice.EmailStatus });
     return result.Invoice;
+  }
+
+  async getInvoice(invoiceId: string): Promise<QBInvoice | null> {
+    try {
+      const result = await this.request<{ Invoice?: QBInvoice }>(
+        `/invoice/${encodeURIComponent(invoiceId)}`
+      );
+      return result.Invoice || null;
+    } catch (error) {
+      log.error('Get invoice failed', error as Error, { invoiceId });
+      return null;
+    }
+  }
+
+  // ── Payments ────────────────────────────────────────────────────────
+
+  /**
+   * QuickBooks PaymentMethod entity (e.g. Cash, Check, Credit Card).
+   * IDs are realm-specific — must be looked up at runtime via listPaymentMethods().
+   */
+  async listPaymentMethods(): Promise<QBPaymentMethod[]> {
+    const sql = `SELECT * FROM PaymentMethod MAXRESULTS 100`;
+    const result = await this.request<{ QueryResponse?: { PaymentMethod?: QBPaymentMethod[] } }>(
+      `/query?query=${encodeURIComponent(sql)}&minorversion=70`
+    );
+    return result.QueryResponse?.PaymentMethod ?? [];
+  }
+
+  /**
+   * Create a QB Payment that fully pays a single invoice.
+   *
+   * The amount is the invoice's outstanding Balance (caller should pass the
+   * value they intend to apply). PaymentMethodRef is required — QBO records
+   * it for reporting; pick by name via listPaymentMethods().
+   */
+  async createPaymentForInvoice(args: {
+    invoiceId: string;
+    customerId: string;
+    amount: number;
+    paymentMethodId: string;
+    /** Optional ISO date for the payment (defaults to today). */
+    txnDate?: string;
+  }): Promise<QBPayment> {
+    log.info('Creating QuickBooks payment', {
+      invoiceId: args.invoiceId,
+      amount: args.amount,
+      paymentMethodId: args.paymentMethodId,
+    });
+
+    const body: Record<string, unknown> = {
+      TotalAmt: args.amount,
+      CustomerRef: { value: args.customerId },
+      PaymentMethodRef: { value: args.paymentMethodId },
+      Line: [
+        {
+          Amount: args.amount,
+          LinkedTxn: [{ TxnId: args.invoiceId, TxnType: 'Invoice' }],
+        },
+      ],
+    };
+    if (args.txnDate) body.TxnDate = args.txnDate;
+
+    const result = await this.request<{ Payment?: QBPayment }>('/payment', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    if (!result.Payment) {
+      throw new Error('QuickBooks did not return payment after creation');
+    }
+
+    log.info('Created QuickBooks payment', {
+      paymentId: result.Payment.Id,
+      invoiceId: args.invoiceId,
+      amount: args.amount,
+    });
+
+    return result.Payment;
   }
 
   async isConnected(): Promise<boolean> {

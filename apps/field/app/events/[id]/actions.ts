@@ -10,6 +10,7 @@ import {
   type PaymentStatus,
 } from '@/lib/completion';
 import { classifyEvent } from '@/lib/event-classification';
+import { executePaymentBranch } from '@/lib/payment-branches';
 
 export interface ActionState {
   ok: boolean;
@@ -132,6 +133,25 @@ export async function submitCompletion(_prev: ActionState | null, formData: Form
     }
   }
 
+  // For jobs: run the payment branch BEFORE recording completion. If it
+  // fails (no invoice, ambiguity, card-unpaid, QB error), the completion
+  // is NOT marked done — the tech sees the error and either retries or
+  // escalates to Matt. After photo is already in Blob; harmless if orphaned.
+  let linkedInvoiceId: string | undefined;
+  let linkedPaymentId: string | null | undefined;
+  if (isJob && paymentStatus) {
+    const evt = await loadEvent(eventId);
+    if (!evt) {
+      return { ok: false, error: `Could not reload calendar event ${eventId} to run payment branch.` };
+    }
+    const outcome = await executePaymentBranch(evt, paymentStatus);
+    if (!outcome.ok) {
+      return { ok: false, error: outcome.error };
+    }
+    linkedInvoiceId = outcome.invoiceId;
+    linkedPaymentId = outcome.paymentId;
+  }
+
   const newPhoto: CompletionPhoto = {
     url: photoUrl,
     label: isJob ? 'after' : 'photo',
@@ -145,6 +165,8 @@ export async function submitCompletion(_prev: ActionState | null, formData: Form
     completedAt: new Date().toISOString(),
     paymentStatus,
     note,
+    linkedInvoiceId,
+    linkedPaymentId,
   };
   await setCompletion(updated);
   revalidatePath(`/events/${eventId}`);

@@ -330,6 +330,116 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('getInvoice', () => {
+    it('GETs /invoice/{id} and returns the invoice', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Invoice: { Id: 'inv-7', SyncToken: '1', CustomerRef: { value: 'c-1' }, Line: [], Balance: 0 },
+      }));
+
+      const inv = await client.getInvoice('inv-7');
+
+      const url = mockFetch.mock.calls[0][0] as string;
+      expect(url).toContain('/invoice/inv-7');
+      expect(inv?.Id).toBe('inv-7');
+      expect(inv?.Balance).toBe(0);
+    });
+
+    it('returns null on error (404, network)', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ Fault: { type: 'not_found' } }, 404));
+      const inv = await client.getInvoice('missing');
+      expect(inv).toBeNull();
+    });
+  });
+
+  describe('listPaymentMethods', () => {
+    it('queries the PaymentMethod entity', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: {
+          PaymentMethod: [
+            { Id: '1', Name: 'Cash', Type: 'NON_CREDIT_CARD', Active: true },
+            { Id: '2', Name: 'Check', Type: 'NON_CREDIT_CARD', Active: true },
+            { Id: '3', Name: 'Credit Card', Type: 'CREDIT_CARD', Active: true },
+          ],
+        },
+      }));
+
+      const methods = await client.listPaymentMethods();
+
+      const url = mockFetch.mock.calls[0][0] as string;
+      expect(decodeURIComponent(url)).toContain('SELECT * FROM PaymentMethod');
+      expect(methods.map((m) => m.Name)).toEqual(['Cash', 'Check', 'Credit Card']);
+    });
+  });
+
+  describe('createPaymentForInvoice', () => {
+    it('POSTs /payment with the right body shape', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Payment: { Id: 'pay-1', SyncToken: '0', TotalAmt: 1500, CustomerRef: { value: 'c-1' } },
+      }));
+
+      const payment = await client.createPaymentForInvoice({
+        invoiceId: 'inv-7',
+        customerId: 'c-1',
+        amount: 1500,
+        paymentMethodId: '2',
+      });
+
+      const [url, init] = mockFetch.mock.calls[0] as [string, { method: string; body: string }];
+      expect(url).toContain('/payment');
+      expect(init.method).toBe('POST');
+      const body = JSON.parse(init.body);
+      expect(body).toMatchObject({
+        TotalAmt: 1500,
+        CustomerRef: { value: 'c-1' },
+        PaymentMethodRef: { value: '2' },
+        Line: [
+          {
+            Amount: 1500,
+            LinkedTxn: [{ TxnId: 'inv-7', TxnType: 'Invoice' }],
+          },
+        ],
+      });
+      expect(body.TxnDate).toBeUndefined();
+      expect(payment.Id).toBe('pay-1');
+    });
+
+    it('includes TxnDate when provided', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Payment: { Id: 'pay-2', SyncToken: '0', TotalAmt: 800, CustomerRef: { value: 'c-1' } },
+      }));
+
+      await client.createPaymentForInvoice({
+        invoiceId: 'inv-9',
+        customerId: 'c-1',
+        amount: 800,
+        paymentMethodId: '1',
+        txnDate: '2026-05-26',
+      });
+
+      const init = mockFetch.mock.calls[0][1] as { body: string };
+      const body = JSON.parse(init.body);
+      expect(body.TxnDate).toBe('2026-05-26');
+    });
+
+    it('throws if QuickBooks omits the Payment field', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ Fault: { type: 'validation' } }));
+      await expect(
+        client.createPaymentForInvoice({
+          invoiceId: 'inv-7',
+          customerId: 'c-1',
+          amount: 100,
+          paymentMethodId: '1',
+        })
+      ).rejects.toThrow(/did not return payment/);
+    });
+  });
+
   describe('report', () => {
     it('builds report URL with params and minor version', async () => {
       const client = makeClient();
