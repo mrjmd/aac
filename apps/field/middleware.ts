@@ -12,6 +12,10 @@ import { SESSION_COOKIE_NAME } from '@/lib/session';
  * longer exists in Redis, those will treat the user as logged-out.
  */
 export function middleware(req: NextRequest) {
+  // Preview-mode short-circuit: when FIELD_AUTH_BYPASS_EMAIL is set, every
+  // request passes through. Removed by deleting the env var on Vercel.
+  if (process.env.FIELD_AUTH_BYPASS_EMAIL) return NextResponse.next();
+
   const hasCookie = !!req.cookies.get(SESSION_COOKIE_NAME)?.value;
   if (hasCookie) return NextResponse.next();
 

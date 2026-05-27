@@ -48,8 +48,22 @@ export async function createSession(profile: {
  * Look up the current session from the cookie, if any. Renews TTL on hit so
  * an active user effectively never logs out. Returns null when no cookie,
  * no Redis entry, or the entry has expired.
+ *
+ * Preview short-circuit: when FIELD_AUTH_BYPASS_EMAIL is set, returns a
+ * synthetic session with that email. No cookie or Redis lookup happens.
  */
 export async function getCurrentSession(): Promise<FieldSession | null> {
+  const bypass = process.env.FIELD_AUTH_BYPASS_EMAIL?.trim().toLowerCase();
+  if (bypass) {
+    const now = new Date().toISOString();
+    return {
+      email: bypass,
+      name: 'Preview Mode',
+      createdAt: now,
+      lastUsedAt: now,
+    };
+  }
+
   const jar = await cookies();
   const id = jar.get(SESSION_COOKIE_NAME)?.value;
   if (!id) return null;

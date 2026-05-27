@@ -1,3 +1,5 @@
+import { redirect } from 'next/navigation';
+
 export const dynamic = 'force-dynamic';
 
 interface SearchParams {
@@ -10,6 +12,9 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
+  // Preview mode skips login entirely — bounce straight in.
+  if (process.env.FIELD_AUTH_BYPASS_EMAIL) redirect('/');
+
   const { next, error } = await searchParams;
   const safeNext = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
   const signInHref = `/auth/google?next=${encodeURIComponent(safeNext)}`;

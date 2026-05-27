@@ -17,10 +17,21 @@ export interface EnvConfig {
    * Lives alongside the shared `google.*` credentials because the existing
    * monorepo OAuth client is a Desktop-type credential (no web redirect URIs
    * allowed). The field app needs a Web-application client.
+   *
+   * May be empty strings when {@link auth.bypassEmail} is set — in that case
+   * the OAuth flow is never reached, so unconfigured credentials are OK.
    */
   fieldOAuth: {
     clientId: string;
     clientSecret: string;
+  };
+  auth: {
+    /**
+     * If set, auth is bypassed and every request is treated as the given
+     * email. Used for previewing the UI before OAuth is fully wired in
+     * Google Cloud Console. Remove the env var to re-enable real auth.
+     */
+    bypassEmail?: string;
   };
   pipedrive: {
     apiKey: string;
@@ -57,6 +68,8 @@ let cached: EnvConfig | null = null;
 export function getEnv(): EnvConfig {
   if (cached) return cached;
 
+  const bypassEmail = process.env.FIELD_AUTH_BYPASS_EMAIL?.trim().toLowerCase() || undefined;
+
   cached = {
     google: {
       clientId: requireEnv('GOOGLE_CLIENT_ID'),
@@ -64,10 +77,18 @@ export function getEnv(): EnvConfig {
       refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
       calendarId: process.env.GOOGLE_CALENDAR_ID || 'matt@attackacrack.com',
     },
-    fieldOAuth: {
-      clientId: requireEnv('FIELD_GOOGLE_OAUTH_CLIENT_ID'),
-      clientSecret: requireEnv('FIELD_GOOGLE_OAUTH_CLIENT_SECRET'),
-    },
+    // OAuth credentials are only required when auth isn't bypassed; in bypass
+    // mode we never run the OAuth flow so missing values are tolerated.
+    fieldOAuth: bypassEmail
+      ? {
+          clientId: process.env.FIELD_GOOGLE_OAUTH_CLIENT_ID || '',
+          clientSecret: process.env.FIELD_GOOGLE_OAUTH_CLIENT_SECRET || '',
+        }
+      : {
+          clientId: requireEnv('FIELD_GOOGLE_OAUTH_CLIENT_ID'),
+          clientSecret: requireEnv('FIELD_GOOGLE_OAUTH_CLIENT_SECRET'),
+        },
+    auth: { bypassEmail },
     pipedrive: {
       apiKey: requireEnv('PIPEDRIVE_API_KEY'),
       companyDomain: requireEnv('PIPEDRIVE_COMPANY_DOMAIN'),

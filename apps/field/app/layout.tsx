@@ -27,9 +27,15 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const bypass = process.env.FIELD_AUTH_BYPASS_EMAIL;
   return (
     <html lang="en">
       <body>
+        {bypass ? (
+          <div className="bg-aac-yellow text-aac-dark px-4 py-1.5 text-center text-xs font-semibold">
+            ⚠️ PREVIEW MODE — auth bypassed; acting as {bypass}
+          </div>
+        ) : null}
         <LocationPermissionPrimer />
         <SessionHeader />
         {children}
