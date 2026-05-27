@@ -3,7 +3,34 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", ".astro/**"]
+      "outputs": ["dist/**", ".next/**", ".astro/**"],
+      "env": [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REFRESH_TOKEN",
+        "GOOGLE_CALENDAR_ID",
+        "GOOGLE_ADS_WEBHOOK_KEY",
+        "GEMINI_API_KEY",
+        "PIPEDRIVE_API_KEY",
+        "PIPEDRIVE_COMPANY_DOMAIN",
+        "PIPEDRIVE_SYSTEM_USER_ID",
+        "QUO_API_KEY",
+        "QUO_PHONE_NUMBER",
+        "QUO_WEBHOOK_SECRET",
+        "QUICKBOOKS_CLIENT_ID",
+        "QUICKBOOKS_CLIENT_SECRET",
+        "QUICKBOOKS_REALM_ID",
+        "QUICKBOOKS_REDIRECT_URI",
+        "UPSTASH_REDIS_REST_TOKEN",
+        "UPSTASH_REDIS_REST_URL",
+        "ALERT_PHONE_NUMBER",
+        "CRON_SECRET",
+        "TECHNICIAN_EMAILS",
+        "AUTH_WHITELIST_EMAILS",
+        "BLOB_READ_WRITE_TOKEN",
+        "RESEND_API_KEY",
+        "SESSION_SECRET"
+      ]
     },
     "test": {
       "dependsOn": ["^build"],

@@ -92,11 +92,14 @@ monorepo issues (where Vercel can't auto-detect parent files when linked from
 a subdirectory).
 
 ```bash
-pnpm --filter @aac/field      deploy            # prod
-pnpm --filter @aac/field      deploy:preview    # preview URL, no prod impact
-pnpm --filter @aac/middleware deploy            # prod
-pnpm --filter @aac/marketing  deploy            # prod
+pnpm --filter @aac/field      run deploy            # prod
+pnpm --filter @aac/field      run deploy:preview    # preview URL, no prod impact
+pnpm --filter @aac/middleware run deploy            # prod
+pnpm --filter @aac/marketing  run deploy            # prod
 ```
+
+**Important:** use `run deploy` (not just `deploy`) — `pnpm deploy` is a
+built-in pnpm subcommand that does something else entirely.
 
 There are **no `.vercel/` link directories committed anywhere** — they are
 git-ignored at the root. Each app's project ID lives in its `package.json`

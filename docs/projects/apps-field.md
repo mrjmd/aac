@@ -37,6 +37,28 @@ The field app produces:
 7. Backend processes per payment branch (below)
 8. Mike sees confirmation, returns to today's list
 
+## Mark Complete form — conditional by event type
+
+**Decision (locked 2026-05-27):** Unified form with conditional sections.
+
+| Event type (calendar color) | Photos | Payment section |
+|---|---|---|
+| **Job** (green/10) | Required: before + after | Required: Cash / Check / Card / Not Yet Paid |
+| **Assessment** (purple/5) | Required: photos of the issue (no before/after framing) | Hidden — assessments aren't paid jobs |
+| **Callback** (any other Mike-attended event) | Required: at least one photo | Hidden |
+| **Anything else Mike is attending** | Required: at least one photo | Hidden |
+
+The form is a single component that:
+- Always requires at least one photo (count and labels vary by event type)
+- Shows the payment section ONLY for job-colored events
+- Hard-blocks submission if required photos are missing (per locked decision earlier)
+
+Detecting event type:
+- Read calendar event `colorId`
+- Green job: `colorId === '10'`
+- Purple assessment: `colorId === '5'`
+- Everything else: treat as "general event" (photo-only)
+
 ## Backend behavior — payment branching
 
 When Mike submits a completion:
@@ -129,15 +151,16 @@ demands it.
 
 ## Build phases
 
-| Phase | Scope | Time |
+| Phase | Scope | Status |
 |---|---|---|
-| 1 | Project scaffold (Next.js 15, deploy to Vercel, magic-link auth, Mike whitelisted) | 0.5 day |
-| 2 | Today's calendar list + job detail view (read-only) | 0.5 day |
-| 3 | Mark-complete form (photos to Blob, payment status selection) | 0.5 day |
-| 4 | Backend payment branching (QB Payment creation, sendInvoice, alert SMS) | 1 day |
-| 5 | Polish (loading states, error handling, basic AAC branding) | 0.5 day |
-| 6 | Mike training + first-week shadowing | 1 day (operational) |
-| **Total** | **3-4 engineering days + 1 training day** | |
+| 1 | Project scaffold (Next.js 15, deploy to Vercel) | ✅ shipped 2026-05-27 |
+| 1.5 | Today's calendar list with day navigation (prev/next arrow + swipe) | ✅ shipped 2026-05-27 |
+| 2 | Magic-link auth (Resend, sessions, mike@ + matt@ whitelisted) | pending |
+| 3 | Job/event detail screen | pending |
+| 4 | Mark-complete form (unified, conditional photo + payment by type) | pending |
+| 5 | Backend payment branching (QB Payment, sendInvoice, alert SMS) | pending — needs QuickBooksClient.createPayment in @aac/api-clients |
+| 6 | Polish (loading states, error handling, AAC branding) | pending |
+| 7 | Mike training + first-week shadowing | operational, 1 day |
 
 ## Locked decisions (2026-05-27)
 
