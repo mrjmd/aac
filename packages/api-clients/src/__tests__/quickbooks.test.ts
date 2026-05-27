@@ -310,9 +310,12 @@ describe('QuickBooksClient', () => {
       const result = await client.sendInvoice('inv-7', 'override@example.com');
 
       const url = mockFetch.mock.calls[0][0] as string;
+      const init = mockFetch.mock.calls[0][1] as { method: string; headers?: Record<string, string> };
       expect(url).toContain('/invoice/inv-7/send');
       expect(url).toContain('sendTo=override%40example.com');
-      expect((mockFetch.mock.calls[0][1] as { method: string }).method).toBe('POST');
+      expect(init.method).toBe('POST');
+      // QBO send endpoint NPEs with application/json + empty body; must use octet-stream.
+      expect(init.headers?.['Content-Type']).toBe('application/octet-stream');
       expect(result.EmailStatus).toBe('EmailSent');
     });
 
@@ -437,6 +440,35 @@ describe('QuickBooksClient', () => {
           paymentMethodId: '1',
         })
       ).rejects.toThrow(/did not return payment/);
+    });
+  });
+
+  describe('getPayment', () => {
+    it('GETs /payment/{id} and returns the payment', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Payment: {
+          Id: 'pay-7',
+          SyncToken: '0',
+          TotalAmt: 500,
+          CustomerRef: { value: 'c-1' },
+          PaymentMethodRef: { value: '3', name: 'Credit Card' },
+        },
+      }));
+
+      const p = await client.getPayment('pay-7');
+
+      const url = mockFetch.mock.calls[0][0] as string;
+      expect(url).toContain('/payment/pay-7');
+      expect(p?.Id).toBe('pay-7');
+      expect(p?.PaymentMethodRef?.value).toBe('3');
+    });
+
+    it('returns null on error', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ Fault: { type: 'not_found' } }, 404));
+      const p = await client.getPayment('missing');
+      expect(p).toBeNull();
     });
   });
 

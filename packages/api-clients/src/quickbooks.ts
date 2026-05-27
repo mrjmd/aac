@@ -451,6 +451,10 @@ export class QuickBooksClient {
   /**
    * Send an invoice via QB's default branded email template.
    * If `email` is omitted, uses the invoice's BillEmail on file.
+   *
+   * IMPORTANT: this endpoint requires Content-Type: application/octet-stream
+   * with an empty body. Sending application/json (our normal default) makes
+   * QBO try to parse the empty body as JSON and 500 with a NullPointerException.
    */
   async sendInvoice(invoiceId: string, email?: string): Promise<QBInvoice> {
     log.info('Sending invoice', { invoiceId, email: email ?? '(default)' });
@@ -458,7 +462,11 @@ export class QuickBooksClient {
     const qs = email ? `?sendTo=${encodeURIComponent(email)}` : '';
     const result = await this.request<{ Invoice?: QBInvoice }>(
       `/invoice/${encodeURIComponent(invoiceId)}/send${qs}`,
-      { method: 'POST', body: '' }
+      {
+        method: 'POST',
+        body: '',
+        headers: { 'Content-Type': 'application/octet-stream' },
+      }
     );
 
     if (!result.Invoice) {
@@ -545,6 +553,18 @@ export class QuickBooksClient {
     });
 
     return result.Payment;
+  }
+
+  async getPayment(paymentId: string): Promise<QBPayment | null> {
+    try {
+      const result = await this.request<{ Payment?: QBPayment }>(
+        `/payment/${encodeURIComponent(paymentId)}`
+      );
+      return result.Payment || null;
+    } catch (error) {
+      log.error('Get payment failed', error as Error, { paymentId });
+      return null;
+    }
   }
 
   async isConnected(): Promise<boolean> {
