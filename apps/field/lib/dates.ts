@@ -58,6 +58,26 @@ export function formatEventTime(isoDateTime: string): string {
   });
 }
 
+/** "9:00 AM – 11:30 AM" — drops the AM/PM on start if the range stays in one period. */
+export function formatEventTimeRange(startIso: string, endIso: string): string {
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  const opts: Intl.DateTimeFormatOptions = {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'America/New_York',
+  };
+  const startStr = start.toLocaleTimeString('en-US', opts);
+  const endStr = end.toLocaleTimeString('en-US', opts);
+  const startPeriod = startStr.slice(-2);
+  const endPeriod = endStr.slice(-2);
+  if (startPeriod === endPeriod) {
+    return `${startStr.replace(/\s?(AM|PM)$/, '')} – ${endStr}`;
+  }
+  return `${startStr} – ${endStr}`;
+}
+
 export function formatTodayDisplay(): string {
   return new Date().toLocaleDateString('en-US', {
     weekday: 'long',

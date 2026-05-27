@@ -5,7 +5,7 @@ import { getEnv } from '@/lib/env';
 import {
   getTodayEasternDate,
   getEasternRangeForDate,
-  formatEventTime,
+  formatEventTimeRange,
   formatDateDisplay,
   shiftDate,
   isValidDateLabel,
@@ -108,7 +108,7 @@ export default async function DayPage({ searchParams }: PageProps) {
                       </span>
                     </div>
                     <p className="text-sm text-zinc-600">
-                      {formatEventTime(evt.start)}
+                      {formatEventTimeRange(evt.start, evt.end)}
                     </p>
                     {evt.location && (
                       <p className="text-sm text-zinc-500 mt-1 truncate">
