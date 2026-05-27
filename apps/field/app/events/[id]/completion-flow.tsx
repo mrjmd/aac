@@ -1,7 +1,6 @@
 'use client';
 
 import { useActionState, useRef, useState, useTransition } from 'react';
-import { useFormStatus } from 'react-dom';
 import { upload } from '@vercel/blob/client';
 import { checkIn, submitBeforePhoto, submitCompletion, type ActionState } from './actions';
 import type { CompletionRecord, Phase } from '@/lib/completion';
@@ -38,16 +37,85 @@ export default function CompletionFlow({ eventId, eventType, completion }: Props
 
 function CheckInStep({ eventId }: { eventId: string }) {
   const [state, formAction] = useActionState<ActionState | null, FormData>(checkIn, null);
+  const [isPending, startTransition] = useTransition();
+
+  async function handleCheckIn() {
+    // Capture a single GPS fix — best-effort, never blocks check-in.
+    // 5s timeout, accept cached fixes <60s old.
+    const geo = await getGeolocationOnce({ timeoutMs: 5000, maxAgeMs: 60_000 });
+
+    const fd = new FormData();
+    fd.set('eventId', eventId);
+    if (geo.ok) {
+      fd.set('lat', String(geo.coords.latitude));
+      fd.set('lng', String(geo.coords.longitude));
+      fd.set('accuracy', String(geo.coords.accuracy));
+      fd.set('geoTakenAt', new Date().toISOString());
+    } else {
+      fd.set('geoError', geo.error);
+    }
+
+    startTransition(() => formAction(fd));
+  }
+
   return (
-    <form action={formAction} className="space-y-3">
-      <input type="hidden" name="eventId" value={eventId} />
+    <div className="space-y-3">
       <p className="text-sm text-zinc-600">
         Tap when you arrive at the job site.
       </p>
-      <SubmitButton label="Check In" pendingLabel="Checking in…" />
+      <button
+        type="button"
+        onClick={handleCheckIn}
+        disabled={isPending}
+        className="w-full py-4 rounded-lg bg-blue-600 text-white font-medium active:bg-blue-700 disabled:bg-zinc-300 disabled:text-zinc-600"
+      >
+        {isPending ? 'Checking in…' : 'Check In'}
+      </button>
       <ErrorBox error={state?.error} />
-    </form>
+    </div>
   );
+}
+
+type GeoResult =
+  | { ok: true; coords: { latitude: number; longitude: number; accuracy: number } }
+  | { ok: false; error: string };
+
+function getGeolocationOnce({ timeoutMs, maxAgeMs }: { timeoutMs: number; maxAgeMs: number }): Promise<GeoResult> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || !navigator.geolocation) {
+      resolve({ ok: false, error: 'Geolocation API not available' });
+      return;
+    }
+    // Safety net: if neither callback fires within the timeout window, resolve
+    // anyway so check-in is never blocked.
+    const safetyTimer = setTimeout(() => {
+      resolve({ ok: false, error: 'Geolocation timed out (safety)' });
+    }, timeoutMs + 1000);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        clearTimeout(safetyTimer);
+        resolve({
+          ok: true,
+          coords: {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+          },
+        });
+      },
+      (err) => {
+        clearTimeout(safetyTimer);
+        const reason =
+          err.code === err.PERMISSION_DENIED ? 'permission_denied'
+          : err.code === err.POSITION_UNAVAILABLE ? 'position_unavailable'
+          : err.code === err.TIMEOUT ? 'timeout'
+          : 'unknown';
+        resolve({ ok: false, error: reason });
+      },
+      { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: maxAgeMs },
+    );
+  });
 }
 
 // ─── Step 2: Before Photo (jobs only) ────────────────────────────────────
@@ -62,9 +130,8 @@ function BeforePhotoStep({ eventId, checkedInAt }: { eventId: string; checkedInA
       <PhotoUploadStep
         eventId={eventId}
         kind="before"
-        buttonLabel="Save Before Photo"
-        pendingLabel="Uploading…"
         action={submitBeforePhoto}
+        autoSubmit
       />
     </div>
   );
@@ -95,14 +162,10 @@ function CompleteStep({
       <PhotoUploadStep
         eventId={eventId}
         kind={eventType === 'job' ? 'after' : 'photo'}
-        buttonLabel="Mark Complete"
-        pendingLabel="Submitting…"
         action={submitCompletion}
-        renderExtras={
-          eventType === 'job' ? (
-            <PaymentSection />
-          ) : null
-        }
+        submitLabel="Mark Complete"
+        pendingLabel="Submitting…"
+        renderExtras={eventType === 'job' ? <PaymentSection /> : null}
         renderNoteField
       />
     </div>
@@ -140,9 +203,12 @@ function BeforePhotoThumb({ photos }: { photos: CompletionRecord['photos'] }) {
 interface PhotoUploadStepProps {
   eventId: string;
   kind: 'before' | 'after' | 'photo';
-  buttonLabel: string;
-  pendingLabel: string;
   action: (prev: ActionState | null, fd: FormData) => Promise<ActionState>;
+  /** If true, the form auto-submits as soon as the photo finishes uploading. */
+  autoSubmit?: boolean;
+  /** Required when autoSubmit is false. */
+  submitLabel?: string;
+  pendingLabel?: string;
   renderExtras?: React.ReactNode;
   renderNoteField?: boolean;
 }
@@ -150,13 +216,15 @@ interface PhotoUploadStepProps {
 function PhotoUploadStep({
   eventId,
   kind,
-  buttonLabel,
-  pendingLabel,
   action,
+  autoSubmit,
+  submitLabel = 'Submit',
+  pendingLabel = 'Submitting…',
   renderExtras,
   renderNoteField,
 }: PhotoUploadStepProps) {
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
   const [localPreview, setLocalPreview] = useState<string | null>(null);
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -172,64 +240,80 @@ function PhotoUploadStep({
     setLocalPreview(URL.createObjectURL(file));
     setIsUploading(true);
     try {
-      const path = `field/${eventId}/${kind}-${Date.now()}.${file.name.split('.').pop() || 'jpg'}`;
+      const ext = file.name.split('.').pop() || 'jpg';
+      const path = `field/${eventId}/${kind}-${Date.now()}.${ext}`;
       const blob = await upload(path, file, {
         access: 'public',
         handleUploadUrl: '/api/photo-upload',
       });
       setUploadedUrl(blob.url);
+
+      if (autoSubmit) {
+        const fd = new FormData();
+        fd.set('eventId', eventId);
+        fd.set('photoUrl', blob.url);
+        startTransition(() => formAction(fd));
+      }
     } catch (err) {
-      console.error(err);
+      console.error('photo upload failed', err);
       setUploadError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsUploading(false);
     }
   }
 
-  function handleSubmit(formData: FormData) {
+  function handleManualSubmit(formData: FormData) {
     if (!uploadedUrl) return;
     formData.set('eventId', eventId);
     formData.set('photoUrl', uploadedUrl);
     startTransition(() => formAction(formData));
   }
 
+  const pickerLabel = isUploading
+    ? 'Uploading…'
+    : localPreview
+      ? 'Retake / Choose Different Photo'
+      : 'Take or Choose Photo';
+
   return (
-    <form action={handleSubmit} className="space-y-4">
-      <div>
-        <label className="block">
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            onChange={handleFileSelect}
-            className="sr-only"
-          />
-          <span
-            onClick={() => fileRef.current?.click()}
-            className="block text-center py-4 px-4 rounded-lg bg-zinc-900 text-white font-medium active:bg-zinc-700 cursor-pointer"
-          >
-            {localPreview ? 'Retake / Choose Different Photo' : 'Take or Choose Photo'}
-          </span>
-        </label>
-        {localPreview && (
-          // Plain <img>: simpler than next/image for an instantly-revoked
-          // object URL, and we don't need optimization for a thumb here.
-          <img
-            src={localPreview}
-            alt="Selected"
-            className="mt-3 w-full rounded-lg object-cover max-h-64 border border-zinc-200"
-          />
-        )}
-        {isUploading && (
-          <p className="mt-2 text-sm text-zinc-500">Uploading photo…</p>
-        )}
-        {uploadedUrl && !isUploading && (
-          <p className="mt-2 text-sm text-emerald-700">✓ Photo uploaded</p>
-        )}
-        {uploadError && (
-          <p className="mt-2 text-sm text-red-700">Upload failed: {uploadError}</p>
-        )}
-      </div>
+    <form ref={formRef} action={handleManualSubmit} className="space-y-4">
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
+        disabled={isUploading || isPending}
+        className="block w-full text-center py-4 px-4 rounded-lg bg-zinc-900 text-white font-medium active:bg-zinc-700 disabled:bg-zinc-400"
+      >
+        {pickerLabel}
+      </button>
+
+      {localPreview && (
+        // Plain <img>: object URL revokes naturally, no optimization needed.
+        <img
+          src={localPreview}
+          alt="Selected"
+          className="w-full rounded-lg object-cover max-h-64 border border-zinc-200"
+        />
+      )}
+      {uploadError && (
+        <p className="text-sm text-red-700">Upload failed: {uploadError}</p>
+      )}
+      {autoSubmit && isPending && (
+        <p className="text-sm text-zinc-500">Saving…</p>
+      )}
+      {autoSubmit && uploadedUrl && !isPending && !state?.error && (
+        <p className="text-sm text-emerald-700">✓ Saved — next step loading…</p>
+      )}
+      {!autoSubmit && uploadedUrl && !isUploading && (
+        <p className="text-sm text-emerald-700">✓ Photo ready</p>
+      )}
 
       {renderExtras}
 
@@ -245,13 +329,15 @@ function PhotoUploadStep({
         </label>
       )}
 
-      <button
-        type="submit"
-        disabled={!uploadedUrl || isUploading || isPending}
-        className="w-full py-4 rounded-lg bg-blue-600 text-white font-medium active:bg-blue-700 disabled:bg-zinc-300 disabled:text-zinc-600"
-      >
-        {isPending ? pendingLabel : buttonLabel}
-      </button>
+      {!autoSubmit && (
+        <button
+          type="submit"
+          disabled={!uploadedUrl || isUploading || isPending}
+          className="w-full py-4 rounded-lg bg-blue-600 text-white font-medium active:bg-blue-700 disabled:bg-zinc-300 disabled:text-zinc-600"
+        >
+          {isPending ? pendingLabel : submitLabel}
+        </button>
+      )}
 
       <ErrorBox error={state?.error} />
     </form>
@@ -283,19 +369,6 @@ function PaymentSection() {
         </label>
       ))}
     </fieldset>
-  );
-}
-
-function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel: string }) {
-  const { pending } = useFormStatus();
-  return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="w-full py-4 rounded-lg bg-blue-600 text-white font-medium active:bg-blue-700 disabled:bg-zinc-300 disabled:text-zinc-600"
-    >
-      {pending ? pendingLabel : label}
-    </button>
   );
 }
 

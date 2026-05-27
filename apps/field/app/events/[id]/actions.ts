@@ -41,6 +41,18 @@ export async function checkIn(_prev: ActionState | null, formData: FormData): Pr
   const evt = await loadEvent(eventId);
   if (!evt) return { ok: false, error: `Could not load calendar event ${eventId}` };
 
+  // Geo fix is best-effort: client passed it (or didn't). We never block on it.
+  const lat = parseFloat(String(formData.get('lat') || ''));
+  const lng = parseFloat(String(formData.get('lng') || ''));
+  const acc = parseFloat(String(formData.get('accuracy') || ''));
+  const geoTakenAt = String(formData.get('geoTakenAt') || '');
+  const geoError = String(formData.get('geoError') || '') || undefined;
+
+  const checkInLocation =
+    Number.isFinite(lat) && Number.isFinite(lng) && Number.isFinite(acc) && geoTakenAt
+      ? { latitude: lat, longitude: lng, accuracy: acc, takenAt: geoTakenAt }
+      : undefined;
+
   const record: CompletionRecord = {
     eventId,
     eventType: classifyEvent(evt.colorId),
@@ -48,6 +60,8 @@ export async function checkIn(_prev: ActionState | null, formData: FormData): Pr
     phase: 'checked_in',
     checkedInAt: new Date().toISOString(),
     checkedInByEmail: PLACEHOLDER_EMAIL,
+    checkInLocation,
+    checkInLocationError: checkInLocation ? undefined : geoError,
     photos: [],
   };
   await setCompletion(record);

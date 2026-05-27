@@ -17,6 +17,17 @@ export interface CompletionPhoto {
   takenAt: string;
 }
 
+export interface GeoCoords {
+  /** WGS84 latitude */
+  latitude: number;
+  /** WGS84 longitude */
+  longitude: number;
+  /** Accuracy radius in meters (per the W3C Geolocation API). */
+  accuracy: number;
+  /** ISO timestamp when the fix was taken. */
+  takenAt: string;
+}
+
 export interface CompletionRecord {
   eventId: string;
   eventType: 'job' | 'assessment' | 'other';
@@ -24,6 +35,15 @@ export interface CompletionRecord {
   phase: Phase;
   checkedInAt: string;
   checkedInByEmail: string;
+  /**
+   * GPS fix captured client-side at check-in. Optional because:
+   *   - User can deny browser permission
+   *   - Indoor / basement signal can fail with no fix
+   *   - We never block check-in on geo (trust-but-verify, silent)
+   */
+  checkInLocation?: GeoCoords;
+  /** If geo failed at check-in, the reason (for later analysis). */
+  checkInLocationError?: string;
   photos: CompletionPhoto[];
   completedAt?: string;
   paymentStatus?: PaymentStatus;

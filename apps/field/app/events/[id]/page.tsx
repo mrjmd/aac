@@ -171,6 +171,27 @@ function CompletedView({
             Payment: <span className="font-medium">{labelForPayment(completion.paymentStatus)}</span>
           </p>
         )}
+        {completion.checkInLocation && (
+          <p className="text-sm text-emerald-800 mt-1">
+            Check-in location:{' '}
+            <a
+              href={`https://www.google.com/maps?q=${completion.checkInLocation.latitude},${completion.checkInLocation.longitude}`}
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              view on map
+            </a>{' '}
+            <span className="text-xs text-emerald-700">
+              (±{Math.round(completion.checkInLocation.accuracy)}m)
+            </span>
+          </p>
+        )}
+        {!completion.checkInLocation && completion.checkInLocationError && (
+          <p className="text-xs text-emerald-700 mt-1">
+            GPS unavailable at check-in ({completion.checkInLocationError})
+          </p>
+        )}
         {completion.note && (
           <p className="text-sm text-emerald-900 mt-2 whitespace-pre-wrap">
             “{completion.note}”
