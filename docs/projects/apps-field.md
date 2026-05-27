@@ -73,14 +73,17 @@ When Mike submits a completion:
 
 ### Card
 - Photos → Vercel Blob
-- Look up customer's most-recent invoice
-- If Balance == 0 (already paid via QB Payments processing or other card flow): accept, log completion
-- If Balance > 0: **abort the completion**. SMS Matt: "Mike marked Card paid for {customer} but QB still shows balance \${X}." Mike sees an error: "Card payment not yet visible in QB — Matt has been notified, please wait for him to confirm before re-submitting." Matt reconciles, then Mike resubmits.
+- Look up customer's most-recent invoice (any balance)
+- If Balance > 0: **abort the completion**. Card payment didn't post yet. SMS Matt: "Mike marked Card paid for {customer} but QB still shows balance \${X}." Mike sees an error: "Card payment not yet visible in QB — Matt has been notified, please wait for him to confirm before re-submitting."
+- If Balance == 0: verify the linked QB Payment used a credit-card payment method (PaymentMethod.Type === 'CREDIT_CARD', or Name contains "card"/"credit"). If yes: accept, log completion.
+- If Balance == 0 but the payment was Cash/Check (not card): **abort + alert**. Mike likely tapped the wrong button — better to block than to silently mis-record the method.
 
 ### Not Yet Paid
 - Photos → Vercel Blob
 - Look up customer's most-recent invoice (or alert if none exists)
-- Call `qb.sendInvoice(invoiceId)` immediately → QB emails the invoice to the customer
+- **If `EmailStatus === 'EmailSent'` already:** skip the send (idempotent — don't spam the customer with a duplicate). Still mark the completion record as done.
+- **Else:** resolve recipient (invoice BillEmail → customer PrimaryEmailAddr fallback). If neither exists, fail with a clear message asking Matt to add an email.
+- Call `qb.sendInvoice(invoiceId, recipient)` → QB emails the invoice to the customer
 - Log completion + "awaiting payment" status
 - **(This branch is the Cron B replacement.)**
 
@@ -176,6 +179,17 @@ demands it.
 ## Still open
 
 - **Brand fidelity:** Pull website CSS / Tailwind config OR Tailwind-from-scratch with logo + brand colors only? (Defer until scaffold phase; low-stakes.)
+
+## Deferred follow-ups
+
+- **Bank Deposit interface (post-MVP).** Cash/Check payments created by the
+  field app land in QBO's Undeposited Funds account. The cash physically lives
+  in Mike's pocket until he drives to the bank. Build a "At the bank" screen
+  in the field app: list undeposited Cash/Check Payment objects (filterable by
+  Mike's completions), checkbox the ones being deposited, app creates the QBO
+  Bank Deposit transaction grouping them. Closes the loop so we always know
+  what's still-in-pocket vs. actually-at-the-bank. Captured 2026-05-27 after
+  the first successful cash-payment write surfaced the tracking gap.
 
 ## Related
 
