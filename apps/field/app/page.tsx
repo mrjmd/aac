@@ -62,7 +62,7 @@ export default async function DayPage({ searchParams }: PageProps) {
             {isToday ? (
               <p className="text-xs text-zinc-500">{formatDateDisplay(dateLabel)}</p>
             ) : (
-              <Link href="/" className="text-xs text-blue-600 underline">
+              <Link href="/" className="text-xs text-aac-blue underline">
                 jump to today
               </Link>
             )}

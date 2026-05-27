@@ -156,7 +156,7 @@ function StepIcon({ number, state }: { number: number; state: RowState }) {
     );
   }
   return (
-    <span className="inline-flex items-center justify-center size-7 rounded-full bg-blue-600 text-white text-sm font-semibold">
+    <span className="inline-flex items-center justify-center size-7 rounded-full bg-aac-blue text-white text-sm font-semibold">
       {number}
     </span>
   );
@@ -263,7 +263,7 @@ function CheckInStep({ eventId }: { eventId: string }) {
         type="button"
         onClick={handleCheckIn}
         disabled={isPending}
-        className="w-full py-3 rounded-lg bg-blue-600 text-white font-medium active:bg-blue-700 disabled:bg-zinc-300 disabled:text-zinc-600"
+        className="w-full py-3 rounded-lg bg-aac-blue text-white font-medium active:bg-aac-blue/90 disabled:bg-zinc-300 disabled:text-zinc-600"
       >
         {isPending ? 'Checking in…' : 'Check In'}
       </button>
@@ -396,7 +396,7 @@ function PhotoUploadStep({
         <button
           type="submit"
           disabled={!uploadedUrl || isUploading || isPending}
-          className="w-full py-3 rounded-lg bg-blue-600 text-white font-medium active:bg-blue-700 disabled:bg-zinc-300 disabled:text-zinc-600"
+          className="w-full py-3 rounded-lg bg-aac-blue text-white font-medium active:bg-aac-blue/90 disabled:bg-zinc-300 disabled:text-zinc-600"
         >
           {isPending ? pendingLabel : submitLabel}
         </button>
@@ -422,7 +422,7 @@ function PaymentSection() {
       {options.map((opt) => (
         <label
           key={opt.value}
-          className="block rounded-lg border border-zinc-300 p-3 has-[:checked]:border-blue-600 has-[:checked]:bg-blue-50 active:bg-zinc-100"
+          className="block rounded-lg border border-zinc-300 p-3 has-[:checked]:border-aac-blue has-[:checked]:bg-aac-blue/5 active:bg-zinc-100"
         >
           <span className="flex items-center gap-3">
             <input type="radio" name="paymentStatus" value={opt.value} className="size-5" required />

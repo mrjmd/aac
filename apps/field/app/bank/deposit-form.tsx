@@ -90,7 +90,7 @@ export default function DepositForm({ payments, bankAccounts }: Props) {
           {payments.length} payment{payments.length === 1 ? '' : 's'} undeposited
         </div>
         <div className="flex gap-3">
-          <button type="button" onClick={selectAll} className="text-blue-600 underline-offset-2 hover:underline">
+          <button type="button" onClick={selectAll} className="text-aac-blue underline-offset-2 hover:underline">
             Select all
           </button>
           <button type="button" onClick={clearAll} className="text-gray-600 underline-offset-2 hover:underline">
@@ -106,7 +106,7 @@ export default function DepositForm({ payments, bankAccounts }: Props) {
             <li key={p.id}>
               <label
                 className={`flex cursor-pointer items-start gap-3 px-4 py-3 ${
-                  isSelected ? 'bg-blue-50' : ''
+                  isSelected ? 'bg-aac-blue/5' : ''
                 }`}
               >
                 <input
@@ -171,7 +171,7 @@ export default function DepositForm({ payments, bankAccounts }: Props) {
           type="button"
           disabled={selected.size === 0 || !bankAccountId || isPending}
           onClick={submit}
-          className="w-full rounded-md bg-blue-600 px-4 py-3 text-base font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-gray-300"
+          className="w-full rounded-md bg-aac-blue px-4 py-3 text-base font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-gray-300"
         >
           {isPending ? 'Creating deposit…' : 'Create deposit'}
         </button>

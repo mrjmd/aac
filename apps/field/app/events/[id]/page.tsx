@@ -45,7 +45,7 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
     return (
       <main className="min-h-dvh">
         <header className="px-3 pt-4 pb-3 border-b border-zinc-200 bg-white">
-          <Link href={backHref} className="text-sm text-blue-600">
+          <Link href={backHref} className="text-sm text-aac-blue">
             ‹ Back
           </Link>
         </header>
@@ -92,7 +92,7 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
       <header className="px-3 pt-4 pb-3 border-b border-zinc-200 bg-white sticky top-0 z-10">
         <Link
           href={from ? `/?date=${from}` : `/?date=${eventDateLabel}`}
-          className="text-sm text-blue-600 inline-flex items-center"
+          className="text-sm text-aac-blue inline-flex items-center"
         >
           <span className="text-lg leading-none mr-1">‹</span>
           Back
@@ -127,7 +127,7 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
               href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(evt.location)}`}
               target="_blank"
               rel="noreferrer"
-              className="text-blue-600 underline break-words"
+              className="text-aac-blue underline break-words"
             >
               {evt.location}
             </a>

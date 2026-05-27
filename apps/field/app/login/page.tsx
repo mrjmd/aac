@@ -15,11 +15,27 @@ export default async function LoginPage({
   const signInHref = `/auth/google?next=${encodeURIComponent(safeNext)}`;
 
   return (
-    <main className="mx-auto flex min-h-[80vh] w-full max-w-md flex-col items-center justify-center px-6 py-12">
-      <div className="w-full rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-        <h1 className="text-2xl font-semibold text-gray-900">AAC Field</h1>
-        <p className="mt-2 text-sm text-gray-600">
-          Sign in with your AAC Google account to view today&apos;s jobs.
+    <main className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-md flex-col items-center justify-center px-6 py-12">
+      <div className="w-full rounded-2xl border border-aac-blue/20 bg-white p-7 shadow-[6px_6px_0px_0px_rgba(30,111,184,0.12)]">
+        <div className="flex items-center gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo.webp"
+            alt="Attack A Crack"
+            className="h-14 w-14 rounded-xl object-cover shadow-[4px_4px_0px_0px_rgba(30,111,184,0.2)]"
+          />
+          <div className="flex flex-col leading-none">
+            <span className="font-display text-xl font-black tracking-tight text-aac-dark">
+              ATTACK A CRACK
+            </span>
+            <span className="mt-1 text-[10px] font-bold uppercase tracking-[0.22em] text-aac-blue">
+              Field App
+            </span>
+          </div>
+        </div>
+
+        <p className="mt-6 text-sm text-aac-dark/70">
+          Sign in with your AAC Google account to see today&apos;s jobs.
         </p>
 
         {error ? (
@@ -30,13 +46,13 @@ export default async function LoginPage({
 
         <a
           href={signInHref}
-          className="mt-6 flex w-full items-center justify-center gap-3 rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-800 shadow-sm hover:bg-gray-50 active:bg-gray-100"
+          className="mt-6 flex w-full items-center justify-center gap-3 rounded-lg border border-aac-blue/30 bg-white px-4 py-3 text-base font-semibold text-aac-dark shadow-sm transition hover:bg-aac-blue/5 active:bg-aac-blue/10"
         >
           <GoogleG className="h-5 w-5" />
           <span>Sign in with Google</span>
         </a>
 
-        <p className="mt-6 text-xs text-gray-500">
+        <p className="mt-6 text-xs text-aac-dark/50">
           Only AAC staff are authorized. If you got here by mistake, you can close this tab.
         </p>
       </div>

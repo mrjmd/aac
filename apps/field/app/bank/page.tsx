@@ -16,7 +16,7 @@ export default async function BankPage() {
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-4 pb-32">
       <div className="mb-4">
-        <Link href="/" className="text-sm text-blue-600 underline-offset-2 hover:underline">
+        <Link href="/" className="text-sm text-aac-blue underline-offset-2 hover:underline">
           ← Back to jobs
         </Link>
       </div>
