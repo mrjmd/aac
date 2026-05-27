@@ -8,8 +8,17 @@
 
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { NextResponse } from 'next/server';
+import { getCurrentSession } from '@/lib/session';
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // Belt-and-suspenders: middleware already gated by cookie presence; here we
+  // verify the cookie maps to an actual session in Redis before issuing a
+  // signed upload URL.
+  const session = await getCurrentSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  }
+
   const body = (await request.json()) as HandleUploadBody;
 
   try {
@@ -17,8 +26,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       body,
       request,
       onBeforeGenerateToken: async (pathname) => {
-        // TODO: gate via session auth once magic-link auth ships.
-        // For now, only restrict by the path prefix we own.
         if (!pathname.startsWith('field/')) {
           throw new Error('Upload path must begin with "field/"');
         }

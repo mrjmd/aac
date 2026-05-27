@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import LocationPermissionPrimer from "./location-permission-primer";
+import SessionHeader from "./session-header";
 
 export const metadata: Metadata = {
   title: "AAC Field",
@@ -24,6 +25,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <LocationPermissionPrimer />
+        <SessionHeader />
         {children}
       </body>
     </html>

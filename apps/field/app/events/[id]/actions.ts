@@ -11,6 +11,7 @@ import {
 } from '@/lib/completion';
 import { classifyEvent } from '@/lib/event-classification';
 import { executePaymentBranch } from '@/lib/payment-branches';
+import { getCurrentSession } from '@/lib/session';
 
 export interface ActionState {
   ok: boolean;
@@ -18,8 +19,6 @@ export interface ActionState {
 }
 
 const ALLOWED_PAYMENT: PaymentStatus[] = ['cash', 'check', 'card', 'not_yet_paid'];
-// TODO: replace with authenticated session email once magic-link auth ships.
-const PLACEHOLDER_EMAIL = 'mike@attackacrack.com';
 
 async function loadEvent(eventId: string) {
   try {
@@ -31,6 +30,9 @@ async function loadEvent(eventId: string) {
 
 /** Step 1: Mike arrives — record the check-in. Works for any event type. */
 export async function checkIn(_prev: ActionState | null, formData: FormData): Promise<ActionState> {
+  const session = await getCurrentSession();
+  if (!session) return { ok: false, error: 'Signed out — please log in again.' };
+
   const eventId = String(formData.get('eventId') || '');
   if (!eventId) return { ok: false, error: 'Missing eventId' };
 
@@ -60,7 +62,7 @@ export async function checkIn(_prev: ActionState | null, formData: FormData): Pr
     eventSummary: evt.summary,
     phase: 'checked_in',
     checkedInAt: new Date().toISOString(),
-    checkedInByEmail: PLACEHOLDER_EMAIL,
+    checkedInByEmail: session.email,
     checkInLocation,
     checkInLocationError: checkInLocation ? undefined : geoError,
     photos: [],
@@ -72,6 +74,9 @@ export async function checkIn(_prev: ActionState | null, formData: FormData): Pr
 
 /** Step 2 (jobs only): record the Before photo (already uploaded to Blob). */
 export async function submitBeforePhoto(_prev: ActionState | null, formData: FormData): Promise<ActionState> {
+  const session = await getCurrentSession();
+  if (!session) return { ok: false, error: 'Signed out — please log in again.' };
+
   const eventId = String(formData.get('eventId') || '');
   const url = String(formData.get('photoUrl') || '');
   if (!eventId) return { ok: false, error: 'Missing eventId' };
@@ -108,6 +113,9 @@ export async function submitBeforePhoto(_prev: ActionState | null, formData: For
  * in Step B of the field-app build (apps-field.md Phase 5).
  */
 export async function submitCompletion(_prev: ActionState | null, formData: FormData): Promise<ActionState> {
+  const session = await getCurrentSession();
+  if (!session) return { ok: false, error: 'Signed out — please log in again.' };
+
   const eventId = String(formData.get('eventId') || '');
   const photoUrl = String(formData.get('photoUrl') || '');
   const note = (String(formData.get('note') || '').trim()) || undefined;

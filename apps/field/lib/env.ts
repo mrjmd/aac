@@ -12,6 +12,16 @@ export interface EnvConfig {
     refreshToken: string;
     calendarId: string;
   };
+  /**
+   * Separate OAuth client for the field-app sign-in flow.
+   * Lives alongside the shared `google.*` credentials because the existing
+   * monorepo OAuth client is a Desktop-type credential (no web redirect URIs
+   * allowed). The field app needs a Web-application client.
+   */
+  fieldOAuth: {
+    clientId: string;
+    clientSecret: string;
+  };
   pipedrive: {
     apiKey: string;
     companyDomain: string;
@@ -53,6 +63,10 @@ export function getEnv(): EnvConfig {
       clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),
       refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
       calendarId: process.env.GOOGLE_CALENDAR_ID || 'matt@attackacrack.com',
+    },
+    fieldOAuth: {
+      clientId: requireEnv('FIELD_GOOGLE_OAUTH_CLIENT_ID'),
+      clientSecret: requireEnv('FIELD_GOOGLE_OAUTH_CLIENT_SECRET'),
     },
     pipedrive: {
       apiKey: requireEnv('PIPEDRIVE_API_KEY'),
