@@ -92,28 +92,30 @@ export default async function DayPage({ searchParams }: PageProps) {
             {events.map((evt) => {
               const type = classifyEvent(evt.colorId);
               return (
-                <li
-                  key={evt.id}
-                  className="bg-white rounded-lg border border-zinc-200 p-4 shadow-sm"
-                >
-                  <div className="flex items-start justify-between gap-3 mb-1">
-                    <h2 className="font-medium text-base leading-snug">
-                      {evt.summary || '(untitled)'}
-                    </h2>
-                    <span
-                      className={`shrink-0 inline-block text-xs font-medium px-2 py-0.5 rounded border ${badgeColorClasses(type)}`}
-                    >
-                      {labelForType(type)}
-                    </span>
-                  </div>
-                  <p className="text-sm text-zinc-600">
-                    {formatEventTime(evt.start)}
-                  </p>
-                  {evt.location && (
-                    <p className="text-sm text-zinc-500 mt-1 truncate">
-                      {evt.location}
+                <li key={evt.id}>
+                  <Link
+                    href={`/events/${evt.id}?from=${dateLabel}`}
+                    className="block bg-white rounded-lg border border-zinc-200 p-4 shadow-sm active:bg-zinc-50"
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-1">
+                      <h2 className="font-medium text-base leading-snug">
+                        {evt.summary || '(untitled)'}
+                      </h2>
+                      <span
+                        className={`shrink-0 inline-block text-xs font-medium px-2 py-0.5 rounded border ${badgeColorClasses(type)}`}
+                      >
+                        {labelForType(type)}
+                      </span>
+                    </div>
+                    <p className="text-sm text-zinc-600">
+                      {formatEventTime(evt.start)}
                     </p>
-                  )}
+                    {evt.location && (
+                      <p className="text-sm text-zinc-500 mt-1 truncate">
+                        {evt.location}
+                      </p>
+                    )}
+                  </Link>
                 </li>
               );
             })}
