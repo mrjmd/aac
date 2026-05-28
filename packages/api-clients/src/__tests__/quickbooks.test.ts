@@ -250,6 +250,92 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('listRecentEstimates', () => {
+    it('queries all estimates with optional sinceISODate, no TxnStatus filter in SQL', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: {
+          Estimate: [
+            { Id: 'est-1', SyncToken: '0', TxnStatus: 'Accepted', CustomerRef: { value: 'c-1' }, Line: [] },
+            { Id: 'est-2', SyncToken: '0', TxnStatus: 'Pending', CustomerRef: { value: 'c-2' }, Line: [] },
+          ],
+        },
+      }));
+
+      const result = await client.listRecentEstimates('2026-04-28');
+
+      const url = mockFetch.mock.calls[0][0] as string;
+      const decoded = decodeURIComponent(url.split('query=')[1].split('&')[0]);
+      expect(decoded).toContain('FROM Estimate');
+      expect(decoded).toContain("TxnDate >= '2026-04-28'");
+      expect(decoded).not.toContain('TxnStatus');
+      expect(decoded).toContain('MAXRESULTS 200');
+      expect(result).toHaveLength(2);
+    });
+
+    it('omits the date predicate when sinceISODate is undefined', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: { Estimate: [] } }));
+
+      await client.listRecentEstimates();
+
+      const url = mockFetch.mock.calls[0][0] as string;
+      const decoded = decodeURIComponent(url.split('query=')[1].split('&')[0]);
+      expect(decoded).not.toContain('WHERE');
+      expect(decoded).not.toContain('TxnDate');
+    });
+
+    it('returns empty array when no estimates exist', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: {} }));
+
+      const result = await client.listRecentEstimates();
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('listRecentInvoices', () => {
+    it('queries all invoices with optional sinceISODate', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: {
+          Invoice: [
+            { Id: 'inv-1', SyncToken: '0', CustomerRef: { value: 'c-1' }, Line: [], Balance: 0 },
+            { Id: 'inv-2', SyncToken: '0', CustomerRef: { value: 'c-2' }, Line: [], Balance: 500 },
+          ],
+        },
+      }));
+
+      const result = await client.listRecentInvoices('2026-03-28');
+
+      const url = mockFetch.mock.calls[0][0] as string;
+      const decoded = decodeURIComponent(url.split('query=')[1].split('&')[0]);
+      expect(decoded).toContain('FROM Invoice');
+      expect(decoded).toContain("TxnDate >= '2026-03-28'");
+      expect(decoded).toContain('MAXRESULTS 200');
+      expect(result).toHaveLength(2);
+    });
+
+    it('omits the date predicate when sinceISODate is undefined', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: { Invoice: [] } }));
+
+      await client.listRecentInvoices();
+
+      const url = mockFetch.mock.calls[0][0] as string;
+      const decoded = decodeURIComponent(url.split('query=')[1].split('&')[0]);
+      expect(decoded).not.toContain('WHERE');
+    });
+
+    it('returns empty array when no invoices exist', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: {} }));
+
+      const result = await client.listRecentInvoices();
+      expect(result).toEqual([]);
+    });
+  });
+
   describe('createInvoiceFromEstimate', () => {
     it('fetches the estimate, posts an invoice with LinkedTxn, drops subtotal lines', async () => {
       const client = makeClient();

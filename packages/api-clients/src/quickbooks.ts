@@ -434,6 +434,27 @@ export class QuickBooksClient {
     return status ? estimates.filter((e) => e.TxnStatus === status) : estimates;
   }
 
+  /**
+   * List recent estimates across all customers. Used by the deal-spine
+   * reconcile cron to catch new/changed estimates that haven't been mirrored
+   * into a PD deal yet.
+   *
+   * Filter by `TxnDate >= sinceISODate` (the user-controlled transaction date,
+   * which is queryable). Status filtering is intentionally NOT done in the
+   * query — QB rejects `TxnStatus` in WHERE clauses — so callers filter
+   * client-side via the returned `TxnStatus` field.
+   */
+  async listRecentEstimates(sinceISODate?: string): Promise<QBEstimate[]> {
+    let sql = 'SELECT * FROM Estimate';
+    if (sinceISODate) sql += ` WHERE TxnDate >= '${sinceISODate}'`;
+    sql += ' ORDER BY MetaData.CreateTime DESC MAXRESULTS 200';
+
+    const result = await this.request<{ QueryResponse?: { Estimate?: QBEstimate[] } }>(
+      `/query?query=${encodeURIComponent(sql)}&minorversion=70`,
+    );
+    return result.QueryResponse?.Estimate ?? [];
+  }
+
   // ── Invoices ────────────────────────────────────────────────────
 
   async getInvoicesByCustomer(
@@ -447,6 +468,25 @@ export class QuickBooksClient {
 
     const result = await this.request<{ QueryResponse?: { Invoice?: QBInvoice[] } }>(
       `/query?query=${encodeURIComponent(sql)}&minorversion=70`
+    );
+    return result.QueryResponse?.Invoice ?? [];
+  }
+
+  /**
+   * List recent invoices across all customers. Used by the deal-spine
+   * reconcile cron to advance deals into Paid (Balance = 0) or Job Done
+   * (Balance > 0) without depending on per-customer iteration.
+   *
+   * Callers filter by `Balance` client-side (it's queryable in QB but the
+   * field semantics are clearer when the cron logic owns the rule).
+   */
+  async listRecentInvoices(sinceISODate?: string): Promise<QBInvoice[]> {
+    let sql = 'SELECT * FROM Invoice';
+    if (sinceISODate) sql += ` WHERE TxnDate >= '${sinceISODate}'`;
+    sql += ' ORDER BY MetaData.CreateTime DESC MAXRESULTS 200';
+
+    const result = await this.request<{ QueryResponse?: { Invoice?: QBInvoice[] } }>(
+      `/query?query=${encodeURIComponent(sql)}&minorversion=70`,
     );
     return result.QueryResponse?.Invoice ?? [];
   }
