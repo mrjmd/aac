@@ -34,7 +34,10 @@ vi.mock('../lib/env.js', () => ({
   }),
 }));
 
-vi.mock('../lib/cron.js', () => ({ verifyCronAuth: () => true }));
+vi.mock('../lib/cron.js', async () => {
+  const actual = await vi.importActual<typeof import('../lib/cron.js')>('../lib/cron.js');
+  return { ...actual, verifyCronAuth: () => true };
+});
 
 vi.mock('../lib/redis.js', () => ({
   markCronAction: vi.fn().mockResolvedValue(true),

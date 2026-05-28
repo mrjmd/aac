@@ -21,16 +21,13 @@ import { createLogger } from '@aac/shared-utils/logger';
 import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { getCalendar, getPipedrive, getQuo } from '../../lib/clients.js';
 import { getEnv } from '../../lib/env.js';
-import { verifyCronAuth } from '../../lib/cron.js';
+import { verifyCronAuth, REMINDER_COLOR_IDS, extractFirstName, getDayRangeEastern } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
 import { renderTemplate } from '../../lib/templates.js';
 import { matchEventToPerson } from '../../lib/job-customer-match.js';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const log = createLogger('cron:job-reminders');
-
-/** Color IDs to include: green (job), yellow (callback), purple (assessment) */
-const REMINDER_COLOR_IDS = ['10', '5', '3'];
 
 interface ReminderResult {
   eventId: string;
@@ -41,16 +38,6 @@ interface ReminderResult {
   phone: string | null;
   status: 'sent' | 'skipped_dedup' | 'skipped_no_person' | 'skipped_no_phone' | 'error';
   error?: string;
-}
-
-/**
- * Extract the first name from a full name string.
- * "John Smith" → "John", "John" → "John", "" → "there"
- */
-function extractFirstName(fullName: string): string {
-  const trimmed = fullName.trim();
-  if (!trimmed) return 'there';
-  return trimmed.split(/\s+/)[0];
 }
 
 /**
@@ -79,33 +66,6 @@ function formatDate(isoDateTime: string): string {
   });
 }
 
-/**
- * Get tomorrow's date range in ISO format (Eastern timezone).
- * If runDate is provided (YYYY-MM-DD), treat that as "today" and
- * return the day after. This simulates running the cron on that date.
- */
-function getTomorrowRange(runDate?: string): { timeMin: string; timeMax: string; dateLabel: string } {
-  let base: Date;
-
-  if (runDate && /^\d{4}-\d{2}-\d{2}$/.test(runDate)) {
-    base = new Date(runDate + 'T12:00:00-04:00'); // Noon Eastern to avoid DST edge cases
-  } else {
-    base = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  }
-
-  base.setDate(base.getDate() + 1);
-  const year = base.getFullYear();
-  const month = String(base.getMonth() + 1).padStart(2, '0');
-  const day = String(base.getDate()).padStart(2, '0');
-
-  const dateLabel = `${year}-${month}-${day}`;
-  return {
-    timeMin: `${dateLabel}T00:00:00-04:00`,
-    timeMax: `${dateLabel}T23:59:59-04:00`,
-    dateLabel,
-  };
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -125,7 +85,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const calendar = getCalendar();
     const pipedrive = getPipedrive();
 
-    const { timeMin, timeMax, dateLabel } = getTomorrowRange(dateOverride);
+    const { timeMin, timeMax, dateLabel } = getDayRangeEastern(1, dateOverride);
 
     log.info('Job reminders cron started', { isDryRun, dateLabel, timeMin, timeMax });
 

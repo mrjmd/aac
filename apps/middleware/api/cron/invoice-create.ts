@@ -24,23 +24,19 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
 import { getCalendar, getPipedrive, getQuo, getQuickBooks } from '../../lib/clients.js';
 import { getEnv } from '../../lib/env.js';
-import { verifyCronAuth } from '../../lib/cron.js';
+import {
+  verifyCronAuth,
+  GREEN_COLOR_IDS,
+  NON_JOB_KEYWORDS,
+  MIN_JOB_DURATION_MINUTES,
+  getDayRangeEastern,
+  isoDateDaysAgo,
+} from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
 import { matchEventToPerson, matchPersonToQBCustomer } from '../../lib/job-customer-match.js';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const log = createLogger('cron:invoice-create');
-
-const COLOR_IDS = ['10'];
-const EXCLUDE_KEYWORDS = ['callback', 'lunch', 'dinner', 'meeting', 'estimate-only', 'consultation-only'];
-const MIN_DURATION_MINUTES = 120;
-
-/** ISO date (YYYY-MM-DD) for "any invoice for this customer since" dedupe check */
-function isoDateDaysAgo(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
 
 interface CreateResult {
   eventId: string;
@@ -65,24 +61,6 @@ interface CreateResult {
   error?: string;
 }
 
-function getTodayRange(runDate?: string): { timeMin: string; timeMax: string; dateLabel: string } {
-  let base: Date;
-  if (runDate && /^\d{4}-\d{2}-\d{2}$/.test(runDate)) {
-    base = new Date(runDate + 'T12:00:00-04:00');
-  } else {
-    base = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  }
-  const year = base.getFullYear();
-  const month = String(base.getMonth() + 1).padStart(2, '0');
-  const day = String(base.getDate()).padStart(2, '0');
-  const dateLabel = `${year}-${month}-${day}`;
-  return {
-    timeMin: `${dateLabel}T00:00:00-04:00`,
-    timeMax: `${dateLabel}T23:59:59-04:00`,
-    dateLabel,
-  };
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   if (!verifyCronAuth(req, res)) return;
@@ -101,17 +79,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const qb = getQuickBooks();
     const quo = getQuo();
 
-    const { timeMin, timeMax, dateLabel } = getTodayRange(dateOverride);
+    const { timeMin, timeMax, dateLabel } = getDayRangeEastern(0, dateOverride);
     log.info('Invoice-create cron started', { isDryRun, dateLabel });
 
     const events = await calendar.listEvents({
       timeMin,
       timeMax,
       attendeeEmails: env.google.technicianEmails,
-      colorIds: COLOR_IDS,
+      colorIds: GREEN_COLOR_IDS,
       requireLocation: true,
-      excludeKeywords: EXCLUDE_KEYWORDS,
-      minDurationMinutes: MIN_DURATION_MINUTES,
+      excludeKeywords: NON_JOB_KEYWORDS,
+      minDurationMinutes: MIN_JOB_DURATION_MINUTES,
     });
 
     log.info('Today\'s jobs found', { count: events.length });

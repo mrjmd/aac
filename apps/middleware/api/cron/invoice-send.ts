@@ -22,16 +22,20 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
 import { getCalendar, getPipedrive, getQuickBooks } from '../../lib/clients.js';
 import { getEnv } from '../../lib/env.js';
-import { verifyCronAuth } from '../../lib/cron.js';
+import {
+  verifyCronAuth,
+  GREEN_COLOR_IDS,
+  NON_JOB_KEYWORDS,
+  MIN_JOB_DURATION_MINUTES,
+  getDayRangeEastern,
+  isoDateDaysAgo,
+} from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
 import { matchEventToPerson, matchPersonToQBCustomer } from '../../lib/job-customer-match.js';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const log = createLogger('cron:invoice-send');
 
-const COLOR_IDS = ['10'];
-const EXCLUDE_KEYWORDS = ['callback', 'lunch', 'dinner', 'meeting', 'estimate-only', 'consultation-only'];
-const MIN_DURATION_MINUTES = 120;
 const DEFAULT_DELAY_DAYS = 2;
 
 /** Look back enough to find the invoice created on or near the job day */
@@ -58,31 +62,6 @@ interface SendResult {
   error?: string;
 }
 
-function getPastDateRange(daysAgo: number, runDate?: string): { timeMin: string; timeMax: string; dateLabel: string } {
-  let base: Date;
-  if (runDate && /^\d{4}-\d{2}-\d{2}$/.test(runDate)) {
-    base = new Date(runDate + 'T12:00:00-04:00');
-  } else {
-    base = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  }
-  base.setDate(base.getDate() - daysAgo);
-  const year = base.getFullYear();
-  const month = String(base.getMonth() + 1).padStart(2, '0');
-  const day = String(base.getDate()).padStart(2, '0');
-  const dateLabel = `${year}-${month}-${day}`;
-  return {
-    timeMin: `${dateLabel}T00:00:00-04:00`,
-    timeMax: `${dateLabel}T23:59:59-04:00`,
-    dateLabel,
-  };
-}
-
-function isoDateDaysAgo(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   if (!verifyCronAuth(req, res)) return;
@@ -101,17 +80,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const pipedrive = getPipedrive();
     const qb = getQuickBooks();
 
-    const { timeMin, timeMax, dateLabel } = getPastDateRange(delayDays, dateOverride);
+    const { timeMin, timeMax, dateLabel } = getDayRangeEastern(-delayDays, dateOverride);
     log.info('Invoice-send cron started', { isDryRun, delayDays, dateLabel });
 
     const events = await calendar.listEvents({
       timeMin,
       timeMax,
       attendeeEmails: env.google.technicianEmails,
-      colorIds: COLOR_IDS,
+      colorIds: GREEN_COLOR_IDS,
       requireLocation: true,
-      excludeKeywords: EXCLUDE_KEYWORDS,
-      minDurationMinutes: MIN_DURATION_MINUTES,
+      excludeKeywords: NON_JOB_KEYWORDS,
+      minDurationMinutes: MIN_JOB_DURATION_MINUTES,
     });
 
     log.info('Lookback jobs found', { count: events.length });
