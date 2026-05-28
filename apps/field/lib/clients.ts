@@ -11,6 +11,7 @@ import { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import { GoogleMapsClient } from '@aac/api-clients/google-maps';
 import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
+import { QuoClient } from '@aac/api-clients/quo';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
@@ -21,6 +22,7 @@ let _drive: GoogleDriveClient | null = null;
 let _maps: GoogleMapsClient | null = null;
 let _pipedrive: PipedriveClient | null = null;
 let _quickbooks: QuickBooksClient | null = null;
+let _quo: QuoClient | null = null;
 let _redis: Redis | null = null;
 
 export function getRedis(): Redis {
@@ -62,6 +64,17 @@ export function getPipedrive(): PipedriveClient {
     });
   }
   return _pipedrive;
+}
+
+export function getQuo(): QuoClient {
+  if (!_quo) {
+    const env = getEnv();
+    _quo = new QuoClient({
+      apiKey: env.quo.apiKey,
+      phoneNumber: env.quo.phoneNumber,
+    });
+  }
+  return _quo;
 }
 
 export function getQuickBooks(): QuickBooksClient {

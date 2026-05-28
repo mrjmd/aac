@@ -50,6 +50,15 @@ export interface EnvConfig {
     clientSecret: string;
     realmId: string;
   };
+  /**
+   * Quo/OpenPhone — outbound SMS only (no inbound webhooks here; those live
+   * in middleware). Phone number is the AAC business line that all customer
+   * texts originate from.
+   */
+  quo: {
+    apiKey: string;
+    phoneNumber: string;
+  };
   redis: {
     url: string;
     token: string;
@@ -111,6 +120,10 @@ export function getEnv(): EnvConfig {
       clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),
       clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
       realmId: requireEnv('QUICKBOOKS_REALM_ID'),
+    },
+    quo: {
+      apiKey: requireEnv('QUO_API_KEY'),
+      phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
     },
     redis: {
       url: requireEnv('UPSTASH_REDIS_REST_URL'),

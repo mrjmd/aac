@@ -1,31 +1,57 @@
 import Link from 'next/link';
-import { requireSession } from '@/lib/session';
+import { PipedriveClient } from '@aac/api-clients/pipedrive';
+import { normalizePhone } from '@aac/shared-utils/phone';
+import { getCalendar, getPipedrive } from '@/lib/clients';
+import { matchEventToPerson } from '@/lib/customer-match';
+import { getEasternRangeForDate, getTodayEasternDate, formatEventTime } from '@/lib/dates';
+import { classifyEvent } from '@/lib/event-classification';
 import { getEnv } from '@/lib/env';
+import { requireSession } from '@/lib/session';
+import RunningLateList, { type UpcomingEvent } from './running-late-list';
 
 export const dynamic = 'force-dynamic';
-
-const PLANNED_CATEGORIES = [
-  {
-    title: 'Running late',
-    body: 'Pick how late (5 / 15 / 30 / 60+ min). Auto-texts the customer with an updated ETA and pings Matt.',
-  },
-  {
-    title: 'Customer not home',
-    body: "Texts the customer that you're at the door, escalates to Matt if no response after a few minutes.",
-  },
-  {
-    title: 'Scope changed',
-    body: "Free-text note + photos. Texts Matt so he can decide whether to update the estimate before you finish.",
-  },
-  {
-    title: 'Something else',
-    body: 'Free-text problem report direct to Matt.',
-  },
-];
 
 export default async function IssuePage() {
   const session = await requireSession();
   const env = getEnv();
+
+  // Load today's tech-shaped events that haven't ended yet, then resolve each
+  // to a PD person so we know whether we have a phone to text. Customer-match
+  // can be slow on cold cache — do it in parallel.
+  const today = getTodayEasternDate();
+  const { timeMin, timeMax } = getEasternRangeForDate(today);
+  const allEvents = await getCalendar()
+    .listEvents({ timeMin, timeMax, attendeeEmails: env.technicianEmails })
+    .catch((err) => {
+      console.error('issue: failed to list events', err);
+      return [] as Awaited<ReturnType<ReturnType<typeof getCalendar>['listEvents']>>;
+    });
+
+  const now = Date.now();
+  const candidates = allEvents
+    .filter((e) => classifyEvent(e.colorId) !== 'other')
+    .filter((e) => new Date(e.end).getTime() > now)
+    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+
+  const pd = getPipedrive();
+  const upcoming: UpcomingEvent[] = await Promise.all(
+    candidates.map(async (evt): Promise<UpcomingEvent> => {
+      let hasPhone = false;
+      try {
+        const person = await matchEventToPerson(evt, pd);
+        const raw = person ? PipedriveClient.getPrimaryPhone(person) : null;
+        hasPhone = !!(raw && normalizePhone(raw));
+      } catch (err) {
+        console.error('issue: PD lookup failed', evt.id, err);
+      }
+      return {
+        id: evt.id,
+        summary: evt.summary || '(untitled)',
+        startLabel: formatEventTime(evt.start),
+        hasPhone,
+      };
+    }),
+  );
 
   return (
     <main className="min-h-dvh">
@@ -44,12 +70,25 @@ export default async function IssuePage() {
         </div>
       </header>
 
-      <section className="mx-auto max-w-3xl px-4 py-6">
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <p className="text-sm font-medium text-amber-900">
-            Coming soon — for now, call or text Matt directly.
+      <section className="mx-auto max-w-3xl px-4 py-6 space-y-8">
+        <div>
+          <h2 className="mb-1 font-display text-base font-bold text-aac-dark">
+            Running late
+          </h2>
+          <p className="mb-4 text-xs text-zinc-500">
+            Texts the customer from the AAC business line that you&apos;re running behind.
           </p>
-          <div className="mt-3 flex gap-2">
+          <RunningLateList events={upcoming} />
+        </div>
+
+        <div>
+          <h2 className="mb-3 font-display text-base font-bold text-aac-dark">
+            Anything else
+          </h2>
+          <p className="mb-3 text-sm text-zinc-600">
+            Customer not home, scope changed, or something else — call or text Matt.
+          </p>
+          <div className="flex gap-2">
             <a
               href={`tel:${env.notifications.alertPhoneNumber}`}
               className="flex-1 rounded-lg bg-aac-blue px-4 py-3 text-center text-sm font-bold uppercase tracking-wide text-white shadow-sm active:bg-aac-blue/85"
@@ -65,24 +104,7 @@ export default async function IssuePage() {
           </div>
         </div>
 
-        <div className="mt-6">
-          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-            What this page will do
-          </p>
-          <ul className="mt-3 space-y-3">
-            {PLANNED_CATEGORIES.map((c) => (
-              <li
-                key={c.title}
-                className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm"
-              >
-                <p className="font-display text-sm font-bold text-aac-dark">{c.title}</p>
-                <p className="mt-1 text-sm text-zinc-600">{c.body}</p>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <p className="mt-6 text-center text-xs text-zinc-500">
+        <p className="text-center text-xs text-zinc-500">
           Signed in as {session.email}
         </p>
       </section>
