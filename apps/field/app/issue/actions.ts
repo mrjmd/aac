@@ -23,7 +23,7 @@ export async function sendRunningLateText(
   eventId: string,
   minutes: number,
 ): Promise<SendLateTextResult> {
-  await requireSession();
+  const session = await requireSession();
 
   if (!ALLOWED_MINUTES.has(minutes)) {
     return { ok: false, error: `Invalid minutes value: ${minutes}` };
@@ -51,7 +51,9 @@ export async function sendRunningLateText(
     return { ok: false, error: 'No phone on file for this customer.' };
   }
 
-  const text = `Our technician is running a few minutes behind and will be about ${minutes} minutes late. Please reach out if you have any concerns.`;
+  const techFirstName = session.name.trim().split(/\s+/)[0] || '';
+  const techPhrase = techFirstName ? `our technician ${techFirstName}` : 'our technician';
+  const text = `Hey just a heads up, ${techPhrase} is on his way, but is running slightly behind schedule. Looks like he will be about ${minutes} minutes late. Let me know if you have any concerns.`;
 
   try {
     await getQuo().sendMessage(phone, text);
