@@ -204,6 +204,54 @@ demands it.
   is server-side; HTTP-referrer restriction breaks Distance Matrix) plus
   API restriction limited to Distance Matrix only.
 
+## Escalation & org chart (future-state)
+
+**Where this matters today.** The /issue page surfaces "Call Matt / Text Matt"
+as the catch-all when the tech needs a human. The event detail page does the
+same for the customer's primary phone. Both are wired through env vars
+(`ALERT_PHONE_NUMBER`, `ESCALATION_NAME`) and a thin
+`getEscalationTarget(session)` helper. Single tech (Mike), single
+escalation target (Matt), no real lookup yet — the helper exists so the
+call sites are already shaped for the eventual org-chart abstraction.
+
+**Where this needs to go.** As soon as there's a second tech, a second
+person managing dispatch, or any AI triage layer in front of the human,
+"Matt" stops being the right answer at every call site. The shape we're
+heading toward:
+
+- **Org chart as data.** A small table (probably Turso/Drizzle alongside the
+  marketing app, or just Redis JSON in MVP) of people with:
+  `{ email, displayName, role, phoneE164, managerEmail }`. Roles include
+  owner, dispatcher, ops manager, technician, AI-triage (a synthetic
+  "person").
+- **Lookup-by-context, not by-role.** `getEscalationTarget(session, issueType)`
+  becomes the entry point. The tech's manager is looked up by walking
+  `managerEmail` until a role that handles `issueType` is found. Today
+  Mike → Matt for everything; in the future Mike → AI-triage for scope
+  changes, Mike → Dispatcher for "running late > 30 min," Mike → Matt for
+  payment disputes.
+- **Issue routing.** Different issue types resolve to different escalation
+  targets. Scope change first goes to the AI re-estimate agent (which
+  texts the customer a revised price autonomously if the change is within
+  guardrails) and only escalates to a human if the AI defers. "Customer
+  not home" pings dispatch first (they have visibility into the schedule);
+  scope change pings the owner only on dollar amounts above a threshold.
+  The org-chart row for each role carries the issue types it handles.
+- **All call sites read through the abstraction.** "Matt" / Matt's number
+  should never appear hardcoded in UI strings, action handlers, or env
+  variables once this exists. Today: `escalation.name` env var as the
+  pressure-release valve so you can rename without redeploying. Tomorrow:
+  the row in the org-chart table.
+
+**Not building this now.** Single tech, single owner, single number — the
+abstraction is over-engineering until there's at least a second human
+involved. Captured here so the existing code stays compatible with the
+direction (env-driven name, `getEscalationTarget()` helper, no `"Matt"`
+literals in app code) and the design is ready when a salesperson hire,
+dispatcher, or AI-triage layer arrives. First trigger likely: the
+December 2025 salesperson hire creating a "non-owner answering customer
+escalations" role.
+
 ## Related
 
 - Architecture decisions: `docs/DECISIONS.md` (2026-05-27 entries on field app + Cron B kill)

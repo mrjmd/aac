@@ -66,6 +66,14 @@ export interface EnvConfig {
   notifications: {
     alertPhoneNumber: string;
   };
+  /**
+   * Who shows up in CTAs like "Call Matt" and where escalations land today.
+   * Forward-compatible stand-in for a real org chart — see
+   * docs/projects/apps-field.md → "Escalation & org chart".
+   */
+  escalation: {
+    name: string;
+  };
   /** Emails authorized to log into the field app */
   authWhitelist: string[];
   /** The technician(s) whose calendar events are displayed. */
@@ -131,6 +139,9 @@ export function getEnv(): EnvConfig {
     },
     notifications: {
       alertPhoneNumber: requireEnv('ALERT_PHONE_NUMBER'),
+    },
+    escalation: {
+      name: process.env.ESCALATION_NAME?.trim() || 'Matt',
     },
     authWhitelist: (process.env.AUTH_WHITELIST_EMAILS || 'mike@attackacrack.com,matt@attackacrack.com')
       .split(',')

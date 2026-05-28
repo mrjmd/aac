@@ -6,6 +6,7 @@ import { matchEventToPerson } from '@/lib/customer-match';
 import { getEasternRangeForDate, getTodayEasternDate, formatEventTime } from '@/lib/dates';
 import { classifyEvent } from '@/lib/event-classification';
 import { getEnv } from '@/lib/env';
+import { getEscalationTarget } from '@/lib/escalation';
 import { requireSession } from '@/lib/session';
 import RunningLateList, { type UpcomingEvent } from './running-late-list';
 
@@ -14,10 +15,11 @@ export const dynamic = 'force-dynamic';
 export default async function IssuePage() {
   const session = await requireSession();
   const env = getEnv();
+  const escalation = getEscalationTarget(session);
 
-  // Load today's tech-shaped events that haven't ended yet, then resolve each
-  // to a PD person so we know whether we have a phone to text. Customer-match
-  // can be slow on cold cache — do it in parallel.
+  // Today's tech-shaped events that haven't ended yet, each paired with the
+  // PD-resolved customer phone. Customer match can be slow on cold cache —
+  // do it in parallel.
   const today = getTodayEasternDate();
   const { timeMin, timeMax } = getEasternRangeForDate(today);
   const allEvents = await getCalendar()
@@ -36,11 +38,11 @@ export default async function IssuePage() {
   const pd = getPipedrive();
   const upcoming: UpcomingEvent[] = await Promise.all(
     candidates.map(async (evt): Promise<UpcomingEvent> => {
-      let hasPhone = false;
+      let customerPhone: string | null = null;
       try {
         const person = await matchEventToPerson(evt, pd);
         const raw = person ? PipedriveClient.getPrimaryPhone(person) : null;
-        hasPhone = !!(raw && normalizePhone(raw));
+        customerPhone = raw ? normalizePhone(raw) : null;
       } catch (err) {
         console.error('issue: PD lookup failed', evt.id, err);
       }
@@ -48,7 +50,7 @@ export default async function IssuePage() {
         id: evt.id,
         summary: evt.summary || '(untitled)',
         startLabel: formatEventTime(evt.start),
-        hasPhone,
+        customerPhone,
       };
     }),
   );
@@ -73,33 +75,33 @@ export default async function IssuePage() {
       <section className="mx-auto max-w-3xl px-4 py-6 space-y-8">
         <div>
           <h2 className="mb-1 font-display text-base font-bold text-aac-dark">
-            Running late
+            Today&apos;s upcoming jobs
           </h2>
           <p className="mb-4 text-xs text-zinc-500">
-            Texts the customer from the AAC business line that you&apos;re running behind.
+            Call or text the customer directly, or text them that you&apos;re running behind.
           </p>
           <RunningLateList events={upcoming} />
         </div>
 
         <div>
           <h2 className="mb-3 font-display text-base font-bold text-aac-dark">
-            Anything else
+            Other issue
           </h2>
           <p className="mb-3 text-sm text-zinc-600">
-            Customer not home, scope changed, or something else — call or text Matt.
+            Scope change, can&apos;t get access, or something else — get {escalation.name} on it.
           </p>
           <div className="flex gap-2">
             <a
-              href={`tel:${env.notifications.alertPhoneNumber}`}
+              href={`tel:${escalation.phoneE164}`}
               className="flex-1 rounded-lg bg-aac-blue px-4 py-3 text-center text-sm font-bold uppercase tracking-wide text-white shadow-sm active:bg-aac-blue/85"
             >
-              Call Matt
+              Call {escalation.name}
             </a>
             <a
-              href={`sms:${env.notifications.alertPhoneNumber}`}
+              href={`sms:${escalation.phoneE164}`}
               className="flex-1 rounded-lg border border-aac-blue px-4 py-3 text-center text-sm font-bold uppercase tracking-wide text-aac-blue active:bg-aac-blue/5"
             >
-              Text Matt
+              Text {escalation.name}
             </a>
           </div>
         </div>
