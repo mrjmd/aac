@@ -29,6 +29,7 @@ import {
 } from '../../lib/redis.js';
 import { getEnv } from '../../lib/env.js';
 import { getPipedrive, getGemini } from '../../lib/clients.js';
+import { ensureInboundLeadDeal } from '../../lib/inbound-deal.js';
 
 const log = createLogger('quo-webhook');
 
@@ -374,6 +375,23 @@ export async function POST(request: Request): Promise<Response> {
         phone: e164Phone,
         personId: pipedrivePersonId,
       });
+
+      // Stamp a Lead-stage deal so the agent's deal spine has the inbound
+      // signal from the start. Idempotent via external_id; failures are
+      // surfaced to /api/health but never break the webhook.
+      try {
+        await ensureInboundLeadDeal(pd, pipedrivePersonId, e164Phone);
+      } catch (error) {
+        log.error('Inbound lead deal creation failed', error as Error, {
+          personId: pipedrivePersonId,
+          phone: e164Phone,
+        });
+        await logHealthError(
+          'quo',
+          `Inbound lead deal creation failed: ${(error as Error).message}`,
+          { personId: String(pipedrivePersonId), phone: e164Phone },
+        );
+      }
     }
 
     // ============================================
