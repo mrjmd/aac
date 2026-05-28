@@ -38,7 +38,7 @@ This is why automation of Matt-and-Mike's existing daily flow comes before openi
 | # | Project | Goal | Status | Spec |
 |---|---|---|---|---|
 | 1 | **apps/field** | Tech-facing mobile web app for job completion (photos + payment status + auto-invoice) | Shipped to production 2026-05-28 | `projects/apps-field.md` |
-| 2 | **apps/agent** | Agent platform (comms line, deal spine, read-tool surface, intent classification) | Crawl steps 1–5 shipped 2026-05-28 (PD Deal CRUD + Quo conversation methods + middleware `[deal:N]` marker support + inbound-lead deal stamp on Quo webhook + nightly QB→PD deal reconcile cron); Crawl step 6 (one-shot backfill script) is next — **script can be written now; production run is gated on Funnel A Phase 1 cleanup completing.** | `projects/apps-agent.md` |
+| 2 | **apps/agent** | Agent platform (comms line, deal spine, read-tool surface, intent classification) | Crawl steps 1–6 shipped 2026-05-28 (PD Deal CRUD + Quo conversation methods + middleware `[deal:N]` marker support + inbound-lead deal stamp on Quo webhook + nightly QB→PD deal reconcile cron + one-shot backfill script). **Step 6 = script only; the production `--apply` run is gated on Funnel A Phase 1 cleanup.** Crawl steps 7–8 (apps/agent scaffold + error-surfacing tick) are next. | `projects/apps-agent.md` |
 | 3 | **Calendar scheduling automation** | Stub event creation on estimate approval; full slot-suggestion later | Depends on #2 | `projects/calendar-scheduling.md` |
 | 4 | **Estimate auto-drafting** | LLM drafts QB estimates from PD/Quo/calendar context; 3-day analysis spike first | Depends on #2 (tool surface) | `projects/estimate-auto-draft.md` |
 
