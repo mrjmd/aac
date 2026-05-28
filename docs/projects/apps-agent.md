@@ -158,8 +158,8 @@ on the agent line (raw, no diagnosis yet).
 
 **Middleware (deterministic deal work — fits existing patterns):**
 
-3. ⏳ **`[deal:N]` marker read + emit support** on `job-reminders`, `job-followups`, `invoice-create`: prefer marker if present, fall back to current name-match. Cron-created calendar events get the marker stamped at creation. *Next.*
-4. ☐ **Deal-aware webhook handlers** — QB estimate created → create deal at Quote Sent; QB invoice paid → Paid; PD person created from inbound → create deal at Lead.
+3. ✅ **`[deal:N]` marker read support** — *Shipped 2026-05-28.* `parseDealMarker` helper in `lib/cron.ts` + new `matchEventToDealAndPerson(event, pipedrive)` in `lib/job-customer-match.ts` that prefers `deal.personId` from a marker, falls back through the existing `PipedriveID:` marker + name search + compound-name expansion. `matchEventToPerson` becomes a thin wrapper so all three crons (job-reminders, job-followups, invoice-create) get the marker fast-path automatically. `invoice-create` additionally uses `deal.qbEstimateId` to skip the customer-wide estimate search entirely when the marker is present — bypasses both the no-accepted-estimate and multi-estimate-ambiguity branches. Added `QuickBooksClient.getEstimate(id)` for the direct lookup. Marker emit on cron-created events is N/A (these crons read but don't create events); emit happens in step 4 (webhook handlers) + apps/agent scheduling. Also bundled in: middleware-cleanup item #1 (cron scaffolding consolidated into `lib/cron.ts`). 118 middleware tests + 13 monorepo packages green.
+4. ⏳ **Deal-aware webhook handlers** — QB estimate created → create deal at Quote Sent; QB invoice paid → Paid; PD person created from inbound → create deal at Lead. *Next.*
 5. ☐ **Nightly deal-reconcile cron** — reconciles QB estimate/invoice state into deal stages; catches anything the webhook handlers missed.
 
 **Tools (one-shot script):**

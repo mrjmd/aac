@@ -5,7 +5,12 @@
  * ONLY place in the middleware that reads env vars for API configuration.
  */
 
-import { PipedriveClient } from '@aac/api-clients/pipedrive';
+import {
+  PipedriveClient,
+  DEAL_PIPELINE_ID,
+  DEAL_STAGE_IDS,
+  DEAL_FIELD_HASHES,
+} from '@aac/api-clients/pipedrive';
 import { QuoClient } from '@aac/api-clients/quo';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { GeminiClient } from '@aac/api-clients/gemini';
@@ -26,6 +31,11 @@ export function getPipedrive(): PipedriveClient {
       apiKey: env.pipedrive.apiKey,
       companyDomain: env.pipedrive.companyDomain,
       systemUserId: env.pipedrive.systemUserId,
+      dealSpine: {
+        pipelineId: DEAL_PIPELINE_ID,
+        stageIds: DEAL_STAGE_IDS,
+        fieldHashes: DEAL_FIELD_HASHES,
+      },
     });
   }
   return _pipedrive;

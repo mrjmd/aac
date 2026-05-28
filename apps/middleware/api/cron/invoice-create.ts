@@ -33,7 +33,8 @@ import {
   isoDateDaysAgo,
 } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
-import { matchEventToPerson, matchPersonToQBCustomer } from '../../lib/job-customer-match.js';
+import { matchEventToDealAndPerson, matchPersonToQBCustomer } from '../../lib/job-customer-match.js';
+import type { QBEstimate } from '@aac/api-clients/quickbooks';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const log = createLogger('cron:invoice-create');
@@ -151,7 +152,7 @@ async function processEvent(
       }
     }
 
-    const person = await matchEventToPerson(event, pipedrive);
+    const { deal, person } = await matchEventToDealAndPerson(event, pipedrive);
     if (!person) {
       log.warn('No Pipedrive person', { eventId: event.id, summary: event.summary });
       return { ...base, personName: null, qbCustomerId: null, estimateId: null, invoiceId: null, amount: null, status: 'skipped_no_person' };
@@ -178,40 +179,61 @@ async function processEvent(
       };
     }
 
-    const accepted = await qb.getEstimatesByCustomer(customer.Id, 'Accepted');
-    if (accepted.length === 0) {
-      return { ...base, personName: person.name, qbCustomerId: customer.Id, estimateId: null, invoiceId: null, amount: null, status: 'skipped_no_accepted_estimate' };
-    }
-
-    // Multi-estimate ambiguity → don't guess. Notify Matt; he handles manually.
-    if (accepted.length > 1) {
-      const lines = accepted
-        .map((e) => `  • Est ${e.DocNumber ?? e.Id}: $${e.TotalAmt ?? '?'}`)
-        .join('\n');
-      const message =
-        `AAC auto-invoice SKIPPED — multiple accepted estimates for ${customer.DisplayName}.\n` +
-        `Today's job: ${event.summary} @ ${event.location || 'n/a'}\n` +
-        `${lines}\nCreate the right invoice manually in QB.`;
-      if (!isDryRun) {
-        try {
-          await quo.sendMessage(alertPhone, message);
-        } catch (alertErr) {
-          log.error('Failed to send multi-estimate alert SMS', alertErr as Error, { eventId: event.id });
-        }
+    // Deal-marker fast path: deal.qbEstimateId is the canonical estimate
+    // for this job; trust it over the customer-wide "find accepted estimates"
+    // search. Skips both the no-accepted-estimate and multi-estimate paths
+    // because the deal already disambiguated which estimate this job belongs to.
+    let estimate: QBEstimate | null = null;
+    if (deal?.qbEstimateId) {
+      const direct = await qb.getEstimate(deal.qbEstimateId);
+      if (direct) {
+        estimate = direct;
+        log.info('Using estimate from deal marker', {
+          eventId: event.id, dealId: deal.id, estimateId: direct.Id,
+        });
+      } else {
+        log.warn('Deal marker references missing QB estimate, falling back to search', {
+          eventId: event.id, dealId: deal.id, qbEstimateId: deal.qbEstimateId,
+        });
       }
-      return {
-        ...base,
-        personName: person.name,
-        qbCustomerId: customer.Id,
-        estimateId: null,
-        invoiceId: null,
-        amount: null,
-        status: 'skipped_multi_accepted_estimate',
-        reason: `${accepted.length} accepted estimates`,
-      };
     }
 
-    const estimate = accepted[0];
+    if (!estimate) {
+      const accepted = await qb.getEstimatesByCustomer(customer.Id, 'Accepted');
+      if (accepted.length === 0) {
+        return { ...base, personName: person.name, qbCustomerId: customer.Id, estimateId: null, invoiceId: null, amount: null, status: 'skipped_no_accepted_estimate' };
+      }
+
+      // Multi-estimate ambiguity → don't guess. Notify Matt; he handles manually.
+      if (accepted.length > 1) {
+        const lines = accepted
+          .map((e) => `  • Est ${e.DocNumber ?? e.Id}: $${e.TotalAmt ?? '?'}`)
+          .join('\n');
+        const message =
+          `AAC auto-invoice SKIPPED — multiple accepted estimates for ${customer.DisplayName}.\n` +
+          `Today's job: ${event.summary} @ ${event.location || 'n/a'}\n` +
+          `${lines}\nCreate the right invoice manually in QB.`;
+        if (!isDryRun) {
+          try {
+            await quo.sendMessage(alertPhone, message);
+          } catch (alertErr) {
+            log.error('Failed to send multi-estimate alert SMS', alertErr as Error, { eventId: event.id });
+          }
+        }
+        return {
+          ...base,
+          personName: person.name,
+          qbCustomerId: customer.Id,
+          estimateId: null,
+          invoiceId: null,
+          amount: null,
+          status: 'skipped_multi_accepted_estimate',
+          reason: `${accepted.length} accepted estimates`,
+        };
+      }
+
+      estimate = accepted[0];
+    }
 
     if (isDryRun) {
       return {

@@ -396,6 +396,28 @@ export class QuickBooksClient {
 
   // ── Estimates ───────────────────────────────────────────────────
 
+  /**
+   * Fetch a single Estimate by its QB Id. Returns null on 404 (deleted /
+   * unknown ID) instead of throwing — callers that store an estimate ID
+   * (e.g. PD deal.qb_estimate_id) shouldn't have to special-case 404 vs.
+   * "this estimate doesn't belong to this deal anymore."
+   */
+  async getEstimate(estimateId: string): Promise<QBEstimate | null> {
+    try {
+      const result = await this.request<{ Estimate: QBEstimate }>(
+        `/estimate/${encodeURIComponent(estimateId)}?minorversion=70`,
+      );
+      return result.Estimate || null;
+    } catch (error) {
+      const msg = (error as Error).message;
+      if (msg.includes('404') || msg.includes('not found')) {
+        log.warn('Estimate not found', { estimateId });
+        return null;
+      }
+      throw error;
+    }
+  }
+
   async getEstimatesByCustomer(
     customerId: string,
     status?: QBEstimateStatus

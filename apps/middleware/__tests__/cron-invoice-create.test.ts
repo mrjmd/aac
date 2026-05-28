@@ -3,9 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockListEvents = vi.fn();
 const mockSearchPersonByName = vi.fn();
 const mockGetPerson = vi.fn();
+const mockGetDeal = vi.fn();
 const mockSearchCustomerByEmail = vi.fn();
 const mockSearchCustomerByName = vi.fn();
 const mockGetInvoicesByCustomer = vi.fn();
+const mockGetEstimate = vi.fn();
 const mockGetEstimatesByCustomer = vi.fn();
 const mockCreateInvoiceFromEstimate = vi.fn();
 const mockSendMessage = vi.fn();
@@ -15,11 +17,13 @@ vi.mock('../lib/clients.js', () => ({
   getPipedrive: () => ({
     searchPersonByName: mockSearchPersonByName,
     getPerson: mockGetPerson,
+    getDeal: mockGetDeal,
   }),
   getQuickBooks: () => ({
     searchCustomerByEmail: mockSearchCustomerByEmail,
     searchCustomerByName: mockSearchCustomerByName,
     getInvoicesByCustomer: mockGetInvoicesByCustomer,
+    getEstimate: mockGetEstimate,
     getEstimatesByCustomer: mockGetEstimatesByCustomer,
     createInvoiceFromEstimate: mockCreateInvoiceFromEstimate,
   }),
@@ -82,9 +86,11 @@ beforeEach(() => {
   mockListEvents.mockResolvedValue([]);
   mockSearchPersonByName.mockResolvedValue(null);
   mockGetPerson.mockResolvedValue(null);
+  mockGetDeal.mockResolvedValue(null);
   mockSearchCustomerByEmail.mockResolvedValue(null);
   mockSearchCustomerByName.mockResolvedValue(null);
   mockGetInvoicesByCustomer.mockResolvedValue([]);
+  mockGetEstimate.mockResolvedValue(null);
   mockGetEstimatesByCustomer.mockResolvedValue([]);
   mockCreateInvoiceFromEstimate.mockResolvedValue({ Id: 'qb-i-99', TotalAmt: 1500 });
   mockSendMessage.mockResolvedValue({ id: 'm' });
@@ -223,5 +229,73 @@ describe('cron/invoice-create', () => {
     expect(body.results[0].status).toBe('skipped_existing_invoice');
     expect(body.results[0].invoiceId).toBe('qb-i-prev');
     expect(mockCreateInvoiceFromEstimate).not.toHaveBeenCalled();
+  });
+
+  describe('deal marker fast path', () => {
+    const markedEvent = { ...event, description: 'Repair details [deal:42]' };
+
+    it('uses deal.qbEstimateId directly and skips the estimate search', async () => {
+      mockListEvents.mockResolvedValue([markedEvent]);
+      mockGetDeal.mockResolvedValue({
+        id: 42, personId: 1, qbEstimateId: 'qb-est-deal-7', stage: 'job_scheduled',
+      });
+      mockGetPerson.mockResolvedValue(person);
+      mockSearchCustomerByEmail.mockResolvedValue(customer);
+      mockGetEstimate.mockResolvedValue({ Id: 'qb-est-deal-7', TotalAmt: 2200 });
+
+      const res = makeRes();
+      await handler(makeReq(), res);
+
+      const body = res.json.mock.calls[0][0];
+      expect(body.results[0].status).toBe('created');
+      expect(body.results[0].estimateId).toBe('qb-est-deal-7');
+      expect(mockGetEstimate).toHaveBeenCalledWith('qb-est-deal-7');
+      // The customer-wide search must NOT run when the deal already named the estimate
+      expect(mockGetEstimatesByCustomer).not.toHaveBeenCalled();
+      // And we don't touch name-match either
+      expect(mockSearchPersonByName).not.toHaveBeenCalled();
+    });
+
+    it('skips both the multi-estimate alert AND the no-estimate skip when deal pins the estimate', async () => {
+      // The customer has multiple accepted estimates — without the deal marker
+      // this would trigger the multi-estimate alert SMS. With the marker, we
+      // bypass that whole check.
+      mockListEvents.mockResolvedValue([markedEvent]);
+      mockGetDeal.mockResolvedValue({
+        id: 42, personId: 1, qbEstimateId: 'qb-est-deal-7', stage: 'job_scheduled',
+      });
+      mockGetPerson.mockResolvedValue(person);
+      mockSearchCustomerByEmail.mockResolvedValue(customer);
+      mockGetEstimate.mockResolvedValue({ Id: 'qb-est-deal-7', TotalAmt: 2200 });
+      mockGetEstimatesByCustomer.mockResolvedValue([
+        { Id: 'qb-e-a', TotalAmt: 1000 },
+        { Id: 'qb-e-b', TotalAmt: 2200 },
+      ]);
+
+      const res = makeRes();
+      await handler(makeReq(), res);
+
+      expect(mockSendMessage).not.toHaveBeenCalled();
+      expect(mockGetEstimatesByCustomer).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the customer-wide estimate search when the deal references a missing estimate', async () => {
+      mockListEvents.mockResolvedValue([markedEvent]);
+      mockGetDeal.mockResolvedValue({
+        id: 42, personId: 1, qbEstimateId: 'qb-est-gone', stage: 'job_scheduled',
+      });
+      mockGetPerson.mockResolvedValue(person);
+      mockSearchCustomerByEmail.mockResolvedValue(customer);
+      mockGetEstimate.mockResolvedValue(null); // missing
+      mockGetEstimatesByCustomer.mockResolvedValue([{ Id: 'qb-e-7', TotalAmt: 1500 }]);
+
+      const res = makeRes();
+      await handler(makeReq(), res);
+
+      const body = res.json.mock.calls[0][0];
+      expect(body.results[0].status).toBe('created');
+      expect(body.results[0].estimateId).toBe('qb-e-7');
+      expect(mockGetEstimatesByCustomer).toHaveBeenCalled();
+    });
   });
 });
