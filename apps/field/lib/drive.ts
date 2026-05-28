@@ -4,13 +4,20 @@
  * The Calendar API returns attachment URLs but no metadata about who
  * uploaded each one. To filter out photos the technician took themselves
  * (we only want context photos Matt pre-attached for Mike to review), we
- * have to call Drive for each file. Results are cached in Redis indefinitely
- * — file ownership doesn't change after upload.
+ * have to call Drive for each file.
+ *
+ * Cache TTL is intentionally short (30 min) because Drive's `thumbnailLink`
+ * is a signed URL that expires — caching it indefinitely returns 403s once
+ * the signature lapses. 30 min is well inside Drive's signature window and
+ * gives a reasonable cache hit rate for repeat page loads.
  */
 
 import { GoogleDriveClient, type DriveFileInfo } from '@aac/api-clients/google-drive';
 import { keys } from '@aac/shared-utils/redis';
 import { getDrive, getRedis } from './clients';
+
+const DRIVE_INFO_TTL_SECONDS = 30 * 60;     // 30 min — bounded by Drive's signed URL lifetime
+const DRIVE_NULL_TTL_SECONDS = 24 * 60 * 60; // 24h — "this file is gone / inaccessible" doesn't flip back fast
 
 /**
  * Extract the Drive file ID from a calendar attachment fileUrl.
@@ -58,11 +65,10 @@ export async function getDriveInfos(
     const pipeline = redis.pipeline();
     missing.forEach((id, i) => {
       out.set(id, fetched[i]);
-      // Cache nulls too with shorter TTL — avoids hammering Drive for permanently-bad IDs
       if (fetched[i]) {
-        pipeline.set(keys.driveFileInfo(id), fetched[i]);
+        pipeline.set(keys.driveFileInfo(id), fetched[i], { ex: DRIVE_INFO_TTL_SECONDS });
       } else {
-        pipeline.set(keys.driveFileInfo(id), null, { ex: 86_400 });
+        pipeline.set(keys.driveFileInfo(id), null, { ex: DRIVE_NULL_TTL_SECONDS });
       }
     });
     await pipeline.exec();
