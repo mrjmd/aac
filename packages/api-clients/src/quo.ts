@@ -78,10 +78,71 @@ export interface QuoContactCreate {
   source?: string;
 }
 
+export interface QuoPhoneNumber {
+  id: string;
+  number: string;
+  formattedNumber: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuoMessage {
+  id: string;
+  to: string[];
+  from: string;
+  text: string;
+  phoneNumberId: string;
+  conversationId?: string;
+  direction: 'incoming' | 'outgoing';
+  status: 'queued' | 'sent' | 'delivered' | 'undelivered';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuoCall {
+  id: string;
+  to: string;
+  from: string;
+  phoneNumberId: string;
+  conversationId?: string;
+  direction: 'incoming' | 'outgoing';
+  status: 'completed' | 'missed' | 'no-answer' | 'busy' | 'failed' | 'ringing' | 'in-progress';
+  duration?: number;
+  voicemail?: { url?: string; duration?: number } | null;
+  createdAt: string;
+  updatedAt?: string;
+  answeredAt?: string;
+  completedAt?: string;
+}
+
+export interface QuoConversation {
+  id: string;
+  name?: string | null;
+  phoneNumberId: string;
+  participants: string[];
+  lastActivityAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuoPaginated<T> {
+  data: T[];
+  nextPageToken?: string;
+  totalItems?: number;
+}
+
+export interface QuoActivityWindow {
+  messages: QuoMessage[];
+  calls: QuoCall[];
+}
+
 // ── Client ───────────────────────────────────────────────────────────
 
 export class QuoClient {
   private cachedCustomFields: QuoCustomFieldDefinition[] | null = null;
+  private cachedDefaultPhoneNumberId: string | null = null;
+  private pendingDefaultPhoneNumberId: Promise<string> | null = null;
 
   constructor(private config: QuoConfig) {}
 
@@ -390,6 +451,135 @@ export class QuoClient {
 
     log.info('Sent SMS', { messageId: result.data.id });
     return result.data;
+  }
+
+  // ── Read: phone numbers / messages / calls / conversations ──────
+  //
+  // These power the apps/agent read-tool surface (customer context, recent
+  // activity, "last week's inbound"). All endpoints are read-only and cheap;
+  // the only constant is that Quo's /messages and /calls endpoints require a
+  // phoneNumberId (the OP-internal ID of OUR number, not the contact's). We
+  // cache that ID on first lookup.
+
+  async listPhoneNumbers(): Promise<QuoPhoneNumber[]> {
+    const result = await this.request<{ data: QuoPhoneNumber[] }>('/phone-numbers');
+    return result.data ?? [];
+  }
+
+  /**
+   * Resolve the OpenPhone-internal phoneNumberId for our configured number.
+   * Cached after first call. Concurrent callers share a single in-flight
+   * fetch (otherwise getRecentActivityForContact would race two lookups).
+   * Required by /messages and /calls queries.
+   */
+  async getDefaultPhoneNumberId(): Promise<string> {
+    if (this.cachedDefaultPhoneNumberId) return this.cachedDefaultPhoneNumberId;
+    if (this.pendingDefaultPhoneNumberId) return this.pendingDefaultPhoneNumberId;
+
+    this.pendingDefaultPhoneNumberId = (async () => {
+      try {
+        const numbers = await this.listPhoneNumbers();
+        const match = numbers.find(pn => pn.number === this.config.phoneNumber);
+        if (!match) {
+          throw new Error(`No Quo phone number matches config (${this.config.phoneNumber})`);
+        }
+        this.cachedDefaultPhoneNumberId = match.id;
+        return match.id;
+      } finally {
+        this.pendingDefaultPhoneNumberId = null;
+      }
+    })();
+
+    return this.pendingDefaultPhoneNumberId;
+  }
+
+  /**
+   * List messages between our line and a specific E.164 participant.
+   * Returns OpenPhone's paginated envelope. Caller can page via nextPageToken.
+   */
+  async listMessages(opts: {
+    participantE164: string;
+    phoneNumberId?: string;
+    maxResults?: number;
+    pageToken?: string;
+  }): Promise<QuoPaginated<QuoMessage>> {
+    const phoneNumberId = opts.phoneNumberId ?? (await this.getDefaultPhoneNumberId());
+    const params = new URLSearchParams({
+      phoneNumberId,
+      maxResults: String(opts.maxResults ?? 50),
+    });
+    params.append('participants[]', opts.participantE164);
+    if (opts.pageToken) params.set('pageToken', opts.pageToken);
+
+    return this.request<QuoPaginated<QuoMessage>>(`/messages?${params.toString()}`);
+  }
+
+  /**
+   * List calls between our line and a specific E.164 participant. Same
+   * shape as listMessages — participants[] + phoneNumberId.
+   */
+  async listCalls(opts: {
+    participantE164: string;
+    phoneNumberId?: string;
+    maxResults?: number;
+    pageToken?: string;
+  }): Promise<QuoPaginated<QuoCall>> {
+    const phoneNumberId = opts.phoneNumberId ?? (await this.getDefaultPhoneNumberId());
+    const params = new URLSearchParams({
+      phoneNumberId,
+      maxResults: String(opts.maxResults ?? 50),
+    });
+    params.append('participants[]', opts.participantE164);
+    if (opts.pageToken) params.set('pageToken', opts.pageToken);
+
+    return this.request<QuoPaginated<QuoCall>>(`/calls?${params.toString()}`);
+  }
+
+  /**
+   * List conversations on our line, ordered by Quo's own last-activity sort.
+   * Useful for "show me the most recent inbound activity" queries that
+   * don't have a known phone in hand.
+   */
+  async listConversations(opts: {
+    phoneNumberIds?: string[];
+    maxResults?: number;
+    pageToken?: string;
+  } = {}): Promise<QuoPaginated<QuoConversation>> {
+    const phoneNumberIds = opts.phoneNumberIds ?? [await this.getDefaultPhoneNumberId()];
+    const params = new URLSearchParams({ maxResults: String(opts.maxResults ?? 50) });
+    for (const id of phoneNumberIds) params.append('phoneNumberIds[]', id);
+    if (opts.pageToken) params.set('pageToken', opts.pageToken);
+
+    return this.request<QuoPaginated<QuoConversation>>(`/conversations?${params.toString()}`);
+  }
+
+  /**
+   * Bundle messages + calls for one contact into a single activity window.
+   * Optional `since` cutoff is applied client-side (Quo returns newest-first
+   * already, so we trim once we hit the cutoff). This is the workhorse for
+   * the agent's customer-context tool.
+   */
+  async getRecentActivityForContact(
+    phoneE164: string,
+    opts: { limit?: number; since?: Date } = {},
+  ): Promise<QuoActivityWindow> {
+    const limit = opts.limit ?? 50;
+    const sinceMs = opts.since?.getTime();
+
+    const [msgs, calls] = await Promise.all([
+      this.listMessages({ participantE164: phoneE164, maxResults: limit }),
+      this.listCalls({ participantE164: phoneE164, maxResults: limit }),
+    ]);
+
+    const inWindow = <T extends { createdAt: string }>(items: T[]): T[] =>
+      sinceMs === undefined
+        ? items
+        : items.filter(it => new Date(it.createdAt).getTime() >= sinceMs);
+
+    return {
+      messages: inWindow(msgs.data ?? []),
+      calls: inWindow(calls.data ?? []),
+    };
   }
 
   // ── Static utilities ────────────────────────────────────────────

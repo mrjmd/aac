@@ -324,6 +324,218 @@ describe('QuoClient', () => {
     });
   });
 
+  describe('QuoClient — read methods (phone-numbers/messages/calls/conversations)', () => {
+    function phoneNumbersResponse() {
+      return mockResponse({
+        data: [
+          {
+            id: 'pn-our',
+            number: '+15550001111',
+            formattedNumber: '(555) 000-1111',
+            name: 'AAC',
+            createdAt: '2026-01-01',
+            updatedAt: '2026-01-01',
+          },
+          {
+            id: 'pn-other',
+            number: '+15558887777',
+            formattedNumber: '(555) 888-7777',
+            name: 'Other',
+            createdAt: '2026-01-01',
+            updatedAt: '2026-01-01',
+          },
+        ],
+      });
+    }
+
+    describe('listPhoneNumbers', () => {
+      it('returns the phone number list', async () => {
+        const client = makeClient();
+        mockFetch.mockReturnValueOnce(phoneNumbersResponse());
+
+        const result = await client.listPhoneNumbers();
+        expect(result).toHaveLength(2);
+        expect(result[0].id).toBe('pn-our');
+      });
+    });
+
+    describe('getDefaultPhoneNumberId', () => {
+      it('returns the id matching configured number, then caches it', async () => {
+        const client = makeClient();
+        mockFetch.mockReturnValueOnce(phoneNumbersResponse());
+
+        const id1 = await client.getDefaultPhoneNumberId();
+        const id2 = await client.getDefaultPhoneNumberId();
+
+        expect(id1).toBe('pn-our');
+        expect(id2).toBe('pn-our');
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('throws if config phone number is not in the account', async () => {
+        const client = new QuoClient({ apiKey: 'k', phoneNumber: '+19999999999' });
+        mockFetch.mockReturnValueOnce(phoneNumbersResponse());
+
+        await expect(client.getDefaultPhoneNumberId()).rejects.toThrow(/No Quo phone number matches/);
+      });
+    });
+
+    describe('listMessages', () => {
+      it('queries /messages with phoneNumberId + participants[] and resolves default phone id', async () => {
+        const client = makeClient();
+        mockFetch.mockReturnValueOnce(phoneNumbersResponse());
+        mockFetch.mockReturnValueOnce(mockResponse({
+          data: [{
+            id: 'msg-1', to: ['+15550001111'], from: '+15551234567', text: 'hi',
+            phoneNumberId: 'pn-our', direction: 'incoming', status: 'delivered',
+            createdAt: '2026-05-20', updatedAt: '2026-05-20',
+          }],
+          nextPageToken: 'tok',
+          totalItems: 1,
+        }));
+
+        const result = await client.listMessages({ participantE164: '+15551234567' });
+
+        expect(result.data).toHaveLength(1);
+        expect(result.nextPageToken).toBe('tok');
+
+        const url = mockFetch.mock.calls[1][0] as string;
+        expect(url).toContain('/messages?');
+        expect(url).toContain('phoneNumberId=pn-our');
+        expect(url).toContain('participants%5B%5D=%2B15551234567');
+      });
+
+      it('honors caller-supplied phoneNumberId without an extra lookup', async () => {
+        const client = makeClient();
+        mockFetch.mockReturnValueOnce(mockResponse({ data: [], totalItems: 0 }));
+
+        await client.listMessages({ participantE164: '+15551234567', phoneNumberId: 'pn-custom', maxResults: 5 });
+
+        const url = mockFetch.mock.calls[0][0] as string;
+        expect(url).toContain('phoneNumberId=pn-custom');
+        expect(url).toContain('maxResults=5');
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('forwards pageToken for pagination', async () => {
+        const client = makeClient();
+        mockFetch.mockReturnValueOnce(mockResponse({ data: [] }));
+
+        await client.listMessages({ participantE164: '+15551234567', phoneNumberId: 'pn-x', pageToken: 'pg-2' });
+
+        const url = mockFetch.mock.calls[0][0] as string;
+        expect(url).toContain('pageToken=pg-2');
+      });
+    });
+
+    describe('listCalls', () => {
+      it('queries /calls with phoneNumberId + participants[]', async () => {
+        const client = makeClient();
+        mockFetch.mockReturnValueOnce(mockResponse({
+          data: [{
+            id: 'call-1', to: '+15550001111', from: '+15551234567',
+            phoneNumberId: 'pn-our', direction: 'incoming', status: 'completed',
+            duration: 90, createdAt: '2026-05-20',
+          }],
+          totalItems: 1,
+        }));
+
+        const result = await client.listCalls({ participantE164: '+15551234567', phoneNumberId: 'pn-our' });
+
+        expect(result.data[0].id).toBe('call-1');
+        const url = mockFetch.mock.calls[0][0] as string;
+        expect(url).toContain('/calls?');
+        expect(url).toContain('phoneNumberId=pn-our');
+        expect(url).toContain('participants%5B%5D=%2B15551234567');
+      });
+    });
+
+    describe('listConversations', () => {
+      it('defaults to our phone number id', async () => {
+        const client = makeClient();
+        mockFetch.mockReturnValueOnce(phoneNumbersResponse());
+        mockFetch.mockReturnValueOnce(mockResponse({ data: [] }));
+
+        await client.listConversations();
+
+        const url = mockFetch.mock.calls[1][0] as string;
+        expect(url).toContain('/conversations?');
+        expect(url).toContain('phoneNumberIds%5B%5D=pn-our');
+      });
+
+      it('appends multiple phoneNumberIds when provided', async () => {
+        const client = makeClient();
+        mockFetch.mockReturnValueOnce(mockResponse({ data: [] }));
+
+        await client.listConversations({ phoneNumberIds: ['pn-a', 'pn-b'], maxResults: 25 });
+
+        const url = mockFetch.mock.calls[0][0] as string;
+        expect(url).toContain('phoneNumberIds%5B%5D=pn-a');
+        expect(url).toContain('phoneNumberIds%5B%5D=pn-b');
+        expect(url).toContain('maxResults=25');
+      });
+    });
+
+    describe('getRecentActivityForContact', () => {
+      it('returns messages + calls in parallel using the cached phoneNumberId', async () => {
+        const client = makeClient();
+        mockFetch.mockReturnValueOnce(phoneNumbersResponse());
+        // Parallel order is not guaranteed — match by URL.
+        mockFetch.mockImplementation((url: string) => {
+          if (url.startsWith('https://api.openphone.com/v1/messages?')) {
+            return mockResponse({
+              data: [{
+                id: 'm-1', to: ['+15550001111'], from: '+15551234567', text: 'hello',
+                phoneNumberId: 'pn-our', direction: 'incoming', status: 'delivered',
+                createdAt: '2026-05-20', updatedAt: '2026-05-20',
+              }],
+            });
+          }
+          if (url.startsWith('https://api.openphone.com/v1/calls?')) {
+            return mockResponse({
+              data: [{
+                id: 'c-1', to: '+15550001111', from: '+15551234567',
+                phoneNumberId: 'pn-our', direction: 'incoming', status: 'completed',
+                createdAt: '2026-05-20',
+              }],
+            });
+          }
+          return mockResponse({ data: [] });
+        });
+
+        const window = await client.getRecentActivityForContact('+15551234567');
+
+        expect(window.messages.map(m => m.id)).toEqual(['m-1']);
+        expect(window.calls.map(c => c.id)).toEqual(['c-1']);
+      });
+
+      it('filters by since cutoff client-side', async () => {
+        const client = makeClient();
+        mockFetch.mockReturnValueOnce(phoneNumbersResponse());
+        mockFetch.mockImplementation((url: string) => {
+          if (url.startsWith('https://api.openphone.com/v1/messages?')) {
+            return mockResponse({
+              data: [
+                { id: 'old', to: [], from: '+x', text: '', phoneNumberId: 'p', direction: 'incoming', status: 'delivered', createdAt: '2026-05-01T00:00:00Z', updatedAt: '' },
+                { id: 'new', to: [], from: '+x', text: '', phoneNumberId: 'p', direction: 'incoming', status: 'delivered', createdAt: '2026-05-27T00:00:00Z', updatedAt: '' },
+              ],
+            });
+          }
+          if (url.startsWith('https://api.openphone.com/v1/calls?')) {
+            return mockResponse({ data: [] });
+          }
+          return mockResponse({ data: [] });
+        });
+
+        const window = await client.getRecentActivityForContact('+15551234567', {
+          since: new Date('2026-05-15T00:00:00Z'),
+        });
+
+        expect(window.messages.map(m => m.id)).toEqual(['new']);
+      });
+    });
+  });
+
   describe('static utilities', () => {
     it('parseFullName splits correctly', () => {
       expect(QuoClient.parseFullName('John Doe')).toEqual({ firstName: 'John', lastName: 'Doe' });

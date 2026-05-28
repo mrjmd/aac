@@ -154,11 +154,11 @@ on the agent line (raw, no diagnosis yet).
 **Shared (`@aac/api-clients`):**
 
 1. ✅ **PD Deal CRUD methods** — *Shipped 2026-05-28.* `createDeal`, `getDeal`, `updateDeal`, `getDealsByPerson`, `setDealStage`, `markDealLost`, `findDealByExternalId` in `PipedriveClient`. Constructor-injected `dealSpine` config holds pipeline/stage IDs + custom-field hashes. 16 tests + live PD round-trip on the Matt Davis fixture. Setup tooling: `tools/src/setup/pd-deal-fields.ts` (idempotent). PD pipeline ID = 1; stage IDs 1–10 in spec order; field hashes captured in `DEAL_FIELD_HASHES` constant.
-2. ⏳ **Quo conversation methods** — `listConversations`, `getConversation`, `listMessages` (or whatever shape matches Quo's API). Powers the customer-context builder used heavily in Walk. *Next.*
+2. ✅ **Quo conversation methods** — *Shipped 2026-05-28.* `listPhoneNumbers`, `getDefaultPhoneNumberId` (cached, dedupes concurrent callers), `listMessages`, `listCalls`, `listConversations`, and the bundled `getRecentActivityForContact(phoneE164, { since? })` that powers the Walk-phase customer-context tool. Types: `QuoPhoneNumber`, `QuoMessage`, `QuoCall`, `QuoConversation`, `QuoPaginated<T>`, `QuoActivityWindow`. 12 new tests; 208 total green in `@aac/api-clients`.
 
 **Middleware (deterministic deal work — fits existing patterns):**
 
-3. ☐ **`[deal:N]` marker read + emit support** on `job-reminders`, `job-followups`, `invoice-create`: prefer marker if present, fall back to current name-match. Cron-created calendar events get the marker stamped at creation.
+3. ⏳ **`[deal:N]` marker read + emit support** on `job-reminders`, `job-followups`, `invoice-create`: prefer marker if present, fall back to current name-match. Cron-created calendar events get the marker stamped at creation. *Next.*
 4. ☐ **Deal-aware webhook handlers** — QB estimate created → create deal at Quote Sent; QB invoice paid → Paid; PD person created from inbound → create deal at Lead.
 5. ☐ **Nightly deal-reconcile cron** — reconciles QB estimate/invoice state into deal stages; catches anything the webhook handlers missed.
 
