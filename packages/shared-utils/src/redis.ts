@@ -116,6 +116,9 @@ export const keys = {
 
   /** Cached drive-time estimate for one (origin, destination, departure bucket) triple. 30d TTL. */
   fieldTravelLeg: (key: string) => `field:travel-leg:${key}` as const,
+
+  /** Per-user app config (home address, preferences). No TTL — user-owned, persists. */
+  fieldUserConfig: (email: string) => `field:user-config:${email.toLowerCase()}` as const,
 } as const;
 
 /**

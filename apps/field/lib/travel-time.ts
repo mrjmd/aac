@@ -19,11 +19,12 @@ import { keys, ttl } from '@aac/shared-utils/redis';
 import { getMaps, getRedis } from './clients';
 
 /**
- * Mike's home address — origin for the first leg of every day.
- * Single-tech assumption: when a second tech is added, this becomes a
- * per-tech lookup keyed by tech email.
+ * Default home address used when the technician hasn't saved their own
+ * via /settings. Kept here so the existing single-tech experience (Mike)
+ * keeps working without a migration; overridden per-user once they edit
+ * the address in the UI.
  */
-export const MIKE_HOME_ADDRESS = '30 Randlett Street, Quincy, MA 02170';
+export const DEFAULT_HOME_ADDRESS = '30 Randlett Street, Quincy, MA 02170';
 
 export interface TravelLeg {
   /** Drive duration in seconds. */
@@ -58,11 +59,24 @@ function bucketKey(origin: string, destination: string, departure: Date): string
  * Events without a `location` are skipped — they contribute no leg, but
  * we still drive from wherever Mike actually was for the next leg.
  */
+export interface ResolveTravelLegsOptions {
+  /**
+   * Origin for the first leg of the day and destination for the back-home
+   * leg. Defaults to {@link DEFAULT_HOME_ADDRESS} when omitted/null.
+   * When neither is available (caller explicitly passes `null` and the
+   * default is dropped in the future), the bookend legs are omitted.
+   */
+  homeAddress?: string | null;
+}
+
 export async function resolveTravelLegs(
   events: CalendarEvent[],
+  options: ResolveTravelLegsOptions = {},
 ): Promise<DayTravel> {
   const out: DayTravel = { byEvent: new Map(), backHome: null };
   if (events.length === 0) return out;
+
+  const homeAddress = options.homeAddress ?? DEFAULT_HOME_ADDRESS;
 
   type LegSpec = {
     /** Set for arrival legs; null for the back-home leg. */
@@ -77,7 +91,15 @@ export async function resolveTravelLegs(
   let lastEventEnd: string | null = null;
   for (const evt of events) {
     if (!evt.location) continue;
-    const origin = lastLocation ?? MIKE_HOME_ADDRESS;
+    // First event: origin = home (if known). If no home is configured, skip
+    // the "from home" leg entirely and just don't render a chip before the
+    // first event.
+    if (lastLocation === null && !homeAddress) {
+      lastLocation = evt.location;
+      lastEventEnd = evt.end;
+      continue;
+    }
+    const origin = lastLocation ?? homeAddress;
     legs.push({
       eventId: evt.id,
       origin,
@@ -89,12 +111,12 @@ export async function resolveTravelLegs(
     lastEventEnd = evt.end;
   }
 
-  // Append back-home leg, departing at the last event's end time.
-  if (lastLocation && lastEventEnd) {
+  // Append back-home leg if a home address is configured.
+  if (lastLocation && lastEventEnd && homeAddress) {
     legs.push({
       eventId: null,
       origin: lastLocation,
-      destination: MIKE_HOME_ADDRESS,
+      destination: homeAddress,
       departure: new Date(lastEventEnd),
       fromHome: false,
     });

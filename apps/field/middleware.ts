@@ -12,12 +12,19 @@ import { SESSION_COOKIE_NAME } from '@/lib/session-cookie';
  * longer exists in Redis, those will treat the user as logged-out.
  */
 export function middleware(req: NextRequest) {
+  // Expose the request pathname as a header so server components can read it
+  // (Next.js doesn't surface pathname to RSCs by default).
+  const passthroughHeaders = new Headers(req.headers);
+  passthroughHeaders.set('x-pathname', req.nextUrl.pathname);
+
   // Preview-mode short-circuit: when FIELD_AUTH_BYPASS_EMAIL is set, every
   // request passes through. Removed by deleting the env var on Vercel.
-  if (process.env.FIELD_AUTH_BYPASS_EMAIL) return NextResponse.next();
+  if (process.env.FIELD_AUTH_BYPASS_EMAIL) {
+    return NextResponse.next({ request: { headers: passthroughHeaders } });
+  }
 
   const hasCookie = !!req.cookies.get(SESSION_COOKIE_NAME)?.value;
-  if (hasCookie) return NextResponse.next();
+  if (hasCookie) return NextResponse.next({ request: { headers: passthroughHeaders } });
 
   const url = req.nextUrl;
   const next = url.pathname + (url.search || '');

@@ -15,6 +15,8 @@ import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-clas
 import { buildDirectionsUrl } from '@/lib/location';
 import { resolveEventCity } from '@/lib/event-city';
 import { resolveTravelLegs, formatDuration, formatDistance, type DayTravel } from '@/lib/travel-time';
+import { getCurrentSession } from '@/lib/session';
+import { getUserConfig } from '@/lib/user-config';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +36,8 @@ export default async function DayPage({ searchParams }: PageProps) {
   let travel: DayTravel = { byEvent: new Map(), backHome: null };
   try {
     const env = getEnv();
+    const session = await getCurrentSession();
+    const userConfig = session ? await getUserConfig(session.email) : { homeAddress: null };
     const { timeMin, timeMax } = getEasternRangeForDate(dateLabel);
     events = await getCalendar().listEvents({
       timeMin,
@@ -44,7 +48,7 @@ export default async function DayPage({ searchParams }: PageProps) {
     // so the first load of a day is the slow one; subsequent loads are instant.
     const [cityPairs, resolvedTravel] = await Promise.all([
       Promise.all(events.map(async (evt) => [evt.id, await resolveEventCity(evt)] as const)),
-      resolveTravelLegs(events),
+      resolveTravelLegs(events, { homeAddress: userConfig.homeAddress }),
     ]);
     citiesByEventId = Object.fromEntries(cityPairs);
     travel = resolvedTravel;
