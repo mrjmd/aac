@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { parseDealMarker, getDayRangeEastern, isoDateDaysAgo, extractFirstName } from '../lib/cron.js';
+import {
+  parseDealMarker,
+  getDayRangeEastern,
+  isoDateDaysAgo,
+  extractFirstName,
+  dealStageRank,
+  isStageAdvance,
+} from '../lib/cron.js';
 
 describe('parseDealMarker', () => {
   it('extracts the id from a [deal:N] marker', () => {
@@ -78,5 +85,43 @@ describe('isoDateDaysAgo', () => {
     const today = isoDateDaysAgo(0);
     const weekAgo = isoDateDaysAgo(7);
     expect(weekAgo < today).toBe(true);
+  });
+});
+
+describe('dealStageRank', () => {
+  it('ranks lifecycle stages in order', () => {
+    expect(dealStageRank('lead')).toBeLessThan(dealStageRank('quote_sent'));
+    expect(dealStageRank('quote_sent')).toBeLessThan(dealStageRank('quote_accepted'));
+    expect(dealStageRank('quote_accepted')).toBeLessThan(dealStageRank('job_scheduled'));
+    expect(dealStageRank('job_done')).toBeLessThan(dealStageRank('paid'));
+  });
+
+  it('treats null as below every real stage', () => {
+    expect(dealStageRank(null)).toBeLessThan(dealStageRank('lead'));
+  });
+
+  it('treats lost as past-terminal so reconcile skips it', () => {
+    expect(dealStageRank('lost')).toBe(Infinity);
+    expect(dealStageRank('paid')).toBeLessThan(dealStageRank('lost'));
+  });
+});
+
+describe('isStageAdvance', () => {
+  it('returns true when target is further along', () => {
+    expect(isStageAdvance('quote_sent', 'quote_accepted')).toBe(true);
+    expect(isStageAdvance(null, 'lead')).toBe(true);
+    expect(isStageAdvance('job_done', 'paid')).toBe(true);
+  });
+
+  it('returns false on same stage (no-op)', () => {
+    expect(isStageAdvance('quote_sent', 'quote_sent')).toBe(false);
+  });
+
+  it('returns false on demotion', () => {
+    expect(isStageAdvance('job_scheduled', 'quote_sent')).toBe(false);
+  });
+
+  it('returns false when current is lost (terminal)', () => {
+    expect(isStageAdvance('lost', 'paid')).toBe(false);
   });
 });

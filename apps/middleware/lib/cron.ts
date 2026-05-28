@@ -11,6 +11,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
+import type { DealStage } from '@aac/api-clients/pipedrive';
 import { getEnv } from './env.js';
 
 const log = createLogger('cron');
@@ -139,4 +140,46 @@ export function parseDealMarker(description: string | null | undefined): number 
   if (!description) return null;
   const match = description.match(/\[deal:(\d+)\]/i);
   return match ? parseInt(match[1], 10) : null;
+}
+
+// ── Deal stage ordering ─────────────────────────────────────────
+
+/**
+ * Linear progression of the active deal lifecycle. Lost is a terminal
+ * branch and lives outside this rank — callers handle it explicitly so
+ * we never auto-advance or auto-demote a lost deal.
+ */
+const DEAL_STAGE_ORDER: ReadonlyArray<DealStage> = [
+  'lead',
+  'qualified_lead',
+  'assessment_scheduled',
+  'assessment_done',
+  'quote_sent',
+  'quote_accepted',
+  'job_scheduled',
+  'job_done',
+  'paid',
+];
+
+/**
+ * Rank a deal stage on the lifecycle progression. Used by reconcile +
+ * webhook handlers to enforce "only advance, never demote" — a deal in
+ * Job Scheduled shouldn't get pushed back to Quote Sent because an
+ * estimate-state webhook arrived late.
+ *
+ * - `null` (unparsed stage) → -1, so any real stage is an advance.
+ * - `'lost'` → Infinity, so callers see lost deals as "past terminal"
+ *   and skip them.
+ * - Other stages → 0–8 in lifecycle order.
+ */
+export function dealStageRank(stage: DealStage | null): number {
+  if (stage === null) return -1;
+  if (stage === 'lost') return Infinity;
+  const idx = DEAL_STAGE_ORDER.indexOf(stage);
+  return idx === -1 ? -1 : idx;
+}
+
+/** True when `target` is strictly further along the lifecycle than `current`. */
+export function isStageAdvance(current: DealStage | null, target: DealStage): boolean {
+  return dealStageRank(target) > dealStageRank(current);
 }
