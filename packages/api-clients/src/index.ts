@@ -51,6 +51,13 @@ export type { GoogleAnalyticsConfig } from './google-analytics.js';
 export { GoogleSearchConsoleClient } from './google-search-console.js';
 export type { GoogleSearchConsoleConfig } from './google-search-console.js';
 
+export { GoogleMapsClient } from './google-maps.js';
+export type {
+  GoogleMapsConfig,
+  TravelEstimate,
+  GetTravelTimeOptions,
+} from './google-maps.js';
+
 export { BufferClient } from './buffer.js';
 export type {
   BufferConfig,

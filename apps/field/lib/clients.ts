@@ -8,6 +8,7 @@
 
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { GoogleDriveClient } from '@aac/api-clients/google-drive';
+import { GoogleMapsClient } from '@aac/api-clients/google-maps';
 import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
@@ -17,6 +18,7 @@ import { getEnv } from './env';
 
 let _calendar: GoogleCalendarClient | null = null;
 let _drive: GoogleDriveClient | null = null;
+let _maps: GoogleMapsClient | null = null;
 let _pipedrive: PipedriveClient | null = null;
 let _quickbooks: QuickBooksClient | null = null;
 let _redis: Redis | null = null;
@@ -41,6 +43,14 @@ export function getDrive(): GoogleDriveClient {
     });
   }
   return _drive;
+}
+
+export function getMaps(): GoogleMapsClient {
+  if (!_maps) {
+    const env = getEnv();
+    _maps = new GoogleMapsClient({ apiKey: env.googleMaps.apiKey });
+  }
+  return _maps;
 }
 
 export function getPipedrive(): PipedriveClient {

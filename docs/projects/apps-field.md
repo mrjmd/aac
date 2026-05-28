@@ -191,21 +191,18 @@ demands it.
   what's still-in-pocket vs. actually-at-the-bank. Captured 2026-05-27 after
   the first successful cash-payment write surfaced the tracking gap.
 
-- **Estimated travel time between same-day jobs.** Between each pair of
-  consecutive events with locations on the today's-jobs list, show a small
-  inline chip with the drive duration + distance. Tap → opens Google Maps
-  directions. Most valuable variant: surface a red warning when the gap
-  between two scheduled events is smaller than the drive time ("⚠ only
-  10 min gap, drive is 20 min") so Mike can call ahead before he's late.
-  Cost is essentially free (~\$0.30/month at expected volume, comfortably
-  inside Google's \$200/mo Maps Platform free tier). Cache results in
-  Redis keyed by `(originAddress, destinationAddress, hour-of-day)` —
-  same trip stays same cost.
-
-  Requires: Distance Matrix API enabled in the Google Cloud project +
-  billing card on Maps Platform + a separate Maps API key (Maps uses
-  API keys, not OAuth). Captured 2026-05-27 alongside the city-only
-  display + map-icon button.
+- ~~**Estimated travel time between same-day jobs.**~~ **SHIPPED 2026-05-27.**
+  Inline drive-time chip above each event on the day list ("from home —
+  39 min · 32.1 mi" for the first, "39 min · 27.9 mi" for subsequent legs).
+  Origin for the first leg is Mike's home (30 Randlett St, Quincy MA 02170);
+  for subsequent legs it's the previous event's location. Red ⚠ warning
+  when scheduled gap is smaller than the drive time. Cached in Redis per
+  (origin, destination, day-of-week, hour) for 30 days. Implementation:
+  `@aac/api-clients/google-maps` (Distance Matrix client),
+  `apps/field/lib/travel-time.ts` (resolver + cache). Maps API key in
+  Cloud Console must have **Application restrictions = None** (Vercel egress
+  is server-side; HTTP-referrer restriction breaks Distance Matrix) plus
+  API restriction limited to Distance Matrix only.
 
 ## Related
 

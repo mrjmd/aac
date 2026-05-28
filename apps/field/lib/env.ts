@@ -37,6 +37,14 @@ export interface EnvConfig {
     apiKey: string;
     companyDomain: string;
   };
+  /**
+   * Google Maps Platform API key (Distance Matrix). Separate from OAuth —
+   * Maps uses API keys, not OAuth. Restricted at Cloud Console to Distance
+   * Matrix API only. Server-side use only (never sent to the browser).
+   */
+  googleMaps: {
+    apiKey: string;
+  };
   quickbooks: {
     clientId: string;
     clientSecret: string;
@@ -95,6 +103,9 @@ export function getEnv(): EnvConfig {
     pipedrive: {
       apiKey: requireEnv('PIPEDRIVE_API_KEY'),
       companyDomain: requireEnv('PIPEDRIVE_COMPANY_DOMAIN'),
+    },
+    googleMaps: {
+      apiKey: requireEnv('GOOGLE_MAPS_API_KEY'),
     },
     quickbooks: {
       clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),
