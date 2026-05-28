@@ -26,14 +26,19 @@ import { getMaps, getRedis } from './clients';
 export const MIKE_HOME_ADDRESS = '30 Randlett Street, Quincy, MA 02170';
 
 export interface TravelLeg {
-  /** Calendar event ID this leg ends at. */
-  eventId: string;
   /** Drive duration in seconds. */
   durationSec: number;
   /** Drive distance in meters. */
   distanceMeters: number;
   /** True for the first leg of the day (origin = home). */
   fromHome: boolean;
+}
+
+export interface DayTravel {
+  /** Leg ending at each event with a location, keyed by event ID. */
+  byEvent: Map<string, TravelLeg>;
+  /** Final leg: from the last event back to home. Null if no events had locations. */
+  backHome: TravelLeg | null;
 }
 
 function bucketKey(origin: string, destination: string, departure: Date): string {
@@ -44,27 +49,34 @@ function bucketKey(origin: string, destination: string, departure: Date): string
 }
 
 /**
- * Compute drive-time legs for a sorted list of same-day events. Returns a
- * Map keyed by event ID — the leg's `from` is "home" (for first event) or
- * the previous event's location. Events with no `location` are skipped
- * (no leg in the map).
+ * Compute drive-time legs for a sorted list of same-day events. For each
+ * event with a location, returns the leg arriving at that event (origin =
+ * previous event's location, or home for the first). Also returns a
+ * "back home" leg from the last event's location to home, departing at
+ * the last event's end time.
+ *
+ * Events without a `location` are skipped — they contribute no leg, but
+ * we still drive from wherever Mike actually was for the next leg.
  */
 export async function resolveTravelLegs(
   events: CalendarEvent[],
-): Promise<Map<string, TravelLeg>> {
-  const out = new Map<string, TravelLeg>();
+): Promise<DayTravel> {
+  const out: DayTravel = { byEvent: new Map(), backHome: null };
   if (events.length === 0) return out;
 
-  // Build the leg list: for each event with a location, derive its origin.
-  type LegSpec = { eventId: string; origin: string; destination: string; departure: Date; fromHome: boolean };
+  type LegSpec = {
+    /** Set for arrival legs; null for the back-home leg. */
+    eventId: string | null;
+    origin: string;
+    destination: string;
+    departure: Date;
+    fromHome: boolean;
+  };
   const legs: LegSpec[] = [];
   let lastLocation: string | null = null;
+  let lastEventEnd: string | null = null;
   for (const evt of events) {
-    if (!evt.location) {
-      // Skip events with no address. Don't reset lastLocation — the next
-      // event still drives from wherever Mike actually was last.
-      continue;
-    }
+    if (!evt.location) continue;
     const origin = lastLocation ?? MIKE_HOME_ADDRESS;
     legs.push({
       eventId: evt.id,
@@ -74,6 +86,18 @@ export async function resolveTravelLegs(
       fromHome: lastLocation === null,
     });
     lastLocation = evt.location;
+    lastEventEnd = evt.end;
+  }
+
+  // Append back-home leg, departing at the last event's end time.
+  if (lastLocation && lastEventEnd) {
+    legs.push({
+      eventId: null,
+      origin: lastLocation,
+      destination: MIKE_HOME_ADDRESS,
+      departure: new Date(lastEventEnd),
+      fromHome: false,
+    });
   }
 
   if (legs.length === 0) return out;
@@ -97,13 +121,16 @@ export async function resolveTravelLegs(
 
   legs.forEach((leg, i) => {
     const est = resolved[i];
-    if (est) {
-      out.set(leg.eventId, {
-        eventId: leg.eventId,
-        durationSec: est.durationSec,
-        distanceMeters: est.distanceMeters,
-        fromHome: leg.fromHome,
-      });
+    if (!est) return;
+    const travel: TravelLeg = {
+      durationSec: est.durationSec,
+      distanceMeters: est.distanceMeters,
+      fromHome: leg.fromHome,
+    };
+    if (leg.eventId) {
+      out.byEvent.set(leg.eventId, travel);
+    } else {
+      out.backHome = travel;
     }
   });
 

@@ -13,7 +13,7 @@ import {
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
 import { buildDirectionsUrl } from '@/lib/location';
 import { resolveEventCity } from '@/lib/event-city';
-import { resolveTravelLegs, formatDuration, formatDistance, type TravelLeg } from '@/lib/travel-time';
+import { resolveTravelLegs, formatDuration, formatDistance, type DayTravel } from '@/lib/travel-time';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +30,7 @@ export default async function DayPage({ searchParams }: PageProps) {
   let events: Awaited<ReturnType<ReturnType<typeof getCalendar>['listEvents']>> = [];
   let loadError: string | null = null;
   let citiesByEventId: Record<string, string | null> = {};
-  let legsByEventId: Map<string, TravelLeg> = new Map();
+  let travel: DayTravel = { byEvent: new Map(), backHome: null };
   try {
     const env = getEnv();
     const { timeMin, timeMax } = getEasternRangeForDate(dateLabel);
@@ -41,12 +41,12 @@ export default async function DayPage({ searchParams }: PageProps) {
     });
     // Resolve cities + drive-time legs in parallel — both are cached in Redis
     // so the first load of a day is the slow one; subsequent loads are instant.
-    const [cityPairs, legs] = await Promise.all([
+    const [cityPairs, resolvedTravel] = await Promise.all([
       Promise.all(events.map(async (evt) => [evt.id, await resolveEventCity(evt)] as const)),
       resolveTravelLegs(events),
     ]);
     citiesByEventId = Object.fromEntries(cityPairs);
-    legsByEventId = legs;
+    travel = resolvedTravel;
   } catch (err) {
     console.error('Failed to load calendar for', dateLabel, err);
     loadError = err instanceof Error ? err.message : String(err);
@@ -105,7 +105,7 @@ export default async function DayPage({ searchParams }: PageProps) {
             {events.map((evt, idx) => {
               const type = classifyEvent(evt.colorId);
               const city = citiesByEventId[evt.id];
-              const leg = legsByEventId.get(evt.id);
+              const leg = travel.byEvent.get(evt.id);
               const prevEvent = idx > 0 ? events[idx - 1] : null;
               const gapSec = prevEvent
                 ? Math.round((new Date(evt.start).getTime() - new Date(prevEvent.end).getTime()) / 1000)
@@ -168,6 +168,15 @@ export default async function DayPage({ searchParams }: PageProps) {
               );
             })}
           </ul>
+        )}
+        {travel.backHome && (
+          <div className="mt-2 flex items-center gap-1.5 px-1 text-xs text-zinc-500">
+            <CarIcon className="h-3.5 w-3.5" />
+            <span>
+              back home — {formatDuration(travel.backHome.durationSec)}
+              <span className="text-zinc-400"> · {formatDistance(travel.backHome.distanceMeters)}</span>
+            </span>
+          </div>
         )}
       </section>
     </main>
