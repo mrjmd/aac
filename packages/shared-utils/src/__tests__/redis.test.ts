@@ -88,6 +88,20 @@ describe('keys', () => {
       expect(keys.attributionProcessed('inv-1')).toBe('attribution:processed:inv-1');
     });
   });
+
+  describe('agent', () => {
+    it('builds agent cron cursor keys', () => {
+      expect(keys.agentCronCursor('error-surface')).toBe('agent:cron:error-surface:cursor');
+    });
+
+    it('builds agent rules keys keyed by E.164 phone', () => {
+      expect(keys.agentRules('+18287724836')).toBe('agent:rules:+18287724836');
+    });
+
+    it('exposes a static audit-stream key', () => {
+      expect(keys.agentAuditStream).toBe('agent:audit:stream');
+    });
+  });
 });
 
 describe('ttl', () => {

@@ -1,0 +1,16 @@
+{
+  "buildCommand": "cd ../.. && pnpm turbo build --filter=@aac/agent",
+  "outputDirectory": ".",
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 30,
+      "memory": 256
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/error-surface",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@aac/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "deploy": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_prNGjveEtSmfhSdRZgA845H6M5IC vercel deploy --prod --yes",
+    "deploy:preview": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_prNGjveEtSmfhSdRZgA845H6M5IC vercel deploy --yes"
+  },
+  "dependencies": {
+    "@aac/api-clients": "workspace:*",
+    "@aac/shared-utils": "workspace:*",
+    "@upstash/redis": "^1.28.0",
+    "@vercel/node": "^5"
+  },
+  "devDependencies": {
+    "@aac/tsconfig": "workspace:*",
+    "@types/node": "^22",
+    "typescript": "^5.8",
+    "vitest": "^3"
+  }
+}

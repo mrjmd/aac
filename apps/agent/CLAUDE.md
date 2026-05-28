@@ -38,10 +38,26 @@ model + runtime needs.
 
 ## Architecture
 
-- Next.js 15 (or alternative TBD per spec — App Router likely)
+- **Stack:** raw Vercel Serverless Functions (`@vercel/node`), same as `apps/middleware/`. No Next.js. The monorepo pattern is UI apps on Next.js (`apps/field`, `apps/command-center`, `apps/marketing`), API-only apps on raw Vercel functions (`apps/middleware`, `apps/agent`). Template handler shape: `apps/middleware/api/webhooks/google-ads.ts`.
 - Reads/writes: Pipedrive (deals, persons, activities), Quo (messages, conversation history), QuickBooks, Google Calendar, Gemini (LLM)
-- Shared state with middleware: Upstash Redis (same database, different keyspace)
+- Shared state with middleware: Upstash Redis (same database, different keyspace under `agent:*`)
 - Comms line: dedicated Quo phone number `(617) 766-0151`, whitelist on Matt's personal number
+- **Identity by phone number.** Whoever texts the agent line is identified by which phone they texted from, looked up in `AGENT_USER_ROLES` (env JSON: `{"+1...": "owner" \| "technician" \| "salesperson" \| "triage"}`). Only `owner` has a concretely defined tool scope at Crawl/Walk start.
+- **Internal-only.** Customers are never exposed to a conversational AI surface here. Customer-touching automations may use LLM-composed copy but must always feel like an automated message from a human.
+- **Read-tool surface is role-scoped at the registry layer, not the response layer.** The LLM session for a given caller is only registered with tools that caller is allowed to use.
+
+## Env
+
+| Var | Required | Purpose |
+|---|---|---|
+| `QUO_API_KEY` | yes | Shared with middleware |
+| `QUO_AGENT_PHONE_NUMBER` | no | Agent comms line; defaults to `+16177660151` |
+| `MATT_PERSONAL_PHONE_NUMBER` | yes | E.164 whitelist for owner messages |
+| `AGENT_USER_ROLES` | no | JSON: `{"+1...": "owner" \| ...}`. Defaults to empty. |
+| `PIPEDRIVE_API_KEY` / `PIPEDRIVE_COMPANY_DOMAIN` / `PIPEDRIVE_SYSTEM_USER_ID` | yes | Shared with middleware |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | yes | Shared Redis |
+| `CRON_SECRET` | prod only | Vercel cron auth — same secret as middleware |
+| `NODE_ENV` | — | `development` or `production` |
 
 ## What Does NOT Belong Here
 

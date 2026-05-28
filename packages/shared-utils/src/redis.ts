@@ -119,6 +119,17 @@ export const keys = {
 
   /** Per-user app config (home address, preferences). No TTL — user-owned, persists. */
   fieldUserConfig: (email: string) => `field:user-config:${email.toLowerCase()}` as const,
+
+  // ── Agent (Conversational Operations Runtime) ──────────────────────
+
+  /** Per-cron-job cursor (e.g. last surfaced error ID in error-surface tick). No TTL. */
+  agentCronCursor: (job: string) => `agent:cron:${job}:cursor` as const,
+
+  /** Standing rules per agent user, keyed by E.164 phone. JSON blob, no TTL. */
+  agentRules: (phoneE164: string) => `agent:rules:${phoneE164}` as const,
+
+  /** Audit stream for every Q&A handled by the agent (Redis stream, queryable). */
+  agentAuditStream: 'agent:audit:stream' as const,
 } as const;
 
 /**
