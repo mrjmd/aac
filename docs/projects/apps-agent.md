@@ -20,6 +20,25 @@ Split out per the 2026-05-27 architecture decision because middleware is
 sacrosanct (minimal changes, stateless webhook processing) and the agent
 platform has different change cadence, state model, and runtime profile.
 
+### Load-bearing automations apps/agent unlocks
+
+The Crawl infrastructure (deal spine, read-tool surface, diagnostic agent
+plumbing) is the *means*; the value lands when these Walk-phase automations
+go live on top of it. Listed here so the work isn't accidentally
+deprioritized as "later."
+
+- **Stale-deal nudging (Funnel A Phase 2)** — the dormant-quote
+  reactivation engine. Detail in Walk §6; full design in
+  `analysis/02-strategy/funnel-a-dormant-reactivation.md`. Single biggest
+  revenue lever apps/agent unlocks (\\$97k aggregate value in the priority
+  90+d Pending pool at the 2026-05-22 inventory).
+- **Real-time intent classification + Matt-confirmed action proposals** —
+  Walk §3–§4. Closes the loop from inbound customer signal to deal
+  state transition without Matt having to be the dispatch layer.
+- **Diagnostic agent for middleware errors** — Walk §8. Errors become
+  proposals ("we noticed X, here's the fix, approve?") instead of
+  silent stream entries.
+
 ## Deal model
 
 The PD deal is the cross-system spine: it holds foreign keys to the PD
@@ -164,7 +183,7 @@ on the agent line (raw, no diagnosis yet).
 
 **Tools (one-shot script):**
 
-6. ⏳ **Backfill script** — create PD deals for every currently-open QB estimate + every recent green calendar event. So the deal model has data on day 1. *Next.*
+6. ⏳ **Backfill script** — create PD deals for every currently-open QB estimate + every recent green (job) and purple (assessment) calendar event. So the deal model has data on day 1. Script can be written now; **the actual production run is gated on [Funnel A Phase 1 cleanup](../../analysis/02-strategy/funnel-a-dormant-reactivation.md#phase-1--pipeline-cleanup-1-2-days-pre-build) completing.** Funnel A's inventory shows 77 Pending estimates, 37 of which are 90+ days old; running the backfill before cleanup would mint dozens of stale deals representing dead opportunities, polluting both the agent's read-tool surface and the Walk-phase stale-nudge automation. Cleanup categorizes each open estimate as: keep-in-funnel / dead (close) / forgot-to-mark-won (close as Converted) / multi-quote orphan (close). Only the keep-in-funnel subset backfills as live deals. *Script: next. Production run: gated.*
 
 **Apps/agent (new app scaffold):**
 
@@ -186,7 +205,10 @@ on the agent line (raw, no diagnosis yet).
 3. **Real-time intent classification** — every inbound customer signal (text, call transcript) classified into: quote-approval, assessment-request, scheduling-negotiation, callback, pricing-question, complaint, unclassified.
 4. **Action proposals via agent comms** — for each classified intent, agent texts Matt the proposed next action with reasoning; Matt confirms via dialogue (not button).
 5. **Stub event creation on confirm** — agent creates calendar events with `[deal:N]` marker after Matt confirms intent classification. Two flavors: job (green/10), assessment (purple/5).
-6. **Stale-deal nudges** — agent monitors deals stalled in any stage (quote, assessment, invoice) and proposes nudge text. "Stale" is LLM-judged, not threshold-based.
+6. **Stale-deal nudges (load-bearing automation)** — agent monitors deals stalled in any stage and proposes nudge text. Two flavors per stage:
+   - **Quote stage (Funnel A Phase 2):** the dormant-quote reactivation engine — fully designed in `analysis/02-strategy/funnel-a-dormant-reactivation.md`. Daily cron scans Pending QB estimates per a context-driven cadence (default ~3d → ~2w → exponential backoff, adjusted to anything the customer stated like "decide by Friday"). LLM reads the Quo conversation history, drafts a follow-up SMS, routes to Matt's approval queue. Auto-closes at 9 months OR 2–3 unanswered touches; inbound signal immediately suspends the funnel and routes to a human. This is the single biggest revenue lever apps/agent unlocks (\\$97k aggregate value in the priority 90+d Pending pool alone at the 2026-05-22 inventory).
+   - **Assessment / job / invoice stages:** same shape — LLM-judged staleness, drafted nudge, Matt-approved send. Lower volume than the quote-stage flow but the same mechanism.
+   "Stale" is LLM-judged across all flavors, not threshold-based. See [Funnel A doc](../../analysis/02-strategy/funnel-a-dormant-reactivation.md) for the quality-gate framework + autonomy graduation criteria.
 7. **Agent comms outbound from Matt** — directive surface: status queries, schedule overrides, standing rules ("stop sending review prompts to commercial customers").
 8. **Diagnostic agent for middleware errors** — every new entry in middleware's error stream → diagnostic agent runs diagnosis using read-tool surface → proposes idempotent ops fix OR code-level fix → texts Matt structured writeup ("we noticed X, looked into it, here's the fix, approve?").
 

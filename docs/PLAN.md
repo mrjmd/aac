@@ -38,7 +38,7 @@ This is why automation of Matt-and-Mike's existing daily flow comes before openi
 | # | Project | Goal | Status | Spec |
 |---|---|---|---|---|
 | 1 | **apps/field** | Tech-facing mobile web app for job completion (photos + payment status + auto-invoice) | Shipped to production 2026-05-28 | `projects/apps-field.md` |
-| 2 | **apps/agent** | Agent platform (comms line, deal spine, read-tool surface, intent classification) | Crawl steps 1–5 shipped 2026-05-28 (PD Deal CRUD + Quo conversation methods + middleware `[deal:N]` marker support + inbound-lead deal stamp on Quo webhook + nightly QB→PD deal reconcile cron); Crawl step 6 (one-shot backfill script) is next | `projects/apps-agent.md` |
+| 2 | **apps/agent** | Agent platform (comms line, deal spine, read-tool surface, intent classification) | Crawl steps 1–5 shipped 2026-05-28 (PD Deal CRUD + Quo conversation methods + middleware `[deal:N]` marker support + inbound-lead deal stamp on Quo webhook + nightly QB→PD deal reconcile cron); Crawl step 6 (one-shot backfill script) is next — **script can be written now; production run is gated on Funnel A Phase 1 cleanup completing.** | `projects/apps-agent.md` |
 | 3 | **Calendar scheduling automation** | Stub event creation on estimate approval; full slot-suggestion later | Depends on #2 | `projects/calendar-scheduling.md` |
 | 4 | **Estimate auto-drafting** | LLM drafts QB estimates from PD/Quo/calendar context; 3-day analysis spike first | Depends on #2 (tool surface) | `projects/estimate-auto-draft.md` |
 
@@ -54,7 +54,7 @@ App names (`apps/field`, `apps/agent`) are working names; subject to confirmatio
 
 - **Cron A (invoice-create)** — live since 2026-05-19. Auto-creates QB invoices from accepted estimates for jobs scheduled today. Working as designed (4 invoices in 8 days, all matched correct estimates).
 - **Existing crons:** `job-reminders`, `job-followups`. Both stable.
-- **Funnel A (dormant quote reactivation)** — Phase 1 cleanup pending. Phase 2 LLM agent build is downstream of `apps/agent`.
+- **Funnel A (dormant quote reactivation)** — Phase 1 cleanup pending; **now also gating apps/agent Crawl step 6** (deal backfill). Cleanup categorizes 77 Pending estimates (37 are 90+d) into keep / dead / forgot-to-mark-won / multi-quote orphan; only the keep set backfills as live deals. Phase 2 LLM agent build is the load-bearing stale-nudge automation downstream of `apps/agent`, designed in `analysis/02-strategy/funnel-a-dormant-reactivation.md`.
 - **Foundation Health Plan front-end** — pitch script + agreement doc to ship alongside current jobs. Back-end deferred.
 - **Part-time human inbound triage hire** — \~\$25/hr, 10–15 hr/wk ramp. Matt sources via friends + Facebook post.
 
