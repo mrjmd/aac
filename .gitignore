@@ -16,6 +16,10 @@ next-env.d.ts
 .env
 .env.local
 .env.*.local
+.env.diagnostic
+
+# Scratch — one-off diagnostic scripts and their output, never committed
+tools/src/scratch/
 
 # IDE
 .vscode/

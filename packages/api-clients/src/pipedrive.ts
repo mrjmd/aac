@@ -18,6 +18,25 @@ export interface PipedriveConfig {
   apiKey: string;
   companyDomain: string;
   systemUserId?: string;
+  /**
+   * Required to call any of the deal-spine methods (createDeal, getDeal,
+   * updateDeal, etc.). Holds the pipeline + stage IDs and custom-field
+   * hashes from the PD account. Production callers typically pass the
+   * module-level constants ({@link DEAL_PIPELINE_ID}, {@link DEAL_STAGE_IDS},
+   * {@link DEAL_FIELD_HASHES}); tests pass fake values.
+   */
+  dealSpine?: PipedriveDealSpineConfig;
+}
+
+export interface PipedriveDealSpineConfig {
+  pipelineId: number;
+  stageIds: Record<DealStage, number>;
+  fieldHashes: {
+    qbEstimateId: string;
+    qbInvoiceId: string;
+    externalId: string;
+    lostReason: string;
+  };
 }
 
 export interface PipedrivePerson {
@@ -63,6 +82,127 @@ export const PIPEDRIVE_CROSS_SYSTEM_FIELDS = {
   QUO_CONTACT_ID: '66f248c11ab22515e0dcd93f0bd9671ba6970fd4',
   QB_CUSTOMER_ID: 'a02e76a3d2d7e38cacd476aaea1c2a8809264025',
 } as const;
+
+// ── Deal-spine types and constants ───────────────────────────────────
+//
+// The "Deal Spine" pipeline holds one PD deal per opportunity, with
+// foreign keys to the QB estimate + QB invoice for that specific deal.
+// Calendar events link to deals via the [deal:N] marker in event
+// descriptions (not via a deal-side foreign key) — a deal can have many
+// events (assessment + multi-day repair + callbacks).
+// See docs/projects/apps-agent.md → "Deal model".
+
+export type DealStage =
+  | 'lead'
+  | 'qualified_lead'
+  | 'assessment_scheduled'
+  | 'assessment_done'
+  | 'quote_sent'
+  | 'quote_accepted'
+  | 'job_scheduled'
+  | 'job_done'
+  | 'paid'
+  | 'lost';
+
+export const DEAL_STAGES: readonly DealStage[] = [
+  'lead',
+  'qualified_lead',
+  'assessment_scheduled',
+  'assessment_done',
+  'quote_sent',
+  'quote_accepted',
+  'job_scheduled',
+  'job_done',
+  'paid',
+  'lost',
+] as const;
+
+export type LostReason =
+  | 'out_of_scope'
+  | 'competitor'
+  | 'price'
+  | 'no_response'
+  | 'cancelled'
+  | 'passed_after_assessment'
+  | 'other';
+
+export const LOST_REASONS: readonly LostReason[] = [
+  'out_of_scope',
+  'competitor',
+  'price',
+  'no_response',
+  'cancelled',
+  'passed_after_assessment',
+  'other',
+] as const;
+
+/**
+ * Pipeline + stage numeric IDs from the Pipedrive "Deal Spine" pipeline.
+ * Captured 2026-05-28 via the PD API. The setup is done once per PD
+ * account; rebuilding requires re-querying.
+ */
+export const DEAL_PIPELINE_ID = 1;
+export const DEAL_STAGE_IDS: Record<DealStage, number> = {
+  lead: 1,
+  qualified_lead: 2,
+  assessment_scheduled: 3,
+  assessment_done: 4,
+  quote_sent: 5,
+  quote_accepted: 6,
+  job_scheduled: 7,
+  job_done: 8,
+  paid: 9,
+  lost: 10,
+};
+
+/**
+ * Custom field hashes on the PD Deal entity, captured 2026-05-28 by
+ * running `tools/src/setup/pd-deal-fields.ts`. The script is idempotent
+ * and prints these in pastable form on completion.
+ */
+export const DEAL_FIELD_HASHES = {
+  qbEstimateId: '76504be3459616278c74b37382d8d5f7b9494ce6',
+  qbInvoiceId: '46da1cadafb407788134455e0e5ab7185cc89f39',
+  externalId: '1bbb93176685d776de300e11bf7c78214551f9b7',
+  lostReason: '0bc3744e0a783ee5e4460b9be35c2b6325f5e598',
+} as const;
+
+export interface PipedriveDeal {
+  id: number;
+  title: string;
+  personId: number | null;
+  organizationId: number | null;
+  stageId: number;
+  stage: DealStage | null; // derived from stageId via DEAL_STAGE_IDS reverse lookup
+  pipelineId: number;
+  value: number | null;
+  currency: string | null;
+  status: 'open' | 'won' | 'lost' | 'deleted';
+  qbEstimateId: string | null;
+  qbInvoiceId: string | null;
+  externalId: string | null;
+  lostReason: LostReason | null;
+  addTime: string;
+  updateTime: string;
+}
+
+export interface CreateDealInput {
+  title: string;
+  personId: number;
+  stage?: DealStage; // defaults to 'lead' if omitted
+  value?: number;
+  qbEstimateId?: string;
+  qbInvoiceId?: string;
+  externalId?: string;
+}
+
+export interface UpdateDealInput {
+  title?: string;
+  value?: number;
+  qbEstimateId?: string;
+  qbInvoiceId?: string;
+  externalId?: string;
+}
 
 // ── Name refinement logic ────────────────────────────────────────────
 
@@ -631,6 +771,208 @@ export class PipedriveClient {
       throw new Error(`Pipedrive API error: ${response.status} - ${error}`);
     }
     return response.json();
+  }
+
+  // ── Deal CRUD ────────────────────────────────────────────────────
+  //
+  // All deal methods operate on the "Deal Spine" pipeline (see
+  // docs/projects/apps-agent.md → "Deal model"). The pipeline + stage IDs
+  // and custom-field hashes come from `config.dealSpine` passed to the
+  // constructor; deal methods throw a clear error if the caller didn't
+  // configure it.
+
+  private requireDealSpine(): PipedriveDealSpineConfig {
+    if (!this.config.dealSpine) {
+      throw new Error(
+        'PipedriveClient.config.dealSpine is required for deal-CRUD methods. ' +
+          'Pass { pipelineId, stageIds, fieldHashes } from DEAL_* constants in pipedrive.ts.',
+      );
+    }
+    return this.config.dealSpine;
+  }
+
+  private stageNameToId(stage: DealStage): number {
+    const spine = this.requireDealSpine();
+    const id = spine.stageIds[stage];
+    if (!id) {
+      throw new Error(`Stage ID for "${stage}" is not configured in dealSpine.stageIds`);
+    }
+    return id;
+  }
+
+  private stageIdToName(stageId: number): DealStage | null {
+    const spine = this.config.dealSpine;
+    if (!spine) return null;
+    for (const stage of DEAL_STAGES) {
+      if (spine.stageIds[stage] === stageId) return stage;
+    }
+    return null;
+  }
+
+  private readStringField(raw: Record<string, unknown>, hash: string): string | null {
+    if (!hash) return null;
+    const v = raw[hash];
+    return typeof v === 'string' && v ? v : null;
+  }
+
+  /** PD returns person_id / org_id as either a number or an object with .value. Normalize. */
+  private extractPdRelationId(value: unknown): number | null {
+    if (typeof value === 'number') return value;
+    if (value && typeof value === 'object' && 'value' in value) {
+      const v = (value as { value: unknown }).value;
+      return typeof v === 'number' ? v : null;
+    }
+    return null;
+  }
+
+  private parseDeal(raw: Record<string, unknown>): PipedriveDeal {
+    const stageId = Number(raw.stage_id);
+    const fieldHashes = this.config.dealSpine?.fieldHashes;
+    const lostReasonRaw = fieldHashes
+      ? this.readStringField(raw, fieldHashes.lostReason)
+      : null;
+    const lostReason =
+      lostReasonRaw && (LOST_REASONS as readonly string[]).includes(lostReasonRaw)
+        ? (lostReasonRaw as LostReason)
+        : null;
+
+    return {
+      id: Number(raw.id),
+      title: String(raw.title ?? ''),
+      personId: this.extractPdRelationId(raw.person_id),
+      organizationId: this.extractPdRelationId(raw.org_id),
+      stageId,
+      stage: this.stageIdToName(stageId),
+      pipelineId: Number(raw.pipeline_id ?? 0),
+      value: raw.value == null ? null : Number(raw.value),
+      currency: raw.currency == null ? null : String(raw.currency),
+      status: (raw.status as PipedriveDeal['status']) ?? 'open',
+      qbEstimateId: fieldHashes ? this.readStringField(raw, fieldHashes.qbEstimateId) : null,
+      qbInvoiceId: fieldHashes ? this.readStringField(raw, fieldHashes.qbInvoiceId) : null,
+      externalId: fieldHashes ? this.readStringField(raw, fieldHashes.externalId) : null,
+      lostReason,
+      addTime: String(raw.add_time ?? ''),
+      updateTime: String(raw.update_time ?? ''),
+    };
+  }
+
+  async createDeal(input: CreateDealInput): Promise<PipedriveDeal> {
+    const spine = this.requireDealSpine();
+    const stage = input.stage ?? 'lead';
+    const body: Record<string, unknown> = {
+      title: input.title,
+      person_id: input.personId,
+      pipeline_id: spine.pipelineId,
+      stage_id: this.stageNameToId(stage),
+    };
+    if (input.value !== undefined) body.value = input.value;
+    if (input.qbEstimateId !== undefined) {
+      body[spine.fieldHashes.qbEstimateId] = input.qbEstimateId;
+    }
+    if (input.qbInvoiceId !== undefined) {
+      body[spine.fieldHashes.qbInvoiceId] = input.qbInvoiceId;
+    }
+    if (input.externalId !== undefined) {
+      body[spine.fieldHashes.externalId] = input.externalId;
+    }
+
+    log.info('Creating deal', { title: input.title, personId: input.personId, stage });
+    const raw = await this.request<Record<string, unknown>>('/deals', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    return this.parseDeal(raw);
+  }
+
+  async getDeal(id: number): Promise<PipedriveDeal | null> {
+    try {
+      const raw = await this.request<Record<string, unknown>>(`/deals/${id}`);
+      return this.parseDeal(raw);
+    } catch (error) {
+      log.error('Get deal failed', error as Error, { dealId: id });
+      return null;
+    }
+  }
+
+  async updateDeal(id: number, updates: UpdateDealInput): Promise<PipedriveDeal> {
+    const spine = this.requireDealSpine();
+    const body: Record<string, unknown> = {};
+    if (updates.title !== undefined) body.title = updates.title;
+    if (updates.value !== undefined) body.value = updates.value;
+    if (updates.qbEstimateId !== undefined) {
+      body[spine.fieldHashes.qbEstimateId] = updates.qbEstimateId;
+    }
+    if (updates.qbInvoiceId !== undefined) {
+      body[spine.fieldHashes.qbInvoiceId] = updates.qbInvoiceId;
+    }
+    if (updates.externalId !== undefined) {
+      body[spine.fieldHashes.externalId] = updates.externalId;
+    }
+
+    const raw = await this.request<Record<string, unknown>>(`/deals/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    return this.parseDeal(raw);
+  }
+
+  async getDealsByPerson(personId: number): Promise<PipedriveDeal[]> {
+    const res = await this.rawGet<Record<string, unknown>[] | null>(
+      `/persons/${personId}/deals`,
+    );
+    if (!res.data) return [];
+    return res.data.map((raw) => this.parseDeal(raw));
+  }
+
+  async setDealStage(id: number, stage: DealStage): Promise<PipedriveDeal> {
+    this.requireDealSpine();
+    const raw = await this.request<Record<string, unknown>>(`/deals/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ stage_id: this.stageNameToId(stage) }),
+    });
+    return this.parseDeal(raw);
+  }
+
+  /**
+   * Move a deal to the Lost stage with status=lost and a stored reason.
+   * PD's data model has both stage and status; we keep them aligned for
+   * Lost deals so PD's analytics + UI lossifies them consistently.
+   */
+  async markDealLost(id: number, reason: LostReason): Promise<PipedriveDeal> {
+    const spine = this.requireDealSpine();
+    const body: Record<string, unknown> = {
+      status: 'lost',
+      stage_id: this.stageNameToId('lost'),
+      [spine.fieldHashes.lostReason]: reason,
+    };
+    const raw = await this.request<Record<string, unknown>>(`/deals/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    return this.parseDeal(raw);
+  }
+
+  /**
+   * Look up a deal by its `external_id` custom field. Used during backfill
+   * + by deterministic webhook handlers to find "does a deal already exist
+   * for QB estimate 1234?" without name-matching.
+   *
+   * Two-step lookup because PD's search returns a minimal item shape:
+   * search for the deal, then fetch the full record.
+   */
+  async findDealByExternalId(externalId: string): Promise<PipedriveDeal | null> {
+    this.requireDealSpine();
+    const res = await this.rawGet<{ items?: Array<{ item: { id: number } }> } | null>(
+      '/deals/search',
+      {
+        term: externalId,
+        exact_match: 'true',
+        fields: 'custom_fields',
+      },
+    );
+    const items = res.data?.items;
+    if (!items?.length) return null;
+    return this.getDeal(items[0].item.id);
   }
 
   // ── Static utilities ────────────────────────────────────────────

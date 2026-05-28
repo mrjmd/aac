@@ -173,6 +173,95 @@ When a decision gets reversed, ADD a new entry with the reversal — don't delet
 
 ---
 
+## 2026-05-28 — Apps/agent deal-spine refinements: Qualified Lead stage + writes split by trigger
+
+**Decision:** Two refinements to `docs/projects/apps-agent.md`:
+
+1. **Insert a "Qualified Lead" stage** between Lead and Assessment Scheduled. Lost stage carries a `lost_reason` field (`out_of_scope`, `competitor`, `price`, `no_response`, `cancelled`, `passed_after_assessment`, `other`). Final list = 10 stages (originally drafted as 11; "Job Done" and "Invoiced" collapsed into "Job Done" later same day — Cron A and the field app auto-invoice immediately on completion, so the dwell time is minutes, not a distinct state; edge cases like warranty work tracked via a deal metadata field). Locked in the spec's "Deal model" section.
+2. **Split deal writes by trigger nature.** Deterministic webhook-driven and cron-scheduled writes live in `apps/middleware/` (where the triggers already land). LLM / judgment / dialogue-driven writes live in `apps/agent/`. CRUD methods themselves live in `@aac/api-clients`, called by both.
+
+Also confirmed in the same conversation:
+- Comms line locked at `(617) 766-0151` (no new number provisioned)
+- No web UI in apps/agent — observation/config surfaces fold into command-center
+
+**Why:**
+
+- **Qualified Lead:** There are two qualitatively different "this didn't go anywhere" outcomes — fit miss ("we don't do that") and sales loss (to competitor / price / inaction). Conflating them under one Lost stage makes both metrics noisy. Fit-miss rates inform positioning / SEO / inbound mix; sales-loss rates inform close motion. Qualified Lead is also where the agent's stalled-deal-nudge behavior earns its keep — these are real prospects working toward an assessment slot.
+
+- **Writes split:** The original spec implied "all deal logic in apps/agent." That's imprecise — middleware already owns webhook ingestion and existing crons, and the deterministic deal transitions (estimate created → Quote Sent, invoice paid → Paid) fit those existing patterns exactly. Routing those writes through apps/agent would mean middleware's existing webhook handler makes an HTTP RPC to apps/agent for what's a function call's worth of work. Keeping deterministic writes in middleware honors its sacrosanct principle (small, deterministic, no LLM) while still putting the judgment-driven LLM work in apps/agent.
+
+**Alternatives considered:**
+
+- **Single "Lost" stage with reason field only** (no Qualified Lead) — rejected because stage separation matters for dwell-time analytics, nudge-behavior targeting, and dashboard treatment. Reason granularity alone doesn't carry that.
+- **Qualified Lead between Assessment Done and Quote Sent** (Matt's alternate placement) — rejected because that's a different concern (opportunity qualification, not fit qualification). The "we assessed and decided not to quote" case is rare and fits cleanly as `lost_reason: passed_after_assessment`.
+- **All deal writes in apps/agent** (per original spec wording) — rejected because deterministic webhook transitions don't need LLM judgment; routing them through apps/agent adds latency + a cross-app dependency for work middleware is already shaped to do.
+- **All deal writes in middleware** — rejected for the LLM / dialogue / state-coupling reasons captured in the 2026-05-27 "Agent runtime lives in `apps/agent/`" decision.
+
+**How to apply:**
+
+- New deal write: classify by trigger. Webhook from PD/QB/Quo or scheduled cron? → middleware. LLM-classified intent, Matt's confirmation of an action proposal, diagnostic-agent remediation? → apps/agent.
+- Deal CRUD methods (`createDeal`, `updateDeal`, etc.) belong in `@aac/api-clients` regardless of caller.
+- Use the 11-stage list in `docs/projects/apps-agent.md` → "Deal model." Don't add stages without a metric-signal justification.
+- Lost deals always carry a `lost_reason`. If a new failure mode appears that doesn't fit existing values, add the value to the list before using it.
+
+---
+
+## 2026-05-28 — Apps/agent stack: raw Vercel functions (not Next.js, not Hono)
+
+**Decision:** `apps/agent/` uses raw Vercel functions (`@vercel/node`), matching `apps/middleware/`. No Next.js, no Hono, no router framework.
+
+**Why:** A deep read of `apps/middleware/` on 2026-05-28 corrected a wrong premise that had been driving this thread — middleware is NOT on Next.js. It has 4 dependencies (`@aac/api-clients`, `@aac/shared-utils`, `@upstash/redis`, `@vercel/node`) and uses `(req: VercelRequest, res: VercelResponse)` handlers throughout. The monorepo's actual pattern is **UI apps on Next.js (field, command-center, marketing), API-only apps on raw Vercel functions (middleware, agent)**. Building apps/agent on raw Vercel functions IS the consistent choice.
+
+Hono was considered briefly but its value (routing, middleware chains, validation helpers) doesn't pay off at apps/agent's actual HTTP surface size (3–5 routes — the LLM read-tool surface is in-process TypeScript functions invoked by the Anthropic SDK, not HTTP endpoints).
+
+**Alternatives considered:**
+
+- **Next.js 15** (matches `apps/field` and `apps/command-center`) — rejected. Those are UI apps; apps/agent has no UI. Picking Next.js would mean carrying forward a sub-optimal default rather than matching the actual API-app pattern.
+- **Hono on Vercel** — rejected. Useful for projects with many endpoints sharing middleware chains; apps/agent has neither.
+- **Migrate middleware to Next.js for symmetry** — rejected because middleware is already on the lighter pattern; the symmetry already exists.
+
+**How to apply:**
+
+- `apps/agent/` package.json deps mirror middleware's: `@aac/api-clients`, `@aac/shared-utils`, `@upstash/redis`, `@vercel/node`.
+- Template handler shape: `apps/middleware/api/webhooks/google-ads.ts` (266 LOC, cleanest in the codebase). Full lifecycle: validate → dedupe → process → fail-safe-200.
+- Web Standard `Request/Response` shape is acceptable for handlers that need raw bytes (HMAC signature verification) — see `apps/middleware/api/webhooks/quo.ts` for the pattern.
+- Vercel crons configured via `vercel.json` at app root.
+
+---
+
+## 2026-05-28 — Apps/agent is multi-user, role-scoped, internal-only
+
+**Decision:** Apps/agent's purpose expanded from "Matt's ops assistant" to "company-wide context engine with role-scoped access." Three load-bearing principles locked:
+
+1. **Multi-user with role-scoped tool surface.** Identity by phone number; phone → role mapping in env (`AGENT_USER_ROLES` JSON) at first, migrate to a Redis `users` hash at 10+ users. Roles: `owner`, `technician`, `salesperson`, `triage`. Only `owner` (Matt) has a concrete tool scope at Crawl + Walk start; the others are placeholders fleshed out when the people actually start using the agent.
+
+2. **Tool-surface scoping at the data-fetching layer, not the response layer.** Every read tool takes a caller identity and filters internally. The tool *registry* is per-role: the LLM session for a given caller is only registered with tools that caller is allowed to use. The model never sees tool definitions for actions/data outside its role.
+
+3. **Internal-only.** Apps/agent is never exposed to customers as a conversational interface. Customer-facing automation (intent classification, scripted/templated responses to inbound signals) can use the agent's intelligence but must always feel like an automated message from a human — never like a chatbot. Customers are not "users" in the role model; they have no identity in the permission system.
+
+**Why:**
+
+- **Role-scoping at the tool layer (not response layer):** LLM responses are non-deterministic. Even with a system prompt saying "don't mention X," if the tool returned X, the model can reference it in a summary, citation, or follow-up. The only safe pattern is: don't return out-of-scope data in the first place. Tool registry per-role removes the temptation entirely — the model can't reference what it doesn't know exists.
+- **Multi-user matters from day one** because retrofitting a permission model onto a single-user system is painful — tool signatures change, audit logging gets added everywhere, role lookups thread through every handler. Easier to design the request-handler shape as `(callerIdentity, ...) => ...` from the start, even if the only role with concrete scope at start is `owner`.
+- **Internal-only as a brand decision:** AAC's positioning is "humans, experts, real people." Exposing a conversational AI to customers erodes that. The intelligence can still flow to customer-facing communication, but the *interface* stays human-authored or template-shaped.
+
+**Alternatives considered:**
+
+- **Single-user, Matt-only** (the original spec) — rejected because Mike, Edward, and the future triage hire are real users with real needs, and Matt explicitly wants the agent to serve them too. Retrofitting later is painful.
+- **Design full tool scopes for technician/salesperson/triage roles now** — rejected as YAGNI. Concrete scopes for those roles are aspirational until the people actually use the agent.
+- **Customer-facing conversational AI surface in Run** — rejected. Brand value of "you talk to a human." The agent's intelligence can drive customer-facing automation, but never as a conversation interface.
+- **Database-backed user table from day one** — rejected as YAGNI at current scale; env JSON migrates cleanly when needed.
+
+**How to apply:**
+
+- All read tools have the signature `tool(callerIdentity, ...args)`. Scoping at the tool layer; never trust the LLM to filter responses.
+- LLM session construction is per-caller: build the tool definitions array from the caller's role before invoking the model.
+- Standing rules per-user keyed by phone (`agent:rules:{phoneE164}`).
+- Audit log = Redis stream, every Q&A captured (caller identity + question + tool calls + response).
+- Customer-facing automation must remain tonally indistinguishable from human-authored automated messages. No "I'm an AI" framing, no freeform conversational tone.
+
+---
+
 ## Template for new entries
 
 ```

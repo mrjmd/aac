@@ -6,7 +6,9 @@
   "description": "Operational scripts — thin wrappers over @aac/api-clients",
   "dependencies": {
     "@aac/api-clients": "workspace:*",
-    "@aac/shared-utils": "workspace:*"
+    "@aac/shared-utils": "workspace:*",
+    "@upstash/redis": "^1.38.0",
+    "googleapis": "^171.4.0"
   },
   "devDependencies": {
     "@aac/tsconfig": "workspace:*",

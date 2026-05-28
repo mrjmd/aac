@@ -12,24 +12,164 @@
 ## Goal
 
 A separate Vercel app that provides the agent platform — conversational
-operations runtime, deal spine, LLM read-tool surface, diagnostic agent —
-that the original Phase 2.5 deal-spine spec proposed as middleware extensions.
+operations runtime, LLM read-tool surface, diagnostic agent, and the
+judgment-driven half of the deal spine — that the original Phase 2.5
+deal-spine spec proposed as middleware extensions.
 
 Split out per the 2026-05-27 architecture decision because middleware is
 sacrosanct (minimal changes, stateless webhook processing) and the agent
 platform has different change cadence, state model, and runtime profile.
 
+## Deal model
+
+The PD deal is the cross-system spine: it holds foreign keys to the PD
+person, the QB estimate, and the QB invoice for one specific opportunity,
+plus a stage. It becomes the single record of "where does this customer
+relationship stand?" The `[deal:N]` marker in calendar event descriptions
+and deal-ID stamps on QB estimates make cross-system linkage deterministic
+instead of name-match brittle.
+
+**Calendar events link to deals via the `[deal:N]` marker only — not via a
+deal-side foreign key.** A deal can have many events: one assessment
+(purple), one or more job events (green; multi-day repairs are common),
+and callbacks. Each event belongs to at most one deal, so the many-to-one
+relationship lives naturally on the event description side. The deal
+doesn't need to mirror it.
+
+This means "what events does deal N have?" is answered by a calendar
+search for `[deal:N]` in the description; stage transitions like "all
+green events for the deal have ended" follow naturally from filtering
+those results.
+
+### Stages
+
+PD pipeline name: **"Deal Spine"** (created 2026-05-28).
+
+| # | Stage | Trigger to enter |
+|---|---|---|
+| 1 | **Lead** | Customer signals interest (text / call / web form) — not yet triaged |
+| 2 | **Qualified Lead** | Fit confirmed; we want to engage. Agent or Matt makes the call. |
+| 3 | **Assessment Scheduled** | Purple (color 5) calendar event created |
+| 4 | **Assessment Done** | Assessment event end time passed |
+| 5 | **Quote Sent** | QB estimate created and emailed |
+| 6 | **Quote Accepted** | QB estimate marked accepted (or customer confirms via text) |
+| 7 | **Job Scheduled** | Green (color 10) calendar event created |
+| 8 | **Job Done** | Field app marks complete (or green event end time passed). **Covers invoicing too** — Cron A / field app create the QB invoice immediately on completion, so the dwell time between "work done" and "invoice sent" is minutes, not a distinct state. Edge cases (warranty work, courtesy jobs with no invoice, invoice-send failure) tracked as a deal metadata field, not as a stage. |
+| 9 | **Paid** | QB invoice marked paid — terminal success |
+| 10 | **Lost** | Terminal failure — carries a `lost_reason` field |
+
+`lost_reason` values: `out_of_scope` (fit miss — "we don't do that"),
+`competitor`, `price`, `no_response`, `cancelled`,
+`passed_after_assessment`, `other`.
+
+The Lead → Qualified Lead split separates fit misses from sales losses. Fit
+misses tell us about positioning / SEO / who's finding us. Sales losses
+tell us about close motion. Conflating them under one "Lost" stage makes
+both metrics noisy. See `DECISIONS.md` (2026-05-28 entry) for full
+reasoning.
+
+Some leads skip Assessment Scheduled / Assessment Done (small repairs Matt
+quotes from photos). One pipeline; stages are optional, not strict.
+
+FHP customers don't fit this pipeline at all (recurring billing, no quote
+cycle). When the FHP back-end ships, a second pipeline will be added.
+
+### Custom fields on the PD Deal
+
+Four custom fields, all created via the setup script in `tools/src/setup/pd-deal-fields.ts` (so the field hashes are captured deterministically and the setup is reproducible):
+
+| Field | Type | Purpose |
+|---|---|---|
+| `qb_estimate_id` | text | QB Estimate.Id for this deal (typically 1:1) |
+| `qb_invoice_id` | text | QB Invoice.Id for this deal (typically 1:1) |
+| `external_id` | text | Generic dedup key for backfill / idempotency (e.g. `"qb-est-1234"` so re-runs don't duplicate deals) |
+| `lost_reason` | enum | One of: `out_of_scope`, `competitor`, `price`, `no_response`, `cancelled`, `passed_after_assessment`, `other` |
+
+PD Person ↔ QB Customer linkage already exists at the person level (the `quickbooks_id` field on PD Person, maintained by middleware). That link is **not** duplicated on the deal — the deal carries QB IDs for the specific estimate and invoice tied to *this* opportunity, not the customer. Multi-job customers (a builder who books repeat work) get one deal per opportunity, each linked to its own estimate.
+
+`calendar_event_id` is intentionally **not** a deal field — calendar events link to deals via the `[deal:N]` marker in their description (see above). One assessment, one or more job events, and any callbacks all belong to the same deal without needing a deal-side foreign key.
+
+## Roles & identity
+
+Apps/agent is an **internal-only** tool. Identity is by phone number; whoever texts the comms line is identified by which phone they texted from, looked up in a role map.
+
+| Role | Who (today) | Read scope |
+|---|---|---|
+| `owner` | Matt | Everything |
+| `technician` | Mike (future: other techs) | Own calendar, own jobs, customers tied to own jobs, escalation contacts. **Aspirational at start — concrete tool scope is added when the role is actually used.** |
+| `salesperson` | Edward (future: other salespeople) | Own pipeline, own deals, customers tied to own deals, own attribution. **Aspirational at start.** |
+| `triage` | (future inbound triage hire, no concrete timing) | Customer scheduling context, calendar availability, no employee data, no financials. **Not designed until the hire is real.** |
+
+Only `owner` has a concretely defined tool scope at Crawl + Walk start. The other roles are placeholders — the role map can route them, but their tool surfaces get fleshed out when the people actually start using the agent. Designing aspirational scopes now is YAGNI.
+
+**Identity binding:**
+
+- Phone → role mapping in env (`AGENT_USER_ROLES` as JSON). Migrate to a `users` Redis hash when there are 10+ users. The current scale doesn't justify a DB.
+- Standing rules per-user, keyed in Redis by phone (`agent:rules:{phoneE164}`).
+- Audit log: every Q&A captured with caller identity, question, tool calls made, response. **Redis stream** (queryable, expires naturally).
+
+**Tool-surface scoping rule (load-bearing):**
+
+Every read tool takes a caller identity and filters at the data-fetching layer — never at the response layer. The tool *registry* itself is per-role: the LLM session for a given caller is only registered with tools that caller is allowed to use. The model never sees tool definitions for actions it can't take or data it can't read. This is non-negotiable — LLM responses are non-deterministic; even with a system prompt saying "don't mention X," if the tool returned X, the model might reference it.
+
+## Customer-facing boundary
+
+Apps/agent is **never** exposed to customers as a conversational interface. Customers may interact with the agent's intelligence (intent classification of their inbound texts, automated responses to specific signals like quote-approvals or scheduling negotiations), but those interactions must always feel like an automated message from a human — never like talking to a chatbot.
+
+Concrete implications:
+- No "talk to our AI" surface, ever
+- Autonomous customer-text behaviors (Walk → Run) use templated or LLM-composed copy, but tonally constrained to feel human-authored
+- Customer recipients are NOT users in the role-model sense; they have no identity in the agent's permission system
+- All conversational dialogue surface is internal: Matt, technicians, salespeople, triage
+
+## Writes are split by trigger nature
+
+The deal table is shared infrastructure. Both middleware and apps/agent
+write to it; the split is by what triggers the write:
+
+| Trigger | Writer |
+|---|---|
+| PD/QB/Quo webhook with deterministic implication (estimate created → Quote Sent, invoice paid → Paid, calendar event with marker → link to deal) | **Middleware** |
+| Nightly reconciliation cron (QB estimate/invoice state into deal stages) | **Middleware** |
+| `[deal:N]` marker stamping on cron-created calendar events | **Middleware** |
+| LLM intent classification of inbound message → stage transition | **Apps/agent** |
+| Matt confirms an action proposal → deal create / update | **Apps/agent** |
+| Diagnostic agent decides a remediation | **Apps/agent** |
+
+Middleware grows *deal-aware* (reads markers, writes deterministic
+transitions) but doesn't grow LLM judgment, dialogue state, or proposal
+lifecycle. Apps/agent owns the LLM/judgment side. CRUD methods themselves
+live in `@aac/api-clients`, called by both. See `DECISIONS.md`
+(2026-05-28 entry) for the full split rationale.
+
 ## Crawl / Walk / Run rollout (compressed from original Phase 2.5 spec)
 
 ### Crawl (2-4 weeks — foundation)
 
-1. **App scaffold** — Next.js 15 deploy, shared Redis, env config including `QUO_AGENT_PHONE_NUMBER` = `(617) 766-0151` and `MATT_PERSONAL_PHONE_NUMBER` for whitelist
-2. **PD Deal CRUD methods in `@aac/api-clients`** — `createDeal`, `updateDeal`, `getDeal`, `getDealsByPerson`, deal-stage helpers, with tests. Currently zero deal methods exist in the shared client.
-3. **Quo conversation methods in `@aac/api-clients`** — `listConversations`, `getConversation`, `listMessages` (or whatever shape matches Quo's API). Powers the customer-context builder.
-4. **`[deal:N]` marker support added to existing middleware crons** — `job-reminders`, `job-followups`, `invoice-create`: prefer marker if present, fall back to current name-match. Tiny middleware change, big robustness win. Cross-cutting; the marker-emission lives in apps/agent and middleware reads.
-5. **Backfill script** — one-shot creating PD deals for every currently-open QB estimate + every recent green calendar event. So the deal model has data on day 1.
-6. **Nightly deal-reconcile cron** in apps/agent — reconciles QB estimate/invoice state into deal stages.
-7. **Error-surfacing tick** — periodic job reading new `logHealthError` entries from middleware's stream, texting Matt the raw failure context from the agent line. Crawl version: no diagnosis, just better routing than waiting for Matt to check `/api/health`. (See Walk for the diagnostic-agent layer.)
+Goal: build the deal spine, marker plumbing, and apps/agent scaffold without
+any LLM logic. By end of Crawl, every job has a deal, every estimate has a
+deal, marker-based cross-system linkage works, and middleware errors land
+on the agent line (raw, no diagnosis yet).
+
+**Shared (`@aac/api-clients`):**
+
+1. ✅ **PD Deal CRUD methods** — *Shipped 2026-05-28.* `createDeal`, `getDeal`, `updateDeal`, `getDealsByPerson`, `setDealStage`, `markDealLost`, `findDealByExternalId` in `PipedriveClient`. Constructor-injected `dealSpine` config holds pipeline/stage IDs + custom-field hashes. 16 tests + live PD round-trip on the Matt Davis fixture. Setup tooling: `tools/src/setup/pd-deal-fields.ts` (idempotent). PD pipeline ID = 1; stage IDs 1–10 in spec order; field hashes captured in `DEAL_FIELD_HASHES` constant.
+2. ⏳ **Quo conversation methods** — `listConversations`, `getConversation`, `listMessages` (or whatever shape matches Quo's API). Powers the customer-context builder used heavily in Walk. *Next.*
+
+**Middleware (deterministic deal work — fits existing patterns):**
+
+3. ☐ **`[deal:N]` marker read + emit support** on `job-reminders`, `job-followups`, `invoice-create`: prefer marker if present, fall back to current name-match. Cron-created calendar events get the marker stamped at creation.
+4. ☐ **Deal-aware webhook handlers** — QB estimate created → create deal at Quote Sent; QB invoice paid → Paid; PD person created from inbound → create deal at Lead.
+5. ☐ **Nightly deal-reconcile cron** — reconciles QB estimate/invoice state into deal stages; catches anything the webhook handlers missed.
+
+**Tools (one-shot script):**
+
+6. ☐ **Backfill script** — create PD deals for every currently-open QB estimate + every recent green calendar event. So the deal model has data on day 1.
+
+**Apps/agent (new app scaffold):**
+
+7. ☐ **App scaffold** — raw Vercel functions (`@vercel/node`), matching middleware. Shared Redis, env config including `QUO_AGENT_PHONE_NUMBER` = `(617) 766-0151`, `AGENT_USER_ROLES` JSON for the phone→role map, and per-user keys for standing rules + audit log.
+8. ☐ **Error-surfacing tick** — periodic job reading new `logHealthError` entries from middleware's stream, texting Matt raw failure context from the agent line. Crawl version: no diagnosis, just better routing than waiting for Matt to check `/api/health`. The diagnostic-agent LLM layer comes in Walk.
 
 ### Walk (1-2 months after crawl)
 
@@ -80,19 +220,22 @@ See the original Phase 2.5 doc (`_archive/2026-05-27/middleware-phase-2.5-deal-s
 ## Architecture decisions locked
 
 - Separate Vercel app, not middleware extension (2026-05-27, see `DECISIONS.md`)
-- Comms line: `(617) 766-0151` (dedicated Quo number, currently unused)
+- Comms line: `(617) 766-0151` (dedicated Quo number, currently unused — confirmed 2026-05-28)
 - Whitelist on Matt's personal number (env: `MATT_PERSONAL_PHONE_NUMBER`)
-- Deal as spine: PD deals are load-bearing infrastructure, agent-managed only, Matt never touches deals manually
+- Deal as cross-system spine: PD deals are load-bearing infrastructure; Matt never touches deals manually
+- **Deal writes split by trigger nature** (2026-05-28, see `DECISIONS.md`) — deterministic webhook + cron writes live in middleware; LLM / judgment / dialogue-driven writes live in apps/agent. CRUD methods themselves live in `@aac/api-clients`.
+- Deal stages: 10-stage pipeline locked (see "Deal model" above) — Lead, Qualified Lead, Assessment Scheduled, Assessment Done, Quote Sent, Quote Accepted, Job Scheduled, Job Done (covers invoicing), Paid, Lost (with `lost_reason`). PD pipeline name: "Deal Spine."
+- No web UI in apps/agent. All observation / configuration surfaces live in command-center. Comms-line dialogue is the only interface. (Confirmed 2026-05-28.)
+- **Stack: raw Vercel functions** (`@vercel/node`), not Next.js, not Hono. Confirmed 2026-05-28. Matches `apps/middleware/`. The monorepo's pattern is UI apps on Next.js (`apps/field`, `apps/command-center`, `apps/marketing`), API-only apps on raw Vercel functions (`apps/middleware`, `apps/agent`). Template handler shape: `apps/middleware/api/webhooks/google-ads.ts` is the cleanest reference.
+- **Internal-only**, never customer-facing as a conversational interface (2026-05-28, see "Customer-facing boundary" above)
+- **Multi-user with role-scoped tool surface** (2026-05-28, see "Roles & identity" above); only `owner` (Matt) has a concrete tool scope at start, others are placeholders
 - LLM-first, hard rules second (per original Phase 2.5 principle 2.1)
 
 ## Open questions
 
-1. **Stack: Next.js 15 (matches command-center) OR something lighter (Hono, raw Vercel functions)?** Agent runtime is mostly API + cron, minimal UI. Could justify lighter stack.
-2. **Standing-rule storage:** Redis with structured schema, or a small Postgres / Turso? (Original spec was vague.)
-3. **Comms line — provision new number OR repurpose `(617) 766-0151` which is already in Quo unused?** Spec says repurpose.
-4. **PD deal stages — final list?** Original spec proposed: Lead → Assessment Scheduled → Assessment Done → Quote Sent → Quote Accepted → Job Scheduled → Job Done → Invoiced → Paid → Won → Lost. Confirm with Matt.
-5. **Backfill scope:** how far back to create deals retroactively? All open estimates + green calendar events? Past 6 months? (Original spec said "open QB estimates + every recent green calendar event.")
-6. **Diagnostic agent — code-fix output format?** If a code-level fix is proposed, does the agent draft a PR, output a diff, or just text Matt the fix description?
+1. **Standing-rule storage:** Redis with structured schema, or a small Postgres / Turso? (Original spec was vague.) Decision can wait until Walk.
+2. **Backfill scope:** how far back to create deals retroactively? All open estimates + green calendar events? Past 6 months? (Original spec said "open QB estimates + every recent green calendar event.") Decide right before running the backfill.
+3. **Diagnostic agent — code-fix output format?** If a code-level fix is proposed, does the agent draft a PR, output a diff, or just text Matt the fix description? Walk-phase decision.
 
 ## Related
 

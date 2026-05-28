@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { PipedriveClient, PIPEDRIVE_CROSS_SYSTEM_FIELDS, shouldUpdateName, isNameRefinement } from '../pipedrive.js';
+import {
+  PipedriveClient,
+  PIPEDRIVE_CROSS_SYSTEM_FIELDS,
+  shouldUpdateName,
+  isNameRefinement,
+  type PipedriveDealSpineConfig,
+} from '../pipedrive.js';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -354,5 +360,268 @@ describe('isNameRefinement', () => {
 
   it('does not allow the same first-name string when stripped', () => {
     expect(isNameRefinement('Sam', 'Sam')).toBe(false);
+  });
+});
+
+// ── Deal CRUD ─────────────────────────────────────────────────────────
+
+const FAKE_DEAL_SPINE: PipedriveDealSpineConfig = {
+  pipelineId: 99,
+  stageIds: {
+    lead: 101,
+    qualified_lead: 102,
+    assessment_scheduled: 103,
+    assessment_done: 104,
+    quote_sent: 105,
+    quote_accepted: 106,
+    job_scheduled: 107,
+    job_done: 108,
+    paid: 109,
+    lost: 110,
+  },
+  fieldHashes: {
+    qbEstimateId: 'hash_qb_est',
+    qbInvoiceId: 'hash_qb_inv',
+    externalId: 'hash_ext_id',
+    lostReason: 'hash_lost_reason',
+  },
+};
+
+function makeDealClient() {
+  return new PipedriveClient({
+    apiKey: 'test-api-key',
+    companyDomain: 'testcompany',
+    dealSpine: FAKE_DEAL_SPINE,
+  });
+}
+
+function makeRawDeal(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 42,
+    title: 'Smith — foundation repair',
+    person_id: { value: 7, name: 'Smith' },
+    org_id: null,
+    stage_id: 101, // lead
+    pipeline_id: 99,
+    value: 5000,
+    currency: 'USD',
+    status: 'open',
+    add_time: '2026-05-28 12:00:00',
+    update_time: '2026-05-28 12:00:00',
+    ...overrides,
+  };
+}
+
+describe('PipedriveClient — Deal CRUD', () => {
+  describe('config guard', () => {
+    it('createDeal throws if dealSpine is not configured', async () => {
+      const client = new PipedriveClient({ apiKey: 'k', companyDomain: 'd' });
+      await expect(
+        client.createDeal({ title: 'x', personId: 1 }),
+      ).rejects.toThrow(/dealSpine is required/);
+    });
+
+    it('setDealStage throws if dealSpine is not configured', async () => {
+      const client = new PipedriveClient({ apiKey: 'k', companyDomain: 'd' });
+      await expect(client.setDealStage(1, 'lead')).rejects.toThrow(/dealSpine is required/);
+    });
+  });
+
+  describe('createDeal', () => {
+    it('posts with stage=lead by default and the configured pipeline_id', async () => {
+      const client = makeDealClient();
+      mockFetch.mockReturnValueOnce(mockResponse(makeRawDeal()));
+
+      const deal = await client.createDeal({ title: 'Smith — foundation repair', personId: 7 });
+
+      expect(mockFetch).toHaveBeenCalledOnce();
+      const [url, init] = mockFetch.mock.calls[0];
+      expect(url).toContain('/deals?');
+      expect(init.method).toBe('POST');
+      const body = JSON.parse(init.body as string);
+      expect(body.title).toBe('Smith — foundation repair');
+      expect(body.person_id).toBe(7);
+      expect(body.pipeline_id).toBe(99);
+      expect(body.stage_id).toBe(101); // lead
+
+      expect(deal.id).toBe(42);
+      expect(deal.stage).toBe('lead');
+      expect(deal.personId).toBe(7);
+    });
+
+    it('passes optional custom fields through their hashes', async () => {
+      const client = makeDealClient();
+      mockFetch.mockReturnValueOnce(mockResponse(makeRawDeal()));
+
+      await client.createDeal({
+        title: 'x',
+        personId: 7,
+        stage: 'quote_sent',
+        value: 4200,
+        qbEstimateId: 'qb-est-1234',
+        externalId: 'qb-est-1234',
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(body.stage_id).toBe(105); // quote_sent
+      expect(body.value).toBe(4200);
+      expect(body.hash_qb_est).toBe('qb-est-1234');
+      expect(body.hash_ext_id).toBe('qb-est-1234');
+      expect(body.hash_qb_inv).toBeUndefined();
+    });
+  });
+
+  describe('getDeal', () => {
+    it('parses a deal from raw PD shape including custom fields', async () => {
+      const client = makeDealClient();
+      mockFetch.mockReturnValueOnce(
+        mockResponse(
+          makeRawDeal({
+            stage_id: 105,
+            hash_qb_est: 'qb-est-1234',
+            hash_qb_inv: 'qb-inv-5678',
+            hash_ext_id: 'qb-est-1234',
+            hash_lost_reason: '',
+          }),
+        ),
+      );
+
+      const deal = await client.getDeal(42);
+
+      expect(deal).not.toBeNull();
+      expect(deal!.id).toBe(42);
+      expect(deal!.stage).toBe('quote_sent');
+      expect(deal!.qbEstimateId).toBe('qb-est-1234');
+      expect(deal!.qbInvoiceId).toBe('qb-inv-5678');
+      expect(deal!.externalId).toBe('qb-est-1234');
+      expect(deal!.lostReason).toBeNull();
+    });
+
+    it('returns null on API error', async () => {
+      const client = makeDealClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ error: 'not found' }, 404));
+
+      const deal = await client.getDeal(999);
+      expect(deal).toBeNull();
+    });
+
+    it('returns stage=null when stageId is not in the configured map', async () => {
+      const client = makeDealClient();
+      mockFetch.mockReturnValueOnce(mockResponse(makeRawDeal({ stage_id: 9999 })));
+
+      const deal = await client.getDeal(42);
+      expect(deal!.stage).toBeNull();
+      expect(deal!.stageId).toBe(9999);
+    });
+  });
+
+  describe('updateDeal', () => {
+    it('only sends the fields that are passed', async () => {
+      const client = makeDealClient();
+      mockFetch.mockReturnValueOnce(mockResponse(makeRawDeal()));
+
+      await client.updateDeal(42, { qbInvoiceId: 'qb-inv-5678' });
+
+      const [url, init] = mockFetch.mock.calls[0];
+      expect(url).toContain('/deals/42');
+      expect(init.method).toBe('PUT');
+      const body = JSON.parse(init.body as string);
+      expect(body.hash_qb_inv).toBe('qb-inv-5678');
+      expect(body.hash_qb_est).toBeUndefined();
+      expect(body.title).toBeUndefined();
+    });
+  });
+
+  describe('getDealsByPerson', () => {
+    it('returns an empty array when person has no deals', async () => {
+      const client = makeDealClient();
+      mockFetch.mockReturnValueOnce(mockResponse(null));
+
+      const deals = await client.getDealsByPerson(7);
+      expect(deals).toEqual([]);
+    });
+
+    it('returns parsed deals when the person has some', async () => {
+      const client = makeDealClient();
+      mockFetch.mockReturnValueOnce(
+        mockResponse([makeRawDeal(), makeRawDeal({ id: 43, stage_id: 109 })]),
+      );
+
+      const deals = await client.getDealsByPerson(7);
+      expect(deals).toHaveLength(2);
+      expect(deals[0].stage).toBe('lead');
+      expect(deals[1].stage).toBe('paid');
+    });
+  });
+
+  describe('setDealStage', () => {
+    it('PUTs just stage_id, mapped from the stage name', async () => {
+      const client = makeDealClient();
+      mockFetch.mockReturnValueOnce(mockResponse(makeRawDeal({ stage_id: 107 })));
+
+      const deal = await client.setDealStage(42, 'job_scheduled');
+
+      const init = mockFetch.mock.calls[0][1];
+      expect(init.method).toBe('PUT');
+      const body = JSON.parse(init.body as string);
+      expect(body).toEqual({ stage_id: 107 });
+      expect(deal.stage).toBe('job_scheduled');
+    });
+  });
+
+  describe('markDealLost', () => {
+    it('sets status=lost, stage=lost, and the lost_reason custom field', async () => {
+      const client = makeDealClient();
+      mockFetch.mockReturnValueOnce(
+        mockResponse(
+          makeRawDeal({
+            stage_id: 110,
+            status: 'lost',
+            hash_lost_reason: 'out_of_scope',
+          }),
+        ),
+      );
+
+      const deal = await client.markDealLost(42, 'out_of_scope');
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(body.status).toBe('lost');
+      expect(body.stage_id).toBe(110); // lost
+      expect(body.hash_lost_reason).toBe('out_of_scope');
+
+      expect(deal.status).toBe('lost');
+      expect(deal.stage).toBe('lost');
+      expect(deal.lostReason).toBe('out_of_scope');
+    });
+  });
+
+  describe('findDealByExternalId', () => {
+    it('search-then-fetch: returns the full deal when search hits', async () => {
+      const client = makeDealClient();
+      // First call: /deals/search
+      mockFetch.mockReturnValueOnce(mockResponse({ items: [{ item: { id: 42 } }] }));
+      // Second call: /deals/42
+      mockFetch.mockReturnValueOnce(
+        mockResponse(makeRawDeal({ hash_ext_id: 'qb-est-1234' })),
+      );
+
+      const deal = await client.findDealByExternalId('qb-est-1234');
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch.mock.calls[0][0]).toContain('/deals/search');
+      expect(mockFetch.mock.calls[0][0]).toContain('term=qb-est-1234');
+      expect(mockFetch.mock.calls[1][0]).toContain('/deals/42');
+      expect(deal!.id).toBe(42);
+      expect(deal!.externalId).toBe('qb-est-1234');
+    });
+
+    it('returns null when search finds nothing', async () => {
+      const client = makeDealClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ items: [] }));
+
+      const deal = await client.findDealByExternalId('qb-est-nonexistent');
+      expect(deal).toBeNull();
+      expect(mockFetch).toHaveBeenCalledOnce(); // no second fetch
+    });
   });
 });

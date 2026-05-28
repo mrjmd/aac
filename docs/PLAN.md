@@ -1,6 +1,6 @@
 # AAC Plan — Current State and Roadmap
 
-**Last updated:** 2026-05-27
+**Last updated:** 2026-05-28
 **Supersedes:** `_archive/2026-05-27/MASTER-PLAN.md` and `_archive/2026-05-27/middleware-phase-2.5-deal-spine.md`
 **Entry point for:** anyone (Matt, future Claude sessions) trying to understand "what are we doing and why" without re-deriving from scratch.
 
@@ -37,10 +37,12 @@ This is why automation of Matt-and-Mike's existing daily flow comes before openi
 
 | # | Project | Goal | Status | Spec |
 |---|---|---|---|---|
-| 1 | **apps/field** | Tech-facing mobile web app for job completion (photos + payment status + auto-invoice) | Spec pending | `projects/apps-field.md` (TBD) |
-| 2 | **apps/agent** | Agent platform (comms line, deal spine, read-tool surface, intent classification) | Spec pending | `projects/apps-agent.md` (TBD) |
-| 3 | **Calendar scheduling automation** | Stub event creation on estimate approval; full slot-suggestion later | Depends on #2 | `projects/calendar-scheduling.md` (TBD) |
-| 4 | **Estimate auto-drafting** | LLM drafts QB estimates from PD/Quo/calendar context; 3-day analysis spike first | Depends on #2 (tool surface) | `projects/estimate-auto-draft.md` (TBD) |
+| 1 | **apps/field** | Tech-facing mobile web app for job completion (photos + payment status + auto-invoice) | Shipped to production 2026-05-28 | `projects/apps-field.md` |
+| 2 | **apps/agent** | Agent platform (comms line, deal spine, read-tool surface, intent classification) | Crawl step 1 (PD Deal CRUD in @aac/api-clients) shipped 2026-05-28; Crawl step 2 (Quo conversation methods) is next | `projects/apps-agent.md` |
+| 3 | **Calendar scheduling automation** | Stub event creation on estimate approval; full slot-suggestion later | Depends on #2 | `projects/calendar-scheduling.md` |
+| 4 | **Estimate auto-drafting** | LLM drafts QB estimates from PD/Quo/calendar context; 3-day analysis spike first | Depends on #2 (tool surface) | `projects/estimate-auto-draft.md` |
+
+**Opportunistic sidecar:** `projects/middleware-cleanup.md` — cleanup items surfaced during the apps/agent stack analysis. Do during apps/agent Crawl when middleware is already unfrozen for deal-aware webhook handlers; don't break SACROSANCT for janitorial work alone.
 
 **Build order:** #1 in parallel with #2 (independent). #3 and #4 follow #2. Field-app v1 ships with Cron A heuristics; v2 uses the deal spine from #2.
 
