@@ -1,11 +1,68 @@
 # Project Spec — apps/agent (Conversational Agent Platform)
 
-**Status:** Spec — pre-build
+**Status:** ⏸ **PAUSED at Walk 2** as of 2026-05-29 (see *Architecture realignment* below)
 **Owner:** Matt
 **Created:** 2026-05-27
 **Pillar:** 6 (apps/agent/)
 **Supersedes:** `_archive/2026-05-27/middleware-phase-2.5-deal-spine.md` — the original 44k-byte spec remains the most-detailed design source. Refer to it for nuanced design decisions not captured in this spec.
-**Build dependency:** Foundational. Required by Calendar Scheduling and Quote Auto-Draft projects. apps/field v1 is independent; apps/field v2 depends on this.
+
+---
+
+## ⏸ Architecture realignment — 2026-05-29
+
+**This spec describes the pre-realignment scope.** Read this section first
+before applying any of the Crawl/Walk sections below.
+
+What changed: the original framing put intent classification, scheduling
+intent extraction, and the SchedulingDirective pipeline inside apps/agent.
+That conflated two concerns — *passive listening over customer comms* (a
+middleware job; middleware already runs the Quo webhook + Gemini entity
+extraction) with *Matt-facing dialogue* (the agent's actual purpose). It
+also would have created a second webhook target listening to the same
+business line, doubling tokens for no architectural benefit.
+
+**Corrected division of labor:**
+
+- **`apps/middleware/`** — owns the listening surface. Quo webhook +
+  new QB Estimate webhook + daily QB reconciliation backstop cron. Intent
+  extraction extends the existing Gemini classifier with scheduling-intent
+  labels. On detection, dispatches a `SchedulingDirective` to
+  `@aac/scheduling`.
+- **`@aac/agent-tools`** (new package, 2026-05-29) — the seven read tools
+  formerly in `apps/agent/lib/tools/`. Pure deps-injected functions.
+  Importable from any LLM-calling code in the monorepo.
+- **`@aac/scheduling`** (new package, scaffolded 2026-05-29; impl TBD) —
+  SchedulingDirective normalization + slot suggestion + event creation +
+  PD updates + callback child-deal logic. Pure algorithm.
+- **`@aac/quoting`** (new package, scaffolded 2026-05-29; impl TBD) —
+  photo analysis + quote drafting + QB Estimate creation. Pure algorithm.
+  Hands off to `@aac/scheduling` on acceptance.
+- **`apps/agent/`** — Matt-facing dialogue *only*. Comms line listener
+  (already shipped; Walk 1) + propose-dialogue endpoint (where middleware
+  POSTs to ask Matt "proceed with X?"). Strategic mode, voice cloning,
+  self-reflection — all when those layers begin.
+
+**Status of Walk steps in this spec:**
+
+| Step | Status |
+|---|---|
+| Walk 1 — agent comms inbound webhook | ✅ Shipped 2026-05-28; LIVE in prod |
+| Walk 2 — read-tool surface | ✅ Shipped 2026-05-28; **migrated to `@aac/agent-tools` 2026-05-29** |
+| Walk 3 — intent classification | ⤳ Moved to `apps/middleware` (extend Gemini classifier) |
+| Walk 4 — action proposals | ⤳ Split: middleware emits directives; apps/agent surfaces propose-dialogue |
+| Walk 5 — stub event creation | ⤳ Moved to `@aac/scheduling` |
+| Walk 6 — stale-deal nudges (Funnel A Phase 2) | ⤳ Moved to `@aac/scheduling` (or its own package as that work matures) |
+| Walk 7 — outbound directive surface | Stays in `apps/agent` (propose-dialogue endpoint, agent line outbound) |
+| Walk 8 — diagnostic agent | ⤳ Moved to `apps/middleware` (errors originate there) |
+
+**When apps/agent resumes:** when the agent-vision Layer 1/3/4 work
+begins — voice fidelity (Layer 1), strategic-partner mode (Layer 3),
+self-reflective improvement (Layer 4). See `docs/projects/agent-vision.md`.
+Until then, Walk 1 endpoint stays live + dormant.
+
+**Read the rest of this doc as historical design intent**, not as the
+current build plan. The deal model + stages + role/identity sections
+remain accurate and continue to apply across middleware + packages.
 
 ---
 

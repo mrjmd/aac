@@ -6,6 +6,45 @@ When a decision gets reversed, ADD a new entry with the reversal — don't delet
 
 ---
 
+## 2026-05-29 — Scheduling + quoting are packages; intent extraction stays in middleware; apps/agent paused at Walk 2
+
+**Decision:** The 2026-05-27 "apps/agent owns intent classification, scheduling pipeline, and the read-tool surface" framing was wrong. Corrected division of labor:
+
+- **`packages/agent-tools/`** (new) — the seven LLM read tools, migrated from `apps/agent/lib/tools/`. Pure deps-injected functions, importable from any LLM-calling code.
+- **`packages/scheduling/`** (new, scaffolded; impl TBD) — SchedulingDirective normalization + slot suggestion + event creation + PD deal updates + callback child-deal logic. Pure algorithm.
+- **`packages/quoting/`** (new, scaffolded; impl TBD) — photo analysis + quote drafting + QB Estimate creation. Pure algorithm. Hands off to `@aac/scheduling` on acceptance.
+- **`apps/middleware/`** — extends its existing Gemini-based entity-extraction call with scheduling-intent labels. On detection, dispatches a `SchedulingDirective` to `@aac/scheduling`. Also gains a new QB Estimate webhook handler (replacing the originally-planned poll) and a daily QB reconciliation backstop cron.
+- **`apps/agent/`** — paused at Walk 2. Scope shrinks to Matt-facing dialogue: the agent comms line listener (already shipped) + a future propose-dialogue endpoint that middleware POSTs to. Resumes when the agent-vision Layer 1/3/4 work begins (voice fidelity, strategic mode, self-reflection).
+
+**Why:**
+- **One listener per channel.** Middleware already runs the Quo webhook for the business line with a Gemini classifier wired in; adding a second webhook listener in apps/agent doubled tokens for no architectural benefit. Adding scheduling-intent labels to the existing classifier is the smaller, cleaner change.
+- **Multiple entry points.** Scheduling and quoting will get invoked from middleware (today's webhook handlers), apps/website (future instant-quote upload form), and apps/partner-app (future realtor/inspector entry). Trapping them inside one app forces every future consumer to call that app instead of importing the algorithm directly.
+- **Apps/agent's actual purpose is Matt-facing dialogue.** Conflating "the place where LLM tools live" with "the place where customer comms listening happens" mixed a packaging concern with a runtime concern. The packaging concern is now a shared package.
+- **QB webhook over poll.** Cron-polling QB for estimate-acceptance is high-latency (8–18hr) for the most time-sensitive scheduling trigger. QB's Estimate.Update webhook fires in seconds. Daily reconciliation cron remains as backstop for the rare dropped webhook.
+
+**Alternatives considered:**
+- **Keep scheduling/quoting in apps/middleware modules** (not packages) — rejected because the work is reusable across future entry points (website, partner-app). Middleware would become the chokepoint.
+- **Keep building Walk 3+ inside apps/agent** with a second webhook target on the business line — rejected (duplicate listener; wrong architectural shape).
+- **Move the existing Gemini entity-extraction call out of middleware to apps/agent** — rejected; that's a separate migration without independent justification. Per existing project memory the boundary is already clean at the client layer; leave it.
+- **Build a dedicated `apps/scheduling` app for the algorithm** — rejected; algorithm-as-app would have no UI and would just be an HTTP wrapper around the package. The package itself is sufficient until external (non-monorepo) consumers exist.
+
+**Apps/middleware SACROSANCT note:** Rule 4 of root CLAUDE.md says "minimal changes only, every change unit tested." Extending the existing Gemini classifier label set and adding scheduling-pipeline dispatch is the *same kind* of work middleware already does (webhook handling → classification → dispatch). Each addition ships with tests. Not a new architectural concept; an extension of an existing one.
+
+**How to apply:**
+- New LLM tools go in `packages/agent-tools/`, not apps/agent.
+- New scheduling-algorithm code goes in `packages/scheduling/`, not apps/middleware.
+- New quote-drafting code goes in `packages/quoting/`, not apps/middleware.
+- Middleware owns transport (webhook reception, signature verification, classifier dispatch) but *not* the algorithms it dispatches to.
+- Apps/agent stays paused. Do not extend Walk 3+ in apps/agent. When the user prompts work on intent classification, scheduling pipeline, stale-deal nudges, or the diagnostic agent, route to middleware + the relevant package.
+- Apps/agent resumes when Layer 1 (voice), Layer 3 (strategic mode), or Layer 4 (self-reflection) work begins — see `docs/projects/agent-vision.md`.
+
+**Related memories / docs:**
+- `docs/projects/agent-vision.md` — long-term apps/agent destination (governs when it resumes)
+- `docs/projects/apps-agent.md` — pre-realignment Walk plan; the status table at the top of that doc is authoritative for current scope
+- `packages/agent-tools/CLAUDE.md`, `packages/scheduling/CLAUDE.md`, `packages/quoting/CLAUDE.md` — per-package rules
+
+---
+
 ## 2026-05-27 — Cat 2 (subtractive) work precedes Cat 3 (additive) work
 
 **Decision:** All operational/development work is classified as Category 2 (removes existing burden) or Category 3 (adds new revenue + new burden). Cat 2 ships before Cat 3 in the current sprint.

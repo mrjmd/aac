@@ -1,6 +1,6 @@
 # AAC Plan — Current State and Roadmap
 
-**Last updated:** 2026-05-28 (Walk step 2)
+**Last updated:** 2026-05-29 (architecture realignment — scheduling/quoting become packages, apps/agent paused at Walk 2)
 **Supersedes:** `_archive/2026-05-27/MASTER-PLAN.md` and `_archive/2026-05-27/middleware-phase-2.5-deal-spine.md`
 **Entry point for:** anyone (Matt, future Claude sessions) trying to understand "what are we doing and why" without re-deriving from scratch.
 
@@ -38,13 +38,13 @@ This is why automation of Matt-and-Mike's existing daily flow comes before openi
 | # | Project | Goal | Status | Spec |
 |---|---|---|---|---|
 | 1 | **apps/field** | Tech-facing mobile web app for job completion (photos + payment status + auto-invoice) | Shipped to production 2026-05-28 | `projects/apps-field.md` |
-| 2 | **apps/agent** | Agent platform (comms line, deal spine, read-tool surface, intent classification) | **Crawl complete (1–8) + Walk steps 1–2 shipped 2026-05-28.** Walk 1 LIVE in prod (agent comms inbound webhook, Matt's smoke test passed). Walk 2: seven LLM-callable read tools (`getCustomerContext`, `searchCalendar`, `listDeals`, `getDeal`, `findJobsMissingInvoices`, `getInvoiceSummary`, `searchConversation`) in `apps/agent/lib/tools/` with role-scoped registry (owner only; others placeholders). Shared: PD Deal CRUD + Quo conversation methods + `verifyOpenPhoneWebhookSignature` + `parseDealMarker` (moved from middleware → `@aac/api-clients/pipedrive` with migration) + new `PipedriveClient.listDeals`. Middleware unchanged from Walk 1: `[deal:N]` marker support, inbound-lead deal stamp, nightly QB→PD deal-reconcile cron. Walk phase next: intent classification (Walk 3, LLM choice still open) + Funnel A Phase 2 stale-deal nudges. | `projects/apps-agent.md` |
-| 3 | **Calendar scheduling automation** | Stub event creation on estimate approval; full slot-suggestion later | Depends on #2 | `projects/calendar-scheduling.md` |
-| 4 | **Estimate auto-drafting** | LLM drafts QB estimates from PD/Quo/calendar context; 3-day analysis spike first | Depends on #2 (tool surface) | `projects/estimate-auto-draft.md` |
+| 2 | **`@aac/scheduling` pipeline + middleware webhook integration** | SchedulingDirective pipeline (slot suggestion + event creation + PD deal updates + callback child-deal logic) called from middleware Quo webhook (intent extraction) + new QB Estimate webhook + daily QB reconciliation backstop cron | **Next up.** Package scaffolded 2026-05-29 (`packages/scheduling/`); pipeline code TBD. Middleware additions: QB webhook endpoint with signature verification, scheduling-intent labels added to existing Gemini classifier, dispatch to `@aac/scheduling`. Six trigger paths converge on one `SchedulingDirective`: quote-approved (QB-side / text / call), assessment-requested, callback-opened, manual-schedule. Apps/agent provides propose-dialogue surface only. | `projects/scheduling.md` (TBD) |
+| 3 | **`@aac/quoting` pipeline** | Photo analysis + business-rules-informed quote drafting + QB Estimate creation; handoff to `@aac/scheduling` on acceptance | Package scaffolded 2026-05-29 (`packages/quoting/`); design spec TBD. Future reusable surface for apps/website instant-quote + apps/partner-app realtor/inspector entry. | `projects/quoting.md` (TBD) |
+| 4 | **apps/agent (paused at Walk 2)** | Matt-facing dialogue on agent comms line: propose-dialogue, strategic-partner mode, voice cloning, self-reflection. NOT the operational listening surface (that's middleware). | **Paused.** Walk 1 (comms inbound webhook) LIVE in prod; Walk 2 (tool surface) shipped + migrated to `@aac/agent-tools` 2026-05-29. Walk 3+ as originally scoped (intent classification, action proposals, stub event creation, stale-deal nudges) **moved to middleware + `@aac/scheduling`** per the 2026-05-29 realignment. Apps/agent resumes when Layer 1/3/4 work begins (voice fidelity, strategic mode, self-reflection — see `docs/projects/agent-vision.md`). | `projects/apps-agent.md` |
 
-**Opportunistic sidecar:** `projects/middleware-cleanup.md` — cleanup items surfaced during the apps/agent stack analysis. Do during apps/agent Crawl when middleware is already unfrozen for deal-aware webhook handlers; don't break SACROSANCT for janitorial work alone.
+**Opportunistic sidecar:** `projects/middleware-cleanup.md` — cleanup items surfaced during the apps/agent stack analysis. Do during the middleware extensions for #2 when middleware is already unfrozen; don't break SACROSANCT for janitorial work alone.
 
-**Build order:** #1 in parallel with #2 (independent). #3 and #4 follow #2. Field-app v1 ships with Cron A heuristics; v2 uses the deal spine from #2.
+**Build order:** #1 already shipped. #2 is the active priority. #3 (quoting) is scaffolded but not actively built — design spike + spec come before code. #4 (apps/agent) is paused; resumes when Matt-facing dialogue work starts.
 
 App names (`apps/field`, `apps/agent`) are working names; subject to confirmation before pillar CLAUDE.md files are written.
 
@@ -88,6 +88,9 @@ apps/
   agent/             Pillar 6: Conversational agent platform + deal spine (NEW — apps/agent)
 packages/
   api-clients/       @aac/api-clients — Shared API clients
+  agent-tools/       @aac/agent-tools — LLM read-tool surface (added 2026-05-29 from apps/agent/lib/tools)
+  scheduling/        @aac/scheduling — SchedulingDirective pipeline (scaffolded 2026-05-29; impl TBD)
+  quoting/           @aac/quoting — Photo→quote→QB Estimate pipeline (scaffolded 2026-05-29; impl TBD)
   shared-utils/      @aac/shared-utils — Phone, Redis, Logger, Types
   tsconfig/          @aac/tsconfig — Shared TypeScript configs
 tools/               Operational scripts (thin wrappers)
