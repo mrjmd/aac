@@ -37,7 +37,7 @@ export function getRedis(): Redis {
  * Uses SET NX (only-if-not-exists) with 24h TTL.
  */
 export async function markEventProcessed(
-  source: 'pipedrive' | 'quo' | 'google-ads',
+  source: 'pipedrive' | 'quo' | 'google-ads' | 'qb',
   eventId: string
 ): Promise<boolean> {
   const redis = getRedis();
@@ -54,7 +54,7 @@ export async function markEventProcessed(
  * Check if event was already processed (without marking it).
  */
 export async function wasEventProcessed(
-  source: 'pipedrive' | 'quo' | 'google-ads',
+  source: 'pipedrive' | 'quo' | 'google-ads' | 'qb',
   eventId: string
 ): Promise<boolean> {
   const redis = getRedis();
@@ -175,7 +175,7 @@ export async function getQBTokens(): Promise<QBOAuthTokens | null> {
 // ── Health & Observability ───────────────────────────────────────────
 
 export async function trackWebhookProcessed(
-  source: 'pipedrive' | 'quo' | 'google-ads'
+  source: 'pipedrive' | 'quo' | 'google-ads' | 'qb'
 ): Promise<void> {
   const redis = getRedis();
   const now = new Date().toISOString();
@@ -209,6 +209,27 @@ export async function logHealthError(
 export async function writeHeartbeat(): Promise<void> {
   const redis = getRedis();
   await redis.set(keys.heartbeat('middleware'), new Date().toISOString());
+}
+
+// ── Scheduling Pipeline ─────────────────────────────────────────────
+
+/**
+ * Write a SchedulingDirective to the Crawl shadow queue.
+ *
+ * Stores the directive blob under `scheduling:pending:{id}` and pushes
+ * its id onto the head of `scheduling:pending:list` (capped at 500 for
+ * command-center display). No TTL — the queue is for review, not transient
+ * state.
+ */
+export async function writePendingDirective<T extends { id: string }>(
+  directive: T,
+): Promise<void> {
+  const redis = getRedis();
+  await Promise.all([
+    redis.set(keys.schedulingPending(directive.id), directive),
+    redis.lpush(keys.schedulingPendingList, directive.id),
+  ]);
+  await redis.ltrim(keys.schedulingPendingList, 0, 499);
 }
 
 // ── Cron Job Tracking ───────────────────────────────────────────────

@@ -27,6 +27,8 @@ export interface EnvConfig {
     clientSecret: string;
     realmId: string;
     redirectUri: string;
+    /** Set when the QB Estimate webhook subscription is registered. */
+    webhookVerifierToken: string | null;
   };
   google: {
     clientId: string | null;
@@ -83,6 +85,7 @@ export function getEnv(): EnvConfig {
       clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
       realmId: requireEnv('QUICKBOOKS_REALM_ID'),
       redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
+      webhookVerifierToken: process.env.QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN || null,
     },
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID || null,

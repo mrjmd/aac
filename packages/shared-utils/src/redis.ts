@@ -120,6 +120,14 @@ export const keys = {
   /** Per-user app config (home address, preferences). No TTL — user-owned, persists. */
   fieldUserConfig: (email: string) => `field:user-config:${email.toLowerCase()}` as const,
 
+  // ── Scheduling (SchedulingDirective Pipeline) ──────────────────────
+
+  /** Individual SchedulingDirective JSON blob, written by middleware webhook/cron handlers in Crawl shadow mode. */
+  schedulingPending: (directiveId: string) => `scheduling:pending:${directiveId}` as const,
+
+  /** LIST of pending directive IDs, newest first (LPUSH + LTRIM). Read by command-center. */
+  schedulingPendingList: 'scheduling:pending:list' as const,
+
   // ── Agent (Conversational Operations Runtime) ──────────────────────
 
   /** Per-cron-job cursor (e.g. last surfaced error ID in error-surface tick). No TTL. */
