@@ -1,6 +1,6 @@
 # Project Spec — `@aac/scheduling` Pipeline
 
-**Status:** Active. Crawl in design 2026-05-29.
+**Status:** Crawl scaffolding shipped 2026-05-29 (commits `534d566`, `a1f8b11`, `b33f468`, + the qb-webhook rename). Live shadow window starts once middleware is deployed and Intuit's webhook verification turns green.
 **Owner:** Matt
 **Package home:** `packages/scheduling/`
 **Related package:** `packages/quoting/` (duration estimation lives here)
@@ -153,17 +153,18 @@ Daily QB reconciliation cron runs once a day to catch any QB approvals the webho
 
 ### Scope
 
-| # | Deliverable | Home |
-|---|---|---|
-| 1 | `SchedulingDirective` type + discriminator helpers + vitest fixtures | `@aac/scheduling/types` |
-| 2 | QB webhook `/api/qb-webhook` with `intuit-signature` HMAC verification | `apps/middleware` |
-| 3 | `normalizeQbApproval(deps, estimate, pdContext) → directive` | `@aac/scheduling` |
-| 4 | Gemini classifier extension (4 new labels: `quote_approved`, `assessment_requested`, `callback_opened`, `manual_schedule`) | `apps/middleware` |
-| 5 | `normalizeManualSchedule(deps, message, customerState) → directive` | `@aac/scheduling` |
-| 6 | Shadow queue: write directives to Redis `scheduling:pending:{id}`, surface in command-center pending-directives view | `apps/middleware` + `apps/command-center` |
-| 7 | **Backtest harness** (90-day window) — replay past Quo + QB events through classifier+normalizer, diff against actual outcome | `tools/src/scheduling-backtest.ts` + `@aac/scheduling/replay` |
-| 8 | **Duration analysis** — join 90-day QB Estimates with calendar events, cluster by service-line + size, produce summary + detail markdown | `tools/src/scheduling-duration-analysis.ts` + `docs/analysis/scheduling-duration-analysis.md` |
-| 9 | Daily QB reconciliation cron (backstop) | `apps/middleware` |
+| # | Deliverable | Home | Status |
+|---|---|---|---|
+| 1 | `SchedulingDirective` type + discriminator helpers + vitest fixtures | `@aac/scheduling/types` | ✅ shipped (10 tests) |
+| 2 | QB webhook `/api/qb-webhook` (CloudEvents) with `intuit-signature` HMAC verification | `apps/middleware/api/qb-webhook.ts` | ✅ shipped (21 tests) |
+| 3 | `normalizeQbApproval(deps, estimate) → directive` | `@aac/scheduling` | ✅ shipped (11 tests) |
+| 4 | Gemini classifier extension (4 new labels: `quote_approved`, `assessment_requested`, `callback_opened`, `manual_schedule`) | `apps/middleware` | ⏳ pending |
+| 5 | `normalizeManualSchedule(deps, classification, customer) → directive` | `@aac/scheduling` | ✅ shipped (13 tests) |
+| 6 | Shadow queue: write directives to Redis `scheduling:pending:{id}` + `scheduling:pending:list` | `apps/middleware` (`writePendingDirective`) | ✅ shipped |
+| 6b | Command-center pending-directives view | `apps/command-center` | ⏳ pending |
+| 7 | **Backtest harness** (90-day window) — replay past Quo + QB events through classifier+normalizer, diff against actual outcome | `tools/src/scheduling-backtest.ts` + `@aac/scheduling/replay` | ✅ scaffolded (8 tests, QB path live; manual-schedule path stub until #4 ships) |
+| 8 | **Duration analysis** — join 90-day QB Estimates with calendar events, cluster by service-line + size, produce summary + detail markdown | `tools/src/scheduling-duration-analysis.ts` + `docs/analysis/scheduling-duration-analysis.md` | ⏳ pending |
+| 9 | Daily QB reconciliation cron (backstop) | `apps/middleware` | ⏳ pending |
 
 ### Test gates
 

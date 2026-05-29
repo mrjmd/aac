@@ -6,6 +6,26 @@ When a decision gets reversed, ADD a new entry with the reversal — don't delet
 
 ---
 
+## 2026-05-29 — QB webhook built for CloudEvents from day-one (legacy format skipped)
+
+**Decision:** The `/api/qb-webhook` handler parses Intuit's **CloudEvents** payload format only, not the legacy `eventNotifications[]/dataChangeEvent` shape.
+
+**Why:**
+- Intuit announced the migration deadline as **2026-07-31**. As of 2026-05-29 that's ~9 weeks out — too close to justify writing legacy-format code we'd rip out immediately.
+- The Intuit subscription page exposes an "Enable cloud event payload format" toggle per subscription; Matt enabled it when creating the subscription, so production traffic is already CloudEvents.
+- One CloudEvents notification may contain a list of events across multiple QBO companies (per Intuit's spec). The parser handles arrays defensively, even though AAC only has one realm — protects against future multi-realm support without code changes.
+
+**Alternatives considered:**
+- **Parse both formats with a feature flag.** Rejected — adds dead code path with a known ~9-week shelf life. The legacy code would be removed in the same quarter it was written.
+- **Wait until July 31 to build the handler.** Rejected — Crawl shadow window benefits from earliest possible start to accumulate diff data. Building for the new format costs the same as building for the old.
+
+**How to apply:**
+- All QB webhook payload changes go through `extractEvents()` in `apps/middleware/api/qb-webhook.ts`. Don't reintroduce legacy parsing.
+- When Intuit adds new event types we want (currently subscribed to Estimate.Update only), extend `isEstimateUpdate` / add new predicates — don't fork the handler.
+- Signature verification (`verifyIntuitSignature`) is unaffected by the payload migration: HMAC-SHA256 of raw body using the Verifier Token, same scheme pre- and post-migration.
+
+---
+
 ## 2026-05-29 — Scheduling + quoting are packages; intent extraction stays in middleware; apps/agent paused at Walk 2
 
 **Decision:** The 2026-05-27 "apps/agent owns intent classification, scheduling pipeline, and the read-tool surface" framing was wrong. Corrected division of labor:

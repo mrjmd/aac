@@ -33,7 +33,7 @@ vi.mock('../lib/clients.js', () => ({
   getQuo: vi.fn(() => mockQuo),
 }));
 
-import { POST, verifyIntuitSignature } from '../api/webhooks/qb.js';
+import { POST, verifyIntuitSignature } from '../api/qb-webhook.js';
 import {
   markEventProcessed,
   trackWebhookProcessed,
