@@ -47,12 +47,22 @@ interface QbCloudEvent {
   data?: unknown;
 }
 
-/** Defensive: accept array of events OR { events: [...] } wrapper. */
+/**
+ * Defensive: accept three CloudEvents delivery shapes.
+ *   1. Batched mode (Intuit's actual wire format) — JSON array of CloudEvents
+ *   2. `{ events: [...] }` wrapper — not in the CloudEvents spec, kept defensively
+ *   3. Structured mode — single CloudEvent JSON object (has specversion/type/id)
+ */
 function extractEvents(payload: unknown): QbCloudEvent[] {
   if (Array.isArray(payload)) return payload as QbCloudEvent[];
-  if (payload && typeof payload === 'object' && 'events' in payload) {
-    const e = (payload as { events: unknown }).events;
-    if (Array.isArray(e)) return e as QbCloudEvent[];
+  if (payload && typeof payload === 'object') {
+    if ('events' in payload) {
+      const e = (payload as { events: unknown }).events;
+      if (Array.isArray(e)) return e as QbCloudEvent[];
+    }
+    if ('specversion' in payload && 'type' in payload && 'id' in payload) {
+      return [payload as QbCloudEvent];
+    }
   }
   return [];
 }

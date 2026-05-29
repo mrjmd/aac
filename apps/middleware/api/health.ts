@@ -20,6 +20,7 @@ interface HealthMetrics {
     pipedrive: { processed24h: number; lastProcessed: string | null };
     quo: { processed24h: number; lastProcessed: string | null };
     googleAds: { processed24h: number; lastProcessed: string | null };
+    qb: { processed24h: number; lastProcessed: string | null };
   };
   sync: {
     pdToQuo: number;
@@ -85,11 +86,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const redis = getRedis();
 
     // Fetch all metrics in parallel
-    const [pipedriveMetrics, quoMetrics, googleAdsMetrics, rawErrors, pdToQuoCount, pdToQbCount, phoneToPdCount] =
+    const [pipedriveMetrics, quoMetrics, googleAdsMetrics, qbMetrics, rawErrors, pdToQuoCount, pdToQbCount, phoneToPdCount] =
       await Promise.all([
         getWebhookMetrics('pipedrive'),
         getWebhookMetrics('quo'),
         getWebhookMetrics('google-ads'),
+        getWebhookMetrics('qb'),
         redis.lrange(keys.healthErrors, 0, 49),
         countKeysWithPrefix('map:pd-to-quo:'),
         countKeysWithPrefix('map:pd-to-qb:'),
@@ -122,6 +124,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         pipedrive: pipedriveMetrics,
         quo: quoMetrics,
         googleAds: googleAdsMetrics,
+        qb: qbMetrics,
       },
       sync: {
         pdToQuo: pdToQuoCount,

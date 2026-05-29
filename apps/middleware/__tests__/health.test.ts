@@ -53,6 +53,7 @@ describe('health endpoint', () => {
     expect(body.metrics.webhooks.pipedrive).toBeDefined();
     expect(body.metrics.webhooks.quo).toBeDefined();
     expect(body.metrics.webhooks.googleAds).toBeDefined();
+    expect(body.metrics.webhooks.qb).toBeDefined();
     expect(body.metrics.sync).toBeDefined();
     expect(body.metrics.errors).toEqual([]);
   });

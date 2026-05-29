@@ -214,6 +214,13 @@ describe('QB webhook POST', () => {
     expect(writePendingDirective).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts payload as a single CloudEvent object (structured mode)', async () => {
+    mockQb.getEstimate.mockResolvedValueOnce(makeAcceptedEstimate());
+    const res = await POST(makeRequest(makeEvent()));
+    expect(res.status).toBe(200);
+    expect(writePendingDirective).toHaveBeenCalledTimes(1);
+  });
+
   it('returns 200 even when normalizer call throws', async () => {
     mockQb.getEstimate.mockRejectedValueOnce(new Error('QB down'));
     const res = await POST(makeRequest({ events: [makeEvent()] }));
