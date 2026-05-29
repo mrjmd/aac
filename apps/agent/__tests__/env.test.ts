@@ -9,6 +9,10 @@ const REQUIRED_VARS = [
   'MATT_PERSONAL_PHONE_NUMBER',
   'UPSTASH_REDIS_REST_URL',
   'UPSTASH_REDIS_REST_TOKEN',
+  'QUICKBOOKS_CLIENT_ID',
+  'QUICKBOOKS_CLIENT_SECRET',
+  'QUICKBOOKS_REALM_ID',
+  'QUICKBOOKS_REDIRECT_URI',
 ];
 
 const ORIGINAL_ENV = { ...process.env };
@@ -34,6 +38,10 @@ function setAllRequired(): void {
   process.env.MATT_PERSONAL_PHONE_NUMBER = '+18287724836';
   process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example';
   process.env.UPSTASH_REDIS_REST_TOKEN = 'tok';
+  process.env.QUICKBOOKS_CLIENT_ID = 'qb-id';
+  process.env.QUICKBOOKS_CLIENT_SECRET = 'qb-secret';
+  process.env.QUICKBOOKS_REALM_ID = 'qb-realm';
+  process.env.QUICKBOOKS_REDIRECT_URI = 'https://qb-redirect';
 }
 
 beforeEach(() => {

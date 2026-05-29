@@ -21,6 +21,18 @@ export interface AgentEnvConfig {
     agentPhoneNumber: string;
     webhookSecret: string | null;
   };
+  quickbooks: {
+    clientId: string;
+    clientSecret: string;
+    realmId: string;
+    redirectUri: string;
+  };
+  google: {
+    clientId: string | null;
+    clientSecret: string | null;
+    refreshToken: string | null;
+    calendarId: string;
+  };
   notifications: {
     /** Matt's personal phone (E.164). Used as the whitelist target for owner messages. */
     mattPersonalPhone: string;
@@ -58,6 +70,18 @@ export function getEnv(): AgentEnvConfig {
       apiKey: requireEnv('QUO_API_KEY'),
       agentPhoneNumber: process.env.QUO_AGENT_PHONE_NUMBER || '+16177660151',
       webhookSecret: process.env.QUO_WEBHOOK_SECRET || null,
+    },
+    quickbooks: {
+      clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),
+      clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
+      realmId: requireEnv('QUICKBOOKS_REALM_ID'),
+      redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
+    },
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID || null,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || null,
+      refreshToken: process.env.GOOGLE_REFRESH_TOKEN || null,
+      calendarId: process.env.GOOGLE_CALENDAR_ID || 'matt@attackacrack.com',
     },
     notifications: {
       mattPersonalPhone: requireEnv('MATT_PERSONAL_PHONE_NUMBER'),

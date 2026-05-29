@@ -11,11 +11,11 @@ import {
   PipedriveClient,
   type PipedrivePerson,
   type PipedriveDeal,
+  parseDealMarker,
 } from '@aac/api-clients/pipedrive';
 import type { QuickBooksClient, QBCustomer } from '@aac/api-clients/quickbooks';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import { expandCompoundName } from './followup.js';
-import { parseDealMarker } from './cron.js';
 
 const log = createLogger('job-customer-match');
 

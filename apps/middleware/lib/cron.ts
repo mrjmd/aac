@@ -129,19 +129,6 @@ export function isoDateDaysAgo(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/**
- * Parse the `[deal:N]` marker from a calendar event description. Returns
- * the deal ID if present, or null. The marker is the canonical deal↔event
- * link: see docs/projects/apps-agent.md → "Deal model". A single deal can
- * carry many events (assessment + multi-day repair + callbacks) so the
- * marker lives on the event side, not as a deal-side foreign key.
- */
-export function parseDealMarker(description: string | null | undefined): number | null {
-  if (!description) return null;
-  const match = description.match(/\[deal:(\d+)\]/i);
-  return match ? parseInt(match[1], 10) : null;
-}
-
 // ── Deal stage ordering ─────────────────────────────────────────
 
 /**

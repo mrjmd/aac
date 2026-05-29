@@ -167,6 +167,19 @@ export const DEAL_FIELD_HASHES = {
   lostReason: '0bc3744e0a783ee5e4460b9be35c2b6325f5e598',
 } as const;
 
+/**
+ * Parse the `[deal:N]` marker from a calendar event description. Returns
+ * the deal ID if present, or null. The marker is the canonical deal↔event
+ * link: see docs/projects/apps-agent.md → "Deal model". A single deal can
+ * carry many events (assessment + multi-day repair + callbacks) so the
+ * marker lives on the event side, not as a deal-side foreign key.
+ */
+export function parseDealMarker(description: string | null | undefined): number | null {
+  if (!description) return null;
+  const match = description.match(/\[deal:(\d+)\]/i);
+  return match ? parseInt(match[1], 10) : null;
+}
+
 export interface PipedriveDeal {
   id: number;
   title: string;
@@ -920,6 +933,32 @@ export class PipedriveClient {
     const res = await this.rawGet<Record<string, unknown>[] | null>(
       `/persons/${personId}/deals`,
     );
+    if (!res.data) return [];
+    return res.data.map((raw) => this.parseDeal(raw));
+  }
+
+  /**
+   * List deals across the configured pipeline, optionally filtered by stage
+   * and status. Used by apps/agent's listDeals read-tool — keeps the tool
+   * layer free of raw `/deals` query params. Single page (PD default 500).
+   */
+  async listDeals(
+    opts: {
+      stage?: DealStage;
+      status?: 'open' | 'won' | 'lost' | 'deleted' | 'all_not_deleted';
+      limit?: number;
+    } = {},
+  ): Promise<PipedriveDeal[]> {
+    this.requireDealSpine();
+    const params: Record<string, string | number> = {
+      limit: opts.limit ?? 500,
+      sort: 'add_time DESC',
+      status: opts.status ?? 'all_not_deleted',
+    };
+    if (opts.stage) {
+      params.stage_id = this.stageNameToId(opts.stage);
+    }
+    const res = await this.rawGet<Record<string, unknown>[] | null>('/deals', params);
     if (!res.data) return [];
     return res.data.map((raw) => this.parseDeal(raw));
   }

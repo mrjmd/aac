@@ -1,6 +1,6 @@
 # AAC Plan — Current State and Roadmap
 
-**Last updated:** 2026-05-28
+**Last updated:** 2026-05-28 (Walk step 2)
 **Supersedes:** `_archive/2026-05-27/MASTER-PLAN.md` and `_archive/2026-05-27/middleware-phase-2.5-deal-spine.md`
 **Entry point for:** anyone (Matt, future Claude sessions) trying to understand "what are we doing and why" without re-deriving from scratch.
 
@@ -38,7 +38,7 @@ This is why automation of Matt-and-Mike's existing daily flow comes before openi
 | # | Project | Goal | Status | Spec |
 |---|---|---|---|---|
 | 1 | **apps/field** | Tech-facing mobile web app for job completion (photos + payment status + auto-invoice) | Shipped to production 2026-05-28 | `projects/apps-field.md` |
-| 2 | **apps/agent** | Agent platform (comms line, deal spine, read-tool surface, intent classification) | **Crawl complete (1–8) + Walk step 1 LIVE in prod 2026-05-28.** Shared: PD Deal CRUD + Quo conversation methods + `verifyOpenPhoneWebhookSignature` in `@aac/shared-utils`. Middleware: `[deal:N]` marker support, inbound-lead deal stamp, nightly QB→PD deal-reconcile cron, migrated to shared signature verifier. Tools: one-shot backfill script (`--apply` gated on Funnel A Phase 1 cleanup). Apps/agent: pillar scaffold with env/roles/clients/redis libs, `/api/health`, error-surface cron texting Matt middleware errors every 10 min, and agent comms inbound webhook (HMAC verify → dedup → role lookup → stub intent router → ack reply + audit log) — Matt's smoke test passed: text in, ack out. Walk phase next: read-tool surface (Walk 2) + intent classification (Walk 3, LLM choice still open) + Funnel A Phase 2 stale-deal nudges. | `projects/apps-agent.md` |
+| 2 | **apps/agent** | Agent platform (comms line, deal spine, read-tool surface, intent classification) | **Crawl complete (1–8) + Walk steps 1–2 shipped 2026-05-28.** Walk 1 LIVE in prod (agent comms inbound webhook, Matt's smoke test passed). Walk 2: seven LLM-callable read tools (`getCustomerContext`, `searchCalendar`, `listDeals`, `getDeal`, `findJobsMissingInvoices`, `getInvoiceSummary`, `searchConversation`) in `apps/agent/lib/tools/` with role-scoped registry (owner only; others placeholders). Shared: PD Deal CRUD + Quo conversation methods + `verifyOpenPhoneWebhookSignature` + `parseDealMarker` (moved from middleware → `@aac/api-clients/pipedrive` with migration) + new `PipedriveClient.listDeals`. Middleware unchanged from Walk 1: `[deal:N]` marker support, inbound-lead deal stamp, nightly QB→PD deal-reconcile cron. Walk phase next: intent classification (Walk 3, LLM choice still open) + Funnel A Phase 2 stale-deal nudges. | `projects/apps-agent.md` |
 | 3 | **Calendar scheduling automation** | Stub event creation on estimate approval; full slot-suggestion later | Depends on #2 | `projects/calendar-scheduling.md` |
 | 4 | **Estimate auto-drafting** | LLM drafts QB estimates from PD/Quo/calendar context; 3-day analysis spike first | Depends on #2 (tool surface) | `projects/estimate-auto-draft.md` |
 

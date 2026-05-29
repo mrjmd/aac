@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { parseDealMarker } from '@aac/api-clients/pipedrive';
 import {
-  parseDealMarker,
   getDayRangeEastern,
   isoDateDaysAgo,
   extractFirstName,

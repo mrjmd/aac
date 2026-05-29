@@ -10,6 +10,7 @@
 import { Redis } from '@upstash/redis';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { createLogger } from '@aac/shared-utils/logger';
+import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import { getEnv } from './env.js';
 import type { AgentRole } from './roles.js';
 
@@ -33,6 +34,24 @@ export function getRedis(): Redis {
 export async function writeHeartbeat(): Promise<void> {
   const redis = getRedis();
   await redis.set(keys.heartbeat('agent'), new Date().toISOString());
+}
+
+// ── QuickBooks OAuth tokens (shared with middleware) ────────────────
+//
+// Same `keys.qbOAuthTokens` slot middleware writes to. The QB client
+// reads/refreshes via these callbacks; both apps consume the same
+// rolling refresh-token, so whichever app refreshes last wins.
+
+export async function getQBTokens(): Promise<QBOAuthTokens | null> {
+  const redis = getRedis();
+  const data = await redis.get<QBOAuthTokens>(keys.qbOAuthTokens);
+  return data || null;
+}
+
+export async function storeQBTokens(tokens: QBOAuthTokens): Promise<void> {
+  const redis = getRedis();
+  await redis.set(keys.qbOAuthTokens, tokens);
+  log.debug('Stored QB OAuth tokens');
 }
 
 // ── Cron cursors ────────────────────────────────────────────────────
