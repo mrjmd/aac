@@ -16,9 +16,9 @@
  * This matches how the old Next.js App Router handler worked.
  */
 
-import crypto from 'crypto';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { createLogger } from '@aac/shared-utils/logger';
+import { verifyOpenPhoneWebhookSignature } from '@aac/shared-utils/webhook-signature';
 import { GeminiClient, ExtractionError } from '@aac/api-clients/gemini';
 import {
   markEventProcessed,
@@ -91,56 +91,6 @@ interface QuoWebhookPayload {
       deepLink?: string;
     };
   };
-}
-
-/**
- * Verify webhook signature from Quo/OpenPhone
- *
- * Header format: hmac;1;<timestamp>;<base64-signature>
- * Signed data: <timestamp>.<json-payload>
- * Secret: base64-encoded, must decode to binary for HMAC
- */
-function verifySignature(
-  payload: string,
-  signatureHeader: string | undefined,
-  secret: string
-): boolean {
-  if (!signatureHeader) return false;
-
-  // Parse header: hmac;1;timestamp;signature
-  const parts = signatureHeader.split(';');
-  if (parts.length !== 4) {
-    log.warn('Invalid signature header format', { parts: parts.length });
-    return false;
-  }
-
-  const [scheme, version, timestamp, providedSignature] = parts;
-
-  if (scheme !== 'hmac' || version !== '1') {
-    log.warn('Unsupported signature scheme/version', { scheme, version });
-    return false;
-  }
-
-  // Prepare signed data: timestamp.payload
-  const signedData = `${timestamp}.${payload}`;
-
-  // Decode secret from base64 to binary
-  const signingKey = Buffer.from(secret, 'base64');
-
-  // Compute HMAC-SHA256 and encode as base64
-  const computedSignature = crypto
-    .createHmac('sha256', signingKey)
-    .update(signedData)
-    .digest('base64');
-
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(providedSignature),
-      Buffer.from(computedSignature)
-    );
-  } catch {
-    return false;
-  }
 }
 
 // Minimum message length for AI processing (skip trivial messages)
@@ -235,13 +185,13 @@ export async function POST(request: Request): Promise<Response> {
   const rawBody = await request.text();
   const signature = request.headers.get('openphone-signature') || undefined;
 
-  if (!verifySignature(rawBody, signature, env.quo.webhookSecret)) {
+  if (!verifyOpenPhoneWebhookSignature(rawBody, signature, env.quo.webhookSecret)) {
     // Fallback: try re-serialized body in case edge middleware consumed/re-encoded the raw body
     let fallbackPassed = false;
     try {
       const reserialized = JSON.stringify(JSON.parse(rawBody));
       if (reserialized !== rawBody) {
-        fallbackPassed = verifySignature(reserialized, signature, env.quo.webhookSecret);
+        fallbackPassed = verifyOpenPhoneWebhookSignature(reserialized, signature, env.quo.webhookSecret);
       }
     } catch {
       // rawBody wasn't valid JSON, fallback not applicable

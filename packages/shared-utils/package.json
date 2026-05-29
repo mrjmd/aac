@@ -10,7 +10,8 @@
     "./phone": "./dist/phone.js",
     "./redis": "./dist/redis.js",
     "./logger": "./dist/logger.js",
-    "./types": "./dist/types.js"
+    "./types": "./dist/types.js",
+    "./webhook-signature": "./dist/webhook-signature.js"
   },
   "scripts": {
     "build": "tsc",

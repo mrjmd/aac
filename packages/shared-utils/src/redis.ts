@@ -128,7 +128,10 @@ export const keys = {
   /** Standing rules per agent user, keyed by E.164 phone. JSON blob, no TTL. */
   agentRules: (phoneE164: string) => `agent:rules:${phoneE164}` as const,
 
-  /** Audit stream for every Q&A handled by the agent (Redis stream, queryable). */
+  /** Audit log for every Q&A handled by the agent. Capped LIST (LPUSH + LTRIM
+   *  at write time), newest first; Command Center reads via LRANGE. Name retained
+   *  as `agentAuditStream` despite list semantics for backwards compat with the
+   *  agent scaffold. */
   agentAuditStream: 'agent:audit:stream' as const,
 } as const;
 
