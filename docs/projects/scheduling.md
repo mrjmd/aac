@@ -1,6 +1,6 @@
 # Project Spec — `@aac/scheduling` Pipeline
 
-**Status:** Crawl scaffolding shipped 2026-05-29 (commits `534d566`, `a1f8b11`, `b33f468`, + the qb-webhook rename). Live shadow window starts once middleware is deployed and Intuit's webhook verification turns green.
+**Status:** Crawl pipeline live in prod 2026-05-29. QB webhook verified end-to-end (real Estimate flip Pending → Accepted produced directive `960c042c-...` at confidence 1.0/5 signals). Duration-analysis spike complete; reference dataset ready. Awaiting Walk-phase codification of `@aac/quoting/estimate-duration`.
 **Owner:** Matt
 **Package home:** `packages/scheduling/`
 **Related package:** `packages/quoting/` (duration estimation lives here)
@@ -163,7 +163,7 @@ Daily QB reconciliation cron runs once a day to catch any QB approvals the webho
 | 6 | Shadow queue: write directives to Redis `scheduling:pending:{id}` + `scheduling:pending:list` | `apps/middleware` (`writePendingDirective`) | ✅ shipped |
 | 6b | Command-center pending-directives view | `apps/command-center` | ⏳ pending |
 | 7 | **Backtest harness** (90-day window) — replay past Quo + QB events through classifier+normalizer, diff against actual outcome | `tools/src/scheduling-backtest.ts` + `@aac/scheduling/replay` | ✅ scaffolded (8 tests, QB path live; manual-schedule path stub until #4 ships) |
-| 8 | **Duration analysis** — join 90-day QB Estimates with calendar events, cluster by service-line + size, produce summary + detail markdown | `tools/src/scheduling-duration-analysis.ts` + `docs/analysis/scheduling-duration-analysis.md` | ⏳ pending |
+| 8 | **Duration analysis** — join 180-day QB Estimates with calendar events, cluster by service-line + size, produce summary + reference data | `tools/src/scratch/spike-duration-analysis.ts` + `tools/src/scratch/reclassify-and-drill.ts` + `tools/src/scratch/spike-output/duration-analysis-<date>.{md,json}` | ✅ spike complete (n=54 reliable pairs at 180d, classifier refined per Matt's 2-category taxonomy with warranty-boilerplate stripper; reference data ready for `@aac/quoting`) |
 | 9 | Daily QB reconciliation cron (backstop) | `apps/middleware` | ⏳ pending |
 
 ### Test gates
@@ -268,9 +268,28 @@ Every disagreement gets categorized: classifier miss, normalizer bug, slot algor
 
 ---
 
-## Duration analysis — Crawl's other trust-building tool
+## Duration analysis — completed 2026-05-29
 
-`tools/src/scheduling-duration-analysis.ts`:
+Built as a 2-stage scratch pipeline:
+- `tools/src/scratch/spike-duration-analysis.ts` — fetches QB Estimates + Calendar Job events for an N-day window (default 90, used 180), matches events ↔ estimates by address/name/date (event-driven loop, top-match wins), classifies + clusters, writes `spike-output/duration-analysis-<date>.{md,json}`.
+- `tools/src/scratch/reclassify-and-drill.ts` — reads the JSON dump, applies Matt's refined classifier (warranty-stripping + 2-category taxonomy + Dillon-pattern filter), regenerates the clustered stats. Faster iteration than re-fetching from QB/Calendar.
+
+**Key findings (2026-05-29):**
+- 180-day window: 54 reliable matched pairs after data-quality filter
+- Service taxonomy (Matt's, post-lunch correction): two categories only — **crack injection** (urethane / injection / membrane / carbon-fiber-add-on) and **concrete resurfacing** (resurfac / overlay / spall / driveway / stairway / garage / walkway / patio / step / floor cracks even when epoxy / repoint / fieldstone / masonry / brick repair / skim coat). Default-to-resurfacing when no signal but real scope present.
+- Carbon fiber stapling is "almost always an add-on to injection" (Matt) — sub-feature, not its own category.
+- Distribution: 37 crack injection (68%), 11 concrete resurfacing (20%), 5 genuine mixed (9%), 1 other (Patty's discount-only line).
+- Duration medians: crack injection 4h (cv=0.26), concrete resurfacing 5h (cv=0.42), mixed 4h (cv=0.31). No multi-day jobs in 180d (they're scheduled as separate single-day events per Matt).
+- **Rate ratio: crack injection earns 1.37× more per crew-hour** ($360/hr vs $263/hr).
+- The "warranty boilerplate strip" was the key classifier improvement — AAC's estimates include a templated guarantee line that mentions both services and was causing 33 jobs to misclassify as "mixed."
+
+**Data-quality rule (Dillon-pattern):** matched events under 1.5h are flagged `unreliableDuration` because they're either (a) same-day assessment-to-job conversions where the calendar wasn't updated (per Matt: Michael Dillon, \$2050 crack injection done on the spot during a 30-min assessment slot), (b) multi-day partials, or (c) miscolored. None are legitimate sub-1.5h foundation repair jobs. Filtered from cluster stats but kept in the dataset for reference.
+
+**Reference data ready to ship into `@aac/quoting`:** `spike-output/duration-analysis-2026-05-29.json` will become `packages/quoting/data/duration-reference-<date>.json` once codification starts.
+
+(Original v0 spec preserved below for historical context.)
+
+`tools/src/scheduling-duration-analysis.ts` (v0 plan, superseded by the scratch pipeline above):
 
 1. Pull every QB Estimate accepted in the last 90 days
 2. Join each to its actual calendar event(s) — measure end-time minus start-time per job

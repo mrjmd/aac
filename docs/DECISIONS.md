@@ -6,6 +6,33 @@ When a decision gets reversed, ADD a new entry with the reversal — don't delet
 
 ---
 
+## 2026-05-29 — Duration heuristic: 2-category taxonomy with variance surface, not flat lookup
+
+**Decision:** `@aac/quoting/estimate-duration` will classify estimates into Matt's 2 service categories (crack injection / concrete resurfacing) — with carbon-fiber-as-add-on and floor-cracks-as-resurfacing per his post-lunch correction — and return `{ point, p25, p75, cv, similar: PastCase[], rationale, isMultiDay }` instead of a flat `{ hours: number }`. Customer-facing communication translates the internal variance into tight scheduling windows ("3–4h, most of the day").
+
+**Why:**
+- Matt explicitly rejected the flat-rules approach: "I do feel concern that setting hard rules here instead of trying to find the nuance in the variance and using it to guide us will lead to bad outcomes. There are basic rules, but those outliers are important, and we need to have our agent understand what they might be." Captured as `[[variance-over-hard-rules]]` memory.
+- Surfacing 5 similar past cases gives the agent concrete examples to reason from instead of trusting a derived median, which is critical at small dataset sizes (n=54 currently).
+- Customer-facing language is tight per Matt 2026-05-29: "Customer-facing should always be a tight range of anything 3–4 hours most of the day... it's really about how many jobs we can book in a given day, and obviously our overall goal is to maximize revenue and jobs per day." `[[scheduling-tight-ranges]]`.
+- The 2-category taxonomy is Matt's mental model (he confirmed twice with corrections); sub-features like carbon fiber and membrane are tracked as `signals` flags, not separate categories.
+- Multi-day jobs MUST be flagged explicitly (`isMultiDay`, `workdayCount`) because scheduling needs the count; per-day duration is what the historical dataset stores.
+
+**Data-quality rule:** matched events with `durationHours < 1.5h` are excluded from cluster stats and flagged `unreliableDuration`. Reason: same-day assessment-to-job conversions where the calendar event wasn't updated (Michael Dillon, 2026-01-06, \$2050 job done during a 30-min assessment slot — Matt confirmed). See `[[assessment-to-job-conversion]]` for the long-term agent vision to auto-detect this pattern.
+
+**Alternatives considered:**
+- **Flat-lookup heuristic** (`{ totalAmt: 1500 → hours: 4 }`). Rejected — throws away variance, no path for the agent to handle outliers.
+- **Cron-refreshed reference data.** Rejected per Matt: "I don't care, we don't need a cron to do that. We'll manually generate when we need to check." Less plumbing.
+- **4-category taxonomy** (separating carbon fiber stapling and mortar repointing as standalone services). Rejected per Matt: carbon fiber is "almost always an add-on to injection"; mortar/masonry/repointing/fieldstone all group under concrete resurfacing.
+- **Pre-codification address-fuzzy improvements** (catch the 10 unmatched events at scores 0.55–0.60). Deferred per Matt: "Hopefully once we get automated scheduling, the address for the improvements won't matter anymore" — auto-scheduler will standardize event titles going forward, self-correcting.
+
+**How to apply:**
+- Implement the function shape verbatim from `docs/projects/duration-heuristic-design.md`.
+- Ship the reference data as a static JSON in `packages/quoting/data/duration-reference-<DATE>.json`. Manual regeneration via `tools/src/scratch/spike-duration-analysis.ts --days N` + `reclassify-and-drill.ts`.
+- Wire into `packages/scheduling/src/normalize-qb-approval.ts` so directives stop returning `estimatedDurationHours: null`.
+- The "other" category (no classifier signal AND not just a discount line) returns `{ point: null, confidence: 'none' }` and a rationale flagging the unknown — don't fake an answer.
+
+---
+
 ## 2026-05-29 — QB webhook built for CloudEvents from day-one (legacy format skipped)
 
 **Decision:** The `/api/qb-webhook` handler parses Intuit's **CloudEvents** payload format only, not the legacy `eventNotifications[]/dataChangeEvent` shape.
