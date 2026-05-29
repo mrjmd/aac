@@ -1,6 +1,13 @@
 # `@aac/quoting/estimate-duration` — Design Sketch
 
-**Status:** Design approved 2026-05-29. Ready to codify into `packages/quoting/src/estimate-duration.ts`. Reference dataset: `tools/src/scratch/spike-output/duration-analysis-2026-05-29.json` (54 reliable pairs, 180d window).
+**Status:** Codified 2026-05-29.
+- `packages/quoting/src/classify-scope.ts` + tests (22 passing).
+- `packages/quoting/data/duration-reference-2026-05-29.json` (54 reliable cases, 12 clusters).
+- `packages/quoting/src/estimate-duration.ts` + tests (12 passing).
+- Wired into `packages/scheduling/src/normalize-qb-approval.ts` — directives now carry `estimatedDurationHours` AND the full `durationPrediction` (variance + similar cases) so downstream consumers can reason from spread without refetching QB.
+- Reference dataset regeneration: `tools/src/scratch/generate-duration-reference.ts`.
+
+Original design notes preserved below.
 
 **Goal:** Given a QB Estimate, return a duration prediction the agent can reason from — not a flat lookup. Per Matt's "variance over hard rules" guidance, the function exposes spread, confidence, and similar past cases instead of just a single hours number.
 

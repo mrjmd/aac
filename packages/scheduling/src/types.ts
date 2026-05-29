@@ -88,10 +88,19 @@ interface BaseDirective {
   /** LLM-generated, quality-gated. See @aac/scheduling/buildEventDescription. */
   scopeSummary: string;
   /**
-   * Null during Crawl (slot suggestion not active).
-   * Populated in Walk via @aac/quoting/estimate-duration.
+   * Point estimate (cluster median) in hours. Null when classifier returns
+   * 'other' or no estimate is attached (e.g., assessment_requested before a
+   * quote exists). Populated from `durationPrediction.point` for paths that
+   * have a QB Estimate; left null for now on Quo-only paths.
    */
   estimatedDurationHours: number | null;
+  /**
+   * Full duration prediction with variance + similar cases. Carried on the
+   * directive so the agent can reason from spread + reference cases without
+   * re-fetching the QB Estimate. Null on paths where no estimate is attached.
+   * See @aac/quoting/estimate-duration and docs/projects/duration-heuristic-design.md.
+   */
+  durationPrediction: DurationPrediction | null;
 }
 
 // ── Directive subtypes ─────────────────────────────────────────────
@@ -158,6 +167,9 @@ export function isManualSchedule(d: SchedulingDirective): d is ManualScheduleDir
 import type { PipedriveClient } from '@aac/api-clients/pipedrive';
 import type { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import type { QuoClient } from '@aac/api-clients/quo';
+import type { DurationPrediction } from '@aac/quoting';
+
+export type { DurationPrediction };
 
 /**
  * Injected into every normalize-* function. Constructed once at the

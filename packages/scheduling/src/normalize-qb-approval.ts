@@ -12,6 +12,7 @@
  */
 
 import { normalizePhone } from '@aac/shared-utils/phone';
+import { estimateDuration } from '@aac/quoting';
 import type { QBEstimate } from '@aac/api-clients/quickbooks';
 import type {
   NormalizerDeps,
@@ -42,6 +43,7 @@ export async function normalizeQbApproval(
     : null;
 
   const scopeSummary = buildScopeSummary(estimate);
+  const durationPrediction = estimateDuration(estimate);
   const confidence = scoreConfidence({
     hasCustomerPhone: !!customerPhone,
     hasPdMatch: !!pdPerson,
@@ -61,7 +63,8 @@ export async function normalizeQbApproval(
     qbCustomerId,
     qbEstimateId: estimate.Id,
     scopeSummary,
-    estimatedDurationHours: null,
+    estimatedDurationHours: durationPrediction.point,
+    durationPrediction,
   };
 }
 

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@aac/api-clients": "workspace:*",
+    "@aac/quoting": "workspace:*",
     "@aac/shared-utils": "workspace:*"
   },
   "devDependencies": {

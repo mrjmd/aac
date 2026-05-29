@@ -1,6 +1,6 @@
 # Project Spec — `@aac/scheduling` Pipeline
 
-**Status:** Crawl pipeline live in prod 2026-05-29. QB webhook verified end-to-end (real Estimate flip Pending → Accepted produced directive `960c042c-...` at confidence 1.0/5 signals). Duration-analysis spike complete; reference dataset ready. Awaiting Walk-phase codification of `@aac/quoting/estimate-duration`.
+**Status:** Crawl pipeline live in prod 2026-05-29. QB webhook verified end-to-end (real Estimate flip Pending → Accepted produced directive `960c042c-...` at confidence 1.0/5 signals). Duration heuristic codified in `@aac/quoting` and wired into `normalizeQbApproval` — directives now carry both `estimatedDurationHours` and the full `durationPrediction` (variance + similar past cases). Next: command-center pending-directives view, then Walk-phase slot suggestion + propose-dialogue.
 **Owner:** Matt
 **Package home:** `packages/scheduling/`
 **Related package:** `packages/quoting/` (duration estimation lives here)
@@ -96,7 +96,8 @@ interface BaseDirective {
   qbEstimateId?: string;
 
   scopeSummary: string;                // LLM-generated, quality-gated
-  estimatedDurationHours: number | null; // null in Crawl; populated in Walk via @aac/quoting/estimate-duration
+  estimatedDurationHours: number | null; // populated from durationPrediction.point on the QB-approval path
+  durationPrediction: DurationPrediction | null; // full prediction (variance + similar cases) — see @aac/quoting
 }
 
 interface QuoteApprovedDirective extends BaseDirective {
@@ -163,7 +164,8 @@ Daily QB reconciliation cron runs once a day to catch any QB approvals the webho
 | 6 | Shadow queue: write directives to Redis `scheduling:pending:{id}` + `scheduling:pending:list` | `apps/middleware` (`writePendingDirective`) | ✅ shipped |
 | 6b | Command-center pending-directives view | `apps/command-center` | ⏳ pending |
 | 7 | **Backtest harness** (90-day window) — replay past Quo + QB events through classifier+normalizer, diff against actual outcome | `tools/src/scheduling-backtest.ts` + `@aac/scheduling/replay` | ✅ scaffolded (8 tests, QB path live; manual-schedule path stub until #4 ships) |
-| 8 | **Duration analysis** — join 180-day QB Estimates with calendar events, cluster by service-line + size, produce summary + reference data | `tools/src/scratch/spike-duration-analysis.ts` + `tools/src/scratch/reclassify-and-drill.ts` + `tools/src/scratch/spike-output/duration-analysis-<date>.{md,json}` | ✅ spike complete (n=54 reliable pairs at 180d, classifier refined per Matt's 2-category taxonomy with warranty-boilerplate stripper; reference data ready for `@aac/quoting`) |
+| 8 | **Duration analysis** — join 180-day QB Estimates with calendar events, cluster by service-line + size, produce summary + reference data | `tools/src/scratch/spike-duration-analysis.ts` + `tools/src/scratch/reclassify-and-drill.ts` + `tools/src/scratch/spike-output/duration-analysis-<date>.{md,json}` | ✅ spike complete (n=54 reliable pairs at 180d, classifier refined per Matt's 2-category taxonomy with warranty-boilerplate stripper) |
+| 8b | **Duration heuristic codification** — ship `@aac/quoting/estimate-duration` and wire into normalizer | `packages/quoting/src/{classify-scope,estimate-duration}.ts` + `packages/quoting/data/duration-reference-2026-05-29.json` + `packages/scheduling/src/normalize-qb-approval.ts` | ✅ complete 2026-05-29; 34 quoting tests + updated scheduling tests passing; directives now carry full `durationPrediction` blob |
 | 9 | Daily QB reconciliation cron (backstop) | `apps/middleware` | ⏳ pending |
 
 ### Test gates
@@ -179,7 +181,7 @@ Daily QB reconciliation cron runs once a day to catch any QB approvals the webho
 - No customer SMS
 - No PD writes
 - No agent-line propose dialogue (Matt can pull-check the command-center; agent stays silent per [[no-proactive-notifications]])
-- No slot suggestion (directive carries `null` duration; not ready to propose a time)
+- No slot suggestion (directive now carries a duration prediction, but the suggestSlot algorithm reading Google Calendar is the next Walk task)
 
 ---
 

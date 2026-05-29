@@ -22,3 +22,18 @@
  */
 
 export const QUOTING_PACKAGE_VERSION = '0.0.0';
+
+export {
+  classifyScope,
+  isWarrantyLine,
+  type ScopeCategory,
+  type ScopeClassification,
+} from './classify-scope.js';
+
+export {
+  estimateDuration,
+  type DurationPrediction,
+  type DurationConfidence,
+  type ScopeSignals,
+  type SimilarCase,
+} from './estimate-duration.js';

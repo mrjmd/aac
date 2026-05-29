@@ -88,6 +88,7 @@ export function normalizeManualSchedule(
     qbEstimateId: customer.qbEstimateId,
     scopeSummary,
     estimatedDurationHours: null,
+    durationPrediction: null,
     ...(classification.knownSlot ? { knownSlot: classification.knownSlot } : {}),
   };
 }

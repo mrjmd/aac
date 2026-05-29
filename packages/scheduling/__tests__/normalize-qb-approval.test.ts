@@ -88,9 +88,39 @@ describe('normalizeQbApproval', () => {
     expect(directive!.qbEstimateId).toBe('1234');
     expect(directive!.customerPhone).toBe('+16175550123');
     expect(directive!.pdPersonId).toBe(9001);
-    expect(directive!.estimatedDurationHours).toBeNull(); // Crawl
     expect(directive!.id).toBe('01HQTEST');
     expect(directive!.createdAt).toBe('2026-05-29T15:00:00.000Z');
+    // Default fixture's short scope text falls under the classifier's
+    // REAL_SCOPE_MIN_CHARS threshold and lands in 'other' → null point.
+    expect(directive!.estimatedDurationHours).toBeNull();
+    expect(directive!.durationPrediction).not.toBeNull();
+    expect(directive!.durationPrediction!.category).toBe('other');
+  });
+
+  it('populates estimatedDurationHours when the scope classifies', async () => {
+    // Realistic crack-injection scope text from the 2026-05-29 reference
+    // dataset. Should land in the crack_injection $1-2k cluster (n=17, cv=0.11)
+    // and produce a high-confidence prediction.
+    const realisticEstimate = makeEstimate({
+      Line: [
+        {
+          Description:
+            'preparation & access. urethane resin injection. inject high-grade hydrophobic urethane resin into the foundation crack. apply 100% rubber elastomeric membrane over the repaired crack on the interior surface.',
+          Amount: 1500,
+          DetailType: 'SalesItemLineDetail',
+        },
+      ],
+      TotalAmt: 1500,
+    });
+    const deps = makeDeps();
+    const directive = await normalizeQbApproval(deps, { estimate: realisticEstimate });
+    expect(directive!.estimatedDurationHours).not.toBeNull();
+    expect(directive!.estimatedDurationHours).toBeGreaterThan(0);
+    expect(directive!.durationPrediction).not.toBeNull();
+    expect(directive!.durationPrediction!.category).toBe('crack_injection');
+    expect(directive!.durationPrediction!.confidence).toBe('high');
+    expect(directive!.durationPrediction!.signals.hasMembrane).toBe(true);
+    expect(directive!.durationPrediction!.similar.length).toBeGreaterThan(0);
   });
 
   it('builds scope summary from line item descriptions', async () => {

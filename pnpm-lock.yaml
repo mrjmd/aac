@@ -325,6 +325,9 @@ importers:
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../api-clients
+      '@aac/quoting':
+        specifier: workspace:*
+        version: link:../quoting
       '@aac/shared-utils':
         specifier: workspace:*
         version: link:../shared-utils
@@ -393,6 +396,9 @@ importers:
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../packages/api-clients
+      '@aac/quoting':
+        specifier: workspace:*
+        version: link:../packages/quoting
       '@aac/scheduling':
         specifier: workspace:*
         version: link:../packages/scheduling
