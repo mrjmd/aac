@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { getDeal } from '../../lib/tools/get-deal.js';
-import type { ToolDeps } from '../../lib/tools/types.js';
+import { getDeal } from '../src/get-deal.js';
+import type { ToolDeps } from '../src/types.js';
 
 const CONFIG = { pdCompanyDomain: 'attackacrack' };
 

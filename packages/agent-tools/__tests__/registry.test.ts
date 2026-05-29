@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { buildToolRegistry } from '../../lib/tools/index.js';
-import type { ToolDeps } from '../../lib/tools/types.js';
+import { buildOwnerToolDefinitions } from '../src/index.js';
+import type { ToolDeps } from '../src/types.js';
 
 const CONFIG = { pdCompanyDomain: 'attackacrack' };
 
@@ -26,9 +26,9 @@ function emptyDeps(): ToolDeps {
   };
 }
 
-describe('buildToolRegistry', () => {
-  it('returns all seven owner tools for role=owner', () => {
-    const tools = buildToolRegistry('owner', emptyDeps(), CONFIG);
+describe('buildOwnerToolDefinitions', () => {
+  it('returns all seven owner tools', () => {
+    const tools = buildOwnerToolDefinitions(emptyDeps(), CONFIG);
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
         'findJobsMissingInvoices',
@@ -42,14 +42,8 @@ describe('buildToolRegistry', () => {
     );
   });
 
-  it('returns empty registries for non-owner roles', () => {
-    expect(buildToolRegistry('technician', emptyDeps(), CONFIG)).toEqual([]);
-    expect(buildToolRegistry('salesperson', emptyDeps(), CONFIG)).toEqual([]);
-    expect(buildToolRegistry('triage', emptyDeps(), CONFIG)).toEqual([]);
-  });
-
-  it('every owner tool has name, description, inputSchema, invoke', () => {
-    const tools = buildToolRegistry('owner', emptyDeps(), CONFIG);
+  it('every tool has name, description, inputSchema, invoke', () => {
+    const tools = buildOwnerToolDefinitions(emptyDeps(), CONFIG);
     for (const t of tools) {
       expect(t.name).toBeTruthy();
       expect(t.description.length).toBeGreaterThan(20);
@@ -60,13 +54,24 @@ describe('buildToolRegistry', () => {
 
   it('invoke wires arguments through to the underlying tool function', async () => {
     const deps = emptyDeps();
-    const tools = buildToolRegistry('owner', deps, CONFIG);
+    const tools = buildOwnerToolDefinitions(deps, CONFIG);
     const listDealsTool = tools.find((t) => t.name === 'listDeals')!;
 
     await listDealsTool.invoke({ stage: 'quote_sent' });
 
     expect(deps.pd.listDeals).toHaveBeenCalledWith(
       expect.objectContaining({ stage: 'quote_sent' }),
+    );
+  });
+
+  it('searchCalendar schema lists all four color enum values', () => {
+    const tools = buildOwnerToolDefinitions(emptyDeps(), CONFIG);
+    const cal = tools.find((t) => t.name === 'searchCalendar')!;
+    const schema = cal.inputSchema as {
+      properties: { color: { enum: string[] } };
+    };
+    expect(schema.properties.color.enum.sort()).toEqual(
+      ['any', 'assessment', 'callback', 'job'],
     );
   });
 });

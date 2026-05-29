@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { searchConversation } from '../../lib/tools/search-conversation.js';
-import type { ToolDeps } from '../../lib/tools/types.js';
+import { searchConversation } from '../src/search-conversation.js';
+import type { ToolDeps } from '../src/types.js';
 
 function msg(overrides: Record<string, unknown> = {}) {
   return {

@@ -1,23 +1,20 @@
 /**
- * Tool registry for apps/agent.
+ * @aac/agent-tools — LLM-callable read-tool surface.
  *
- * Role-scoped at the registry layer (not the response layer): the LLM
- * session for a caller is only registered with the tools that caller is
- * allowed to use. The model never sees tool definitions for actions it
- * can't take or data it can't read. See `docs/projects/apps-agent.md` →
- * "Roles & identity" for the rationale.
+ * Pure functions, deps-injected, summary-shaped. Wraps `@aac/api-clients`
+ * with LLM-friendly projections and join logic.
  *
- * Today only `owner` has a populated registry — technician, salesperson,
- * and triage return empty arrays. Their tool scopes get fleshed out when
- * those roles actually get used; designing them now would be YAGNI.
+ * This package is *toolset infrastructure* — apps own role-scoping and
+ * conversation runtime. The package exposes `buildOwnerToolDefinitions` as
+ * a convenience for the canonical owner toolset (the seven read tools);
+ * apps may compose subsets or different toolsets as their use cases grow.
  *
- * Each entry is shaped to translate cleanly into Anthropic tool-use
- * (`name`, `description`, `input_schema`) and Gemini function-calling.
- * `invoke(args)` has deps + config already curried — the LLM layer just
- * forwards parsed arguments.
+ * Each ToolDefinition is shaped to translate cleanly into Anthropic
+ * tool-use (`name`, `description`, `input_schema`) and Gemini
+ * function-calling. `invoke(args)` has deps + config already curried —
+ * the LLM layer just forwards parsed arguments.
  */
 
-import type { AgentRole } from '../roles.js';
 import {
   getCustomerContext,
   type GetCustomerContextInput,
@@ -50,6 +47,15 @@ import type {
   ToolDeps,
 } from './types.js';
 
+export * from './types.js';
+export * from './get-customer-context.js';
+export * from './search-calendar.js';
+export * from './list-deals.js';
+export * from './get-deal.js';
+export * from './find-jobs-missing-invoices.js';
+export * from './get-invoice-summary.js';
+export * from './search-conversation.js';
+
 export interface ToolDefinition<TInput, TOutput> {
   name: string;
   description: string;
@@ -58,7 +64,7 @@ export interface ToolDefinition<TInput, TOutput> {
   invoke(args: TInput): Promise<TOutput>;
 }
 
-export interface RegistryConfig {
+export interface ToolConfig {
   pdCompanyDomain: string;
 }
 
@@ -68,9 +74,15 @@ const ISO_DATE_OR_DATETIME = {
   description: 'ISO 8601 date or datetime',
 };
 
-function buildOwnerRegistry(
+/**
+ * Build the canonical owner toolset — the seven read tools.
+ *
+ * Apps that want role-scoping wrap this in their own routing layer
+ * (e.g. apps/agent's `buildToolRegistry(role, ...)`).
+ */
+export function buildOwnerToolDefinitions(
   deps: ToolDeps,
-  config: RegistryConfig,
+  config: ToolConfig,
 ): Array<ToolDefinition<unknown, unknown>> {
   const tools: Array<ToolDefinition<unknown, unknown>> = [
     {
@@ -96,14 +108,14 @@ function buildOwnerRegistry(
     {
       name: 'searchCalendar',
       description:
-        'List calendar events in a date range. Optionally filter by case-insensitive location keyword and color (job/assessment/any). Use this for "what jobs are scheduled next week?" or "what assessments did we run in Cambridge in May?".',
+        'List calendar events in a date range. Optionally filter by case-insensitive location keyword and color (job/assessment/callback/any). Use this for "what jobs are scheduled next week?" or "any callbacks last month?".',
       inputSchema: {
         type: 'object',
         properties: {
           rangeStart: ISO_DATETIME,
           rangeEnd: ISO_DATETIME,
           locationKeyword: { type: 'string' },
-          color: { type: 'string', enum: ['job', 'assessment', 'any'] },
+          color: { type: 'string', enum: ['job', 'assessment', 'callback', 'any'] },
         },
         required: ['rangeStart', 'rangeEnd'],
       },
@@ -199,24 +211,4 @@ function buildOwnerRegistry(
   ];
 
   return tools;
-}
-
-/**
- * Build the LLM tool registry for a given caller role. Returns an empty
- * array for any role that doesn't have a concrete tool scope yet —
- * technician, salesperson, triage are placeholders per spec.
- */
-export function buildToolRegistry(
-  role: AgentRole,
-  deps: ToolDeps,
-  config: RegistryConfig,
-): Array<ToolDefinition<unknown, unknown>> {
-  switch (role) {
-    case 'owner':
-      return buildOwnerRegistry(deps, config);
-    case 'technician':
-    case 'salesperson':
-    case 'triage':
-      return [];
-  }
 }

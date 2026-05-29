@@ -14,6 +14,9 @@ importers:
 
   apps/agent:
     dependencies:
+      '@aac/agent-tools':
+        specifier: workspace:*
+        version: link:../../packages/agent-tools
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../../packages/api-clients
@@ -248,6 +251,28 @@ importers:
         specifier: ^3
         version: 3.2.4(@edge-runtime/vm@3.2.0)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)
 
+  packages/agent-tools:
+    dependencies:
+      '@aac/api-clients':
+        specifier: workspace:*
+        version: link:../api-clients
+      '@aac/shared-utils':
+        specifier: workspace:*
+        version: link:../shared-utils
+    devDependencies:
+      '@aac/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: ^22
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8
+        version: 5.9.3
+      vitest:
+        specifier: ^3
+        version: 3.2.4(@edge-runtime/vm@3.2.0)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)
+
   packages/api-clients:
     dependencies:
       '@aac/shared-utils':
@@ -256,6 +281,50 @@ importers:
       googleapis:
         specifier: ^171.4.0
         version: 171.4.0
+    devDependencies:
+      '@aac/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: ^22
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8
+        version: 5.9.3
+      vitest:
+        specifier: ^3
+        version: 3.2.4(@edge-runtime/vm@3.2.0)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)
+
+  packages/quoting:
+    dependencies:
+      '@aac/api-clients':
+        specifier: workspace:*
+        version: link:../api-clients
+      '@aac/shared-utils':
+        specifier: workspace:*
+        version: link:../shared-utils
+    devDependencies:
+      '@aac/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: ^22
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8
+        version: 5.9.3
+      vitest:
+        specifier: ^3
+        version: 3.2.4(@edge-runtime/vm@3.2.0)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)
+
+  packages/scheduling:
+    dependencies:
+      '@aac/api-clients':
+        specifier: workspace:*
+        version: link:../api-clients
+      '@aac/shared-utils':
+        specifier: workspace:*
+        version: link:../shared-utils
     devDependencies:
       '@aac/tsconfig':
         specifier: workspace:*

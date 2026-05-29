@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { listDeals } from '../../lib/tools/list-deals.js';
-import type { ToolDeps } from '../../lib/tools/types.js';
+import { listDeals } from '../src/list-deals.js';
+import type { ToolDeps } from '../src/types.js';
 
 function deal(overrides: Record<string, unknown> = {}) {
   return {

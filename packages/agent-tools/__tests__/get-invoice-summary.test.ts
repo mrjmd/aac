@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { getInvoiceSummary } from '../../lib/tools/get-invoice-summary.js';
-import type { ToolDeps } from '../../lib/tools/types.js';
+import { getInvoiceSummary } from '../src/get-invoice-summary.js';
+import type { ToolDeps } from '../src/types.js';
 
 function inv(overrides: Record<string, unknown> = {}) {
   return {

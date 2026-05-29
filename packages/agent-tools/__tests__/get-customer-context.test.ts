@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { getCustomerContext } from '../../lib/tools/get-customer-context.js';
-import type { ToolDeps } from '../../lib/tools/types.js';
+import { getCustomerContext } from '../src/get-customer-context.js';
+import type { ToolDeps } from '../src/types.js';
 
 const CONFIG = { pdCompanyDomain: 'attackacrack' };
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { findJobsMissingInvoices } from '../../lib/tools/find-jobs-missing-invoices.js';
-import type { ToolDeps } from '../../lib/tools/types.js';
+import { findJobsMissingInvoices } from '../src/find-jobs-missing-invoices.js';
+import type { ToolDeps } from '../src/types.js';
 
 const CONFIG = { pdCompanyDomain: 'attackacrack' };
 

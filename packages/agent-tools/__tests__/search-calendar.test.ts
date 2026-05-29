@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { searchCalendar } from '../../lib/tools/search-calendar.js';
-import type { ToolDeps } from '../../lib/tools/types.js';
+import { searchCalendar } from '../src/search-calendar.js';
+import type { ToolDeps } from '../src/types.js';
 
 function makeEvent(overrides: Record<string, unknown> = {}) {
   return {
@@ -72,6 +72,16 @@ describe('searchCalendar', () => {
       color: 'assessment',
     });
     expect(listEvents.mock.calls[0][0].colorIds).toEqual(['3']);
+  });
+
+  it('maps color="callback" to colorId 5', async () => {
+    const { deps, listEvents } = makeDeps([]);
+    await searchCalendar(deps, {
+      rangeStart: 'a',
+      rangeEnd: 'b',
+      color: 'callback',
+    });
+    expect(listEvents.mock.calls[0][0].colorIds).toEqual(['5']);
   });
 
   it('filters by location keyword case-insensitively', async () => {

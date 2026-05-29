@@ -1,0 +1,36 @@
+{
+  "name": "@aac/agent-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./types": "./dist/types.js",
+    "./get-customer-context": "./dist/get-customer-context.js",
+    "./search-calendar": "./dist/search-calendar.js",
+    "./list-deals": "./dist/list-deals.js",
+    "./get-deal": "./dist/get-deal.js",
+    "./find-jobs-missing-invoices": "./dist/find-jobs-missing-invoices.js",
+    "./get-invoice-summary": "./dist/get-invoice-summary.js",
+    "./search-conversation": "./dist/search-conversation.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@aac/api-clients": "workspace:*",
+    "@aac/shared-utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@aac/tsconfig": "workspace:*",
+    "@types/node": "^22",
+    "typescript": "^5.8",
+    "vitest": "^3"
+  }
+}
