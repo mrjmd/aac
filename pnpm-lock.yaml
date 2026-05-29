@@ -390,6 +390,9 @@ importers:
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../packages/api-clients
+      '@aac/scheduling':
+        specifier: workspace:*
+        version: link:../packages/scheduling
       '@aac/shared-utils':
         specifier: workspace:*
         version: link:../packages/shared-utils
