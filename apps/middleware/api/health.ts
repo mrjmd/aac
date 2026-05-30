@@ -27,12 +27,49 @@ interface HealthMetrics {
     pdToQb: number;
     phoneToPd: number;
   };
+  /**
+   * Quo scheduling-intent classifier volume by event type, last 48h. Used
+   * to validate the "transcripts are sparse" assumption before deciding
+   * whether to drop the matt-side classifier on transcripts.
+   */
+  schedulingClassifier: {
+    byEventType: Record<string, { classified: number; directivesWritten: number }>;
+  };
   errors: Array<{
     timestamp: string;
     source: string;
     message: string;
     details?: string;
   }>;
+}
+
+async function getSchedulingClassifierMetrics(): Promise<
+  Record<string, { classified: number; directivesWritten: number }>
+> {
+  const redis = getRedis();
+  const today = new Date().toISOString().split('T')[0];
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().split('T')[0];
+
+  const eventTypes = ['message.received', 'message.delivered', 'call.transcript.completed'];
+
+  const result: Record<string, { classified: number; directivesWritten: number }> = {};
+  await Promise.all(
+    eventTypes.flatMap((et) =>
+      [today, yesterday].map(async (day) => {
+        const [classified, directives] = await Promise.all([
+          redis.get<number>(keys.schedulingClassifierCount(et, day)),
+          redis.get<number>(keys.schedulingDirectivesFromQuo(et, day)),
+        ]);
+        const prev = result[et] ?? { classified: 0, directivesWritten: 0 };
+        result[et] = {
+          classified: prev.classified + (classified || 0),
+          directivesWritten: prev.directivesWritten + (directives || 0),
+        };
+      }),
+    ),
+  );
+
+  return result;
 }
 
 /**
@@ -86,17 +123,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const redis = getRedis();
 
     // Fetch all metrics in parallel
-    const [pipedriveMetrics, quoMetrics, googleAdsMetrics, qbMetrics, rawErrors, pdToQuoCount, pdToQbCount, phoneToPdCount] =
-      await Promise.all([
-        getWebhookMetrics('pipedrive'),
-        getWebhookMetrics('quo'),
-        getWebhookMetrics('google-ads'),
-        getWebhookMetrics('qb'),
-        redis.lrange(keys.healthErrors, 0, 49),
-        countKeysWithPrefix('map:pd-to-quo:'),
-        countKeysWithPrefix('map:pd-to-qb:'),
-        countKeysWithPrefix('phone:pd:'),
-      ]);
+    const [
+      pipedriveMetrics,
+      quoMetrics,
+      googleAdsMetrics,
+      qbMetrics,
+      rawErrors,
+      pdToQuoCount,
+      pdToQbCount,
+      phoneToPdCount,
+      schedulingClassifierByType,
+    ] = await Promise.all([
+      getWebhookMetrics('pipedrive'),
+      getWebhookMetrics('quo'),
+      getWebhookMetrics('google-ads'),
+      getWebhookMetrics('qb'),
+      redis.lrange(keys.healthErrors, 0, 49),
+      countKeysWithPrefix('map:pd-to-quo:'),
+      countKeysWithPrefix('map:pd-to-qb:'),
+      countKeysWithPrefix('phone:pd:'),
+      getSchedulingClassifierMetrics(),
+    ]);
 
     // Parse error entries
     const errors = rawErrors
@@ -130,6 +177,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         pdToQuo: pdToQuoCount,
         pdToQb: pdToQbCount,
         phoneToPd: phoneToPdCount,
+      },
+      schedulingClassifier: {
+        byEventType: schedulingClassifierByType,
       },
       errors,
     };

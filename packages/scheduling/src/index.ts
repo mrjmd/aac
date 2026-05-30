@@ -18,5 +18,7 @@
 export * from './types.js';
 export * from './normalize-qb-approval.js';
 export * from './normalize-manual-schedule.js';
+export * from './normalize-quo-customer.js';
+export * from './resolve-callback-parent.js';
 export * from './replay.js';
 export * from './suggest-slot.js';

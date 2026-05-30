@@ -137,6 +137,19 @@ export const keys = {
   schedulingDirectiveByEstimate: (qbEstimateId: string) =>
     `scheduling:directive-by-qb-estimate:${qbEstimateId}` as const,
 
+  /**
+   * Counter for Quo scheduling-intent classifier calls, partitioned by event
+   * type and day. Used to validate our (currently hand-waved) assumption
+   * about call-transcript volume before deciding whether to drop the
+   * matt-side classifier on transcripts. 30d TTL.
+   */
+  schedulingClassifierCount: (eventType: string, day: string) =>
+    `scheduling:classifier-count:${eventType}:${day}` as const,
+
+  /** Counter for directives written from the Quo path, by event type + day. 30d TTL. */
+  schedulingDirectivesFromQuo: (eventType: string, day: string) =>
+    `scheduling:directives-from-quo:${eventType}:${day}` as const,
+
   // ── Agent (Conversational Operations Runtime) ──────────────────────
 
   /** Per-cron-job cursor (e.g. last surfaced error ID in error-surface tick). No TTL. */

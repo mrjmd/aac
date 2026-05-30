@@ -28,8 +28,14 @@ import {
   logHealthError,
 } from '../../lib/redis.js';
 import { getEnv } from '../../lib/env.js';
-import { getPipedrive, getGemini } from '../../lib/clients.js';
+import { getCalendar, getPipedrive, getGemini } from '../../lib/clients.js';
 import { ensureInboundLeadDeal } from '../../lib/inbound-deal.js';
+import {
+  dispatchSchedulingIntent,
+  type DialogueEntry,
+  type SchedulingDispatchContext,
+  type SchedulingEventType,
+} from '../../lib/scheduling-dispatch.js';
 
 const log = createLogger('quo-webhook');
 
@@ -159,6 +165,53 @@ function extractRemotePhone(
   } else {
     return eventData.to || null;
   }
+}
+
+/**
+ * Build the scheduling-dispatch context from the raw event. Returns null
+ * for event types that don't carry classifiable content (call.completed,
+ * call.ringing). Maps Quo's `userId` flag on dialogue entries to the
+ * dispatch helper's `isMatt` boolean.
+ */
+function buildDispatchContext(
+  event: QuoWebhookPayload['object'],
+  eventData: QuoWebhookPayload['object']['data']['object'],
+  customerPhone: string,
+  pdPersonId: number,
+): SchedulingDispatchContext | null {
+  const type = event.type;
+  if (
+    type !== 'message.received'
+    && type !== 'message.delivered'
+    && type !== 'call.transcript.completed'
+  ) {
+    return null;
+  }
+
+  const eventType: SchedulingEventType = type;
+
+  if (eventType === 'call.transcript.completed') {
+    if (!eventData.dialogue || eventData.dialogue.length === 0) return null;
+    const dialogue: DialogueEntry[] = eventData.dialogue.map((d) => ({
+      content: d.content,
+      isMatt: !!d.userId,
+    }));
+    return {
+      eventId: event.id,
+      eventType,
+      dialogue,
+      customerPhone,
+      pdPersonId,
+    };
+  }
+
+  return {
+    eventId: event.id,
+    eventType,
+    text: eventData.body ?? '',
+    customerPhone,
+    pdPersonId,
+  };
 }
 
 /**
@@ -498,6 +551,35 @@ export async function POST(request: Request): Promise<Response> {
         await logHealthError('quo', `AI extraction failed (${reason}): ${(error as Error).message.substring(0, 200)}`, {
           personId: String(pipedrivePersonId),
           reason,
+          eventType: event.type,
+        });
+      }
+    }
+
+    // ============================================
+    // SCHEDULING-INTENT CLASSIFICATION
+    // ============================================
+    // Dispatch helper runs the classifier (one or two calls depending on
+    // event type), resolves callback parent via calendar when needed, calls
+    // the right normalizer, and writes any resulting directives to the
+    // shadow queue. Failures inside the helper are logged + counted but
+    // never propagate — middleware stays alive.
+    const dispatchCtx = buildDispatchContext(event, eventData, e164Phone, pipedrivePersonId);
+    if (dispatchCtx) {
+      try {
+        const summary = await dispatchSchedulingIntent(
+          { pd, cal: getCalendar(), gemini: getGemini() },
+          dispatchCtx,
+        );
+        log.info('Scheduling dispatch complete', {
+          eventId: event.id,
+          eventType: event.type,
+          summary,
+        });
+      } catch (error) {
+        log.error('Scheduling dispatch threw', error as Error, { eventId: event.id });
+        await logHealthError('quo', `Scheduling dispatch threw: ${(error as Error).message.substring(0, 200)}`, {
+          eventId: event.id,
           eventType: event.type,
         });
       }

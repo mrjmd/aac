@@ -289,3 +289,29 @@ export async function trackCronRun(
     redis.set(`cron:${jobName}:${today}:result`, JSON.stringify(result), { ex: 30 * 86_400 }),
   ]);
 }
+
+/**
+ * Track scheduling-classifier dispatch volume. We don't yet have real data
+ * on Quo transcript volume — this counter lets /api/health surface it so
+ * we can verify the "transcripts are sparse" assumption before deciding to
+ * drop the matt-side classifier on transcripts.
+ */
+export async function trackSchedulingClassification(
+  eventType: string,
+  summary: { classified: number; directivesWritten: number },
+): Promise<void> {
+  if (summary.classified === 0 && summary.directivesWritten === 0) return;
+  const redis = getRedis();
+  const today = new Date().toISOString().split('T')[0];
+
+  const writes: Promise<unknown>[] = [];
+  if (summary.classified > 0) {
+    writes.push(redis.incrby(keys.schedulingClassifierCount(eventType, today), summary.classified));
+    writes.push(redis.expire(keys.schedulingClassifierCount(eventType, today), 30 * 86_400));
+  }
+  if (summary.directivesWritten > 0) {
+    writes.push(redis.incrby(keys.schedulingDirectivesFromQuo(eventType, today), summary.directivesWritten));
+    writes.push(redis.expire(keys.schedulingDirectivesFromQuo(eventType, today), 30 * 86_400));
+  }
+  await Promise.all(writes);
+}
