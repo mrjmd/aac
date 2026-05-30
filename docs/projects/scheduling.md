@@ -249,6 +249,55 @@ Shadow mode tolerates these gaps because nothing executes downstream. Before `ex
 
 Each of these is its own small ticket; total scope is ~1–2 sessions. The /health classifier counters are deliberately exposed now so Matt has real data on how often each scenario actually fires before we sink the engineering time. Re-evaluate after 2–4 weeks of shadow operation.
 
+### Walk #6 smoke-test plan (deferred — run when Matt has 5 min)
+
+Walk #6 is deployed but un-exercised end-to-end. The loop is shadow-mode (no calendar writes), so a real-data smoke test is safe; it just texts Matt and records his reply in Redis + command-center.
+
+**Steps:**
+
+1. **Pick a directive id** from `/scheduling` in the command-center (the URL pattern `https://<command-center>/scheduling`). The id is in the "Raw directive" details disclosure as `"id"`. Fallback: `redis-cli LRANGE scheduling:pending:list 0 5` against the Upstash instance.
+
+2. **Fire the proposal** (one curl from any terminal with the CRON_SECRET on hand):
+   ```sh
+   curl -X POST \
+     -H "Authorization: Bearer $CRON_SECRET" \
+     -H "Content-Type: application/json" \
+     -d '{"directiveId":"<id from step 1>"}' \
+     https://aac-middleware-monorepo.vercel.app/api/scheduling/send-proposal
+   ```
+   Expected response: `200 OK` with `{ok: true, proposalId, smsId, suggestedSlotFound, descriptionUsedFallback, agentStatus: 200}`. If `suggestedSlotFound: false` the SMS still sends but with an empty slot — useful for verifying the bad-path UX.
+
+3. **Expect SMS** on Matt's personal line from `+16177660151` within ~10s. Shape:
+   ```
+   📅 <Customer> — <intent label>
+   <one-line scope>
+
+   <Weekday> <Mon> <D>  <Ham>–<Ham> ET (<Nh>)
+   why: <slot reasoning>
+
+   Reply YES to confirm, NO to skip, or text an edit ("Thu 1pm").
+   ```
+
+4. **Reply** with one of:
+   - `yes` / `y` / `ok` / `confirm` / `lgtm` → recorded as `approved`
+   - `no` / `skip` / `cancel` / `pass` → recorded as `rejected`
+   - anything else (e.g. `Thu 1pm instead`) → recorded as `edit` with verbatim text
+
+5. **Verify** in command-center `/scheduling`:
+   - Header chip turns emerald/rose/amber per decision
+   - Tinted block beneath the header shows verbatim reply + timestamp
+
+Once verified, capture in `docs/DECISIONS.md` and decide whether to widen confidence threshold for Walk #7 auto-fire.
+
+### Walk #6 open follow-ups (non-blocking)
+
+- **apps/agent prod env: make QB optional.** During Walk #6 smoke-test prep, surfaced that agent prod was missing `QUICKBOOKS_CLIENT_ID/SECRET/REALM_ID/REDIRECT_URI` since Walk 2 shipped — `/api/health` had been 500ing for weeks. Patched by mirroring values from middleware. Long-term: `apps/agent/lib/env.ts` should mark QB optional, since current Walk 1–2 + Walk 6 paths don't construct `QuickBooksClient`. Quick fix; ~15 min.
+- **Pre-existing diagnostic-surface errors flagged 2026-05-29** (Matt forwarded the texts mid-session 2026-05-30; not Walk #6-caused):
+  - `deal-reconcile` Pipedrive 429 at `2026-05-29T14:00:03Z` with `windowDays=7`. The cron sequentially calls `pipedrive.createDeal`/`updateDeal`/`setDealStage` for every reconciled estimate + invoice; bursts on a 7d window hit PD's per-second cap. Fix candidates: add per-request 100–200ms throttle, batch via `pipedrive.bulkUpdate` if available, or shrink default `windowDays` to 1–2.
+  - `qb` 400 / code 610 "Object Not Found" at `2026-05-29T15:46:45Z` (eventId `5bf8a454-52ca-4eb9-b8cb-40797b2e22d5`). QB webhook fired for an entity that's been made inactive in QB. The handler should treat 610 as a normal "skip + log" path rather than surfacing as an error, since this represents legitimate state (a deleted/inactive QB record).
+  
+  Both are pre-existing infrastructure issues. Worth fixing before Walk #7 only if the diagnostic-agent texts are noisy enough to bury real errors. Otherwise defer to a cleanup sweep.
+
 ---
 
 ## Run — All six trigger paths, confidence-graduated autonomy
