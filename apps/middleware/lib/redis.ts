@@ -220,16 +220,39 @@ export async function writeHeartbeat(): Promise<void> {
  * its id onto the head of `scheduling:pending:list` (capped at 500 for
  * command-center display). No TTL — the queue is for review, not transient
  * state.
+ *
+ * When the directive carries a `qbEstimateId`, also writes a reverse
+ * index `scheduling:directive-by-qb-estimate:{id}` so the QB reconciliation
+ * cron can cheaply check whether the webhook already produced a directive
+ * for this estimate.
  */
-export async function writePendingDirective<T extends { id: string }>(
-  directive: T,
-): Promise<void> {
+export async function writePendingDirective<
+  T extends { id: string; qbEstimateId?: string },
+>(directive: T): Promise<void> {
   const redis = getRedis();
-  await Promise.all([
+  const writes: Promise<unknown>[] = [
     redis.set(keys.schedulingPending(directive.id), directive),
     redis.lpush(keys.schedulingPendingList, directive.id),
-  ]);
+  ];
+  if (directive.qbEstimateId) {
+    writes.push(
+      redis.set(keys.schedulingDirectiveByEstimate(directive.qbEstimateId), directive.id),
+    );
+  }
+  await Promise.all(writes);
   await redis.ltrim(keys.schedulingPendingList, 0, 499);
+}
+
+/**
+ * Look up the directive ID (if any) that was already produced for a given
+ * QB Estimate. Used by the QB reconciliation cron to skip estimates the
+ * webhook already handled.
+ */
+export async function getDirectiveIdByEstimate(
+  qbEstimateId: string,
+): Promise<string | null> {
+  const redis = getRedis();
+  return (await redis.get<string>(keys.schedulingDirectiveByEstimate(qbEstimateId))) ?? null;
 }
 
 // ── Cron Job Tracking ───────────────────────────────────────────────

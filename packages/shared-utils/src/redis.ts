@@ -128,6 +128,15 @@ export const keys = {
   /** LIST of pending directive IDs, newest first (LPUSH + LTRIM). Read by command-center. */
   schedulingPendingList: 'scheduling:pending:list' as const,
 
+  /**
+   * Reverse index: QB Estimate ID → directive ID. Set by `writePendingDirective`
+   * when the directive carries a `qbEstimateId`. Used by the QB reconciliation
+   * cron to avoid creating a duplicate directive when the webhook already did.
+   * No TTL — stays as long as the directive itself does.
+   */
+  schedulingDirectiveByEstimate: (qbEstimateId: string) =>
+    `scheduling:directive-by-qb-estimate:${qbEstimateId}` as const,
+
   // ── Agent (Conversational Operations Runtime) ──────────────────────
 
   /** Per-cron-job cursor (e.g. last surfaced error ID in error-surface tick). No TTL. */
