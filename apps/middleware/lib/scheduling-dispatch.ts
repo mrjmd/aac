@@ -27,7 +27,11 @@ import {
   type ClassifiedSchedulingIntent,
 } from '@aac/api-clients/gemini';
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
-import type { PipedriveClient } from '@aac/api-clients/pipedrive';
+import {
+  PIPEDRIVE_CROSS_SYSTEM_FIELDS,
+  type PipedriveClient,
+  type PipedrivePerson,
+} from '@aac/api-clients/pipedrive';
 import {
   normalizeManualSchedule,
   normalizeQuoCustomerIntent,
@@ -37,8 +41,10 @@ import {
   type SchedulingDirective,
 } from '@aac/scheduling';
 import {
+  getQbCustomerIdFromPipedrive,
   logHealthError,
   SCHEDULING_AUTO_PROPOSE_THRESHOLD,
+  storePipedriveToQbMapping,
   trackSchedulingClassification,
   writePendingDirective,
 } from './redis.js';
@@ -270,7 +276,8 @@ async function buildDirective(
     return null;
   }
 
-  const customerName = await fetchPdPersonName(deps.pd, context.pdPersonId);
+  const personInfo = await fetchPdPersonInfo(deps.pd, context.pdPersonId);
+  const customerName = personInfo.name;
 
   let callbackParent: QuoCallbackParent | undefined;
   if (classification.intent === 'callback_opened') {
@@ -299,24 +306,51 @@ async function buildDirective(
       customerPhone: context.customerPhone,
       pdPersonId: context.pdPersonId,
       pdPersonName: customerName ?? `PD ${context.pdPersonId}`,
+      ...(personInfo.qbCustomerId ? { qbCustomerId: personInfo.qbCustomerId } : {}),
     },
     source: source as 'quo_text' | 'quo_call',
     ...(callbackParent ? { callbackParent } : {}),
   });
 }
 
-async function fetchPdPersonName(
+/**
+ * Read PD person info needed for directive normalization:
+ *   - display name (for scope summary + callback-parent lookup)
+ *   - linked QB customer id (so the directive carries the cross-system ref
+ *     and downstream consumers — proposal-builder address lookup,
+ *     executeDirective — don't have to re-derive it)
+ *
+ * The QB id is read from Redis cache first (set by the PD-create webhook
+ * path); on miss we fall through to PD's custom-field read and warm the
+ * cache on success. Single `getPerson` call serves both the name and the
+ * cache-miss field read.
+ */
+async function fetchPdPersonInfo(
   pd: PipedriveClient,
   pdPersonId: number,
-): Promise<string | null> {
+): Promise<{ name: string | null; qbCustomerId: string | null }> {
+  let person: PipedrivePerson | null = null;
   try {
-    const person = await pd.getPerson(pdPersonId);
-    return person?.name ?? null;
+    person = await pd.getPerson(pdPersonId);
   } catch (err) {
     log.warn('PD getPerson failed during scheduling dispatch', {
       pdPersonId,
       error: (err as Error).message,
     });
-    return null;
+    return { name: null, qbCustomerId: null };
   }
+
+  const name = person?.name ?? null;
+
+  const cachedQbId = await getQbCustomerIdFromPipedrive(String(pdPersonId));
+  if (cachedQbId) return { name, qbCustomerId: cachedQbId };
+
+  const rawPerson = person as unknown as Record<string, unknown> | null;
+  const rawField = rawPerson?.[PIPEDRIVE_CROSS_SYSTEM_FIELDS.QB_CUSTOMER_ID];
+  const qbCustomerId = typeof rawField === 'string' && rawField.length > 0 ? rawField : null;
+  if (qbCustomerId) {
+    await storePipedriveToQbMapping(String(pdPersonId), qbCustomerId);
+  }
+  return { name, qbCustomerId };
 }
+

@@ -7,16 +7,23 @@ const {
   mockWritePendingDirective,
   mockLogHealthError,
   mockTrackSchedulingClassification,
+  mockGetQbCustomerIdFromPipedrive,
+  mockStorePipedriveToQbMapping,
 } = vi.hoisted(() => ({
   mockWritePendingDirective: vi.fn(),
   mockLogHealthError: vi.fn(),
   mockTrackSchedulingClassification: vi.fn(),
+  mockGetQbCustomerIdFromPipedrive: vi.fn().mockResolvedValue(null),
+  mockStorePipedriveToQbMapping: vi.fn(),
 }));
 
 vi.mock('../lib/redis.js', () => ({
   writePendingDirective: mockWritePendingDirective,
   logHealthError: mockLogHealthError,
   trackSchedulingClassification: mockTrackSchedulingClassification,
+  getQbCustomerIdFromPipedrive: mockGetQbCustomerIdFromPipedrive,
+  storePipedriveToQbMapping: mockStorePipedriveToQbMapping,
+  SCHEDULING_AUTO_PROPOSE_THRESHOLD: 0.7,
 }));
 
 import {
@@ -54,11 +61,23 @@ function makeGemini(seq: Array<ClassifiedSchedulingIntent | Error>) {
   } as any;
 }
 
-function makePd(name: string | null) {
+/**
+ * Returns a stub PD client. When `qbCustomerId` is passed, the underlying
+ * raw person record carries the QB cross-system custom field so the
+ * dispatch's `fetchPdPersonInfo` reads it out.
+ */
+function makePd(name: string | null, qbCustomerId?: string) {
+  let person: PipedrivePerson | null = null;
+  if (name !== null) {
+    const raw: Record<string, unknown> = { id: 9001, name };
+    if (qbCustomerId) {
+      // Hash key for the QB customer cross-system field on PD persons.
+      raw['a02e76a3d2d7e38cacd476aaea1c2a8809264025'] = qbCustomerId;
+    }
+    person = raw as unknown as PipedrivePerson;
+  }
   return {
-    getPerson: vi.fn().mockResolvedValue(
-      name === null ? null : ({ id: 9001, name } as PipedrivePerson),
-    ),
+    getPerson: vi.fn().mockResolvedValue(person),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
 }
@@ -369,5 +388,74 @@ describe('dispatchSchedulingIntent', () => {
       'message.received',
       expect.objectContaining({ classified: 1, directivesWritten: 1 }),
     );
+  });
+
+  // ── qbCustomerId resolution (Walk #6.5 follow-up) ──────────────
+
+  it('propagates qbCustomerId onto the directive when PD person has the QB cross-system field set', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'quote_approved',
+        score: 0.9,
+        confidence: 'high',
+        rationale: 'customer accepted',
+      }),
+    ]);
+    const pd = makePd('Margie Mercadante', 'qb-cust-42');
+    mockGetQbCustomerIdFromPipedrive.mockResolvedValueOnce(null);
+
+    await dispatchSchedulingIntent(
+      { pd, cal: makeCal([]), gemini, now: fixedNow },
+      ctxMsg({ pdPersonId: 5590 }),
+    );
+
+    const written = mockWritePendingDirective.mock.calls[0][0];
+    expect(written.qbCustomerId).toBe('qb-cust-42');
+    // Cache should be warmed once we read PD's custom field.
+    expect(mockStorePipedriveToQbMapping).toHaveBeenCalledWith('5590', 'qb-cust-42');
+  });
+
+  it('uses the Redis PD→QB cache hit and skips the PD custom-field read', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'assessment_requested',
+        score: 0.85,
+        confidence: 'high',
+        rationale: 'wants visit',
+      }),
+    ]);
+    const pd = makePd('Cached Customer'); // no field on PD raw record
+    mockGetQbCustomerIdFromPipedrive.mockResolvedValueOnce('qb-cached-7');
+
+    await dispatchSchedulingIntent(
+      { pd, cal: makeCal([]), gemini, now: fixedNow },
+      ctxMsg({ pdPersonId: 7777 }),
+    );
+
+    const written = mockWritePendingDirective.mock.calls[0][0];
+    expect(written.qbCustomerId).toBe('qb-cached-7');
+    expect(mockStorePipedriveToQbMapping).not.toHaveBeenCalled();
+  });
+
+  it('omits qbCustomerId from the directive when neither cache nor PD has one', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'quote_approved',
+        score: 0.9,
+        confidence: 'high',
+        rationale: 'accepted',
+      }),
+    ]);
+    const pd = makePd('Unlinked Customer');
+    mockGetQbCustomerIdFromPipedrive.mockResolvedValueOnce(null);
+
+    await dispatchSchedulingIntent(
+      { pd, cal: makeCal([]), gemini, now: fixedNow },
+      ctxMsg({ pdPersonId: 5555 }),
+    );
+
+    const written = mockWritePendingDirective.mock.calls[0][0];
+    expect(written.qbCustomerId).toBeUndefined();
+    expect(mockStorePipedriveToQbMapping).not.toHaveBeenCalled();
   });
 });
