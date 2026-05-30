@@ -1,6 +1,10 @@
 # Project Spec — `@aac/scheduling` Pipeline
 
-**Status (2026-05-30):** Walks 1–6 shipped. Walks 1–4 deployed `dpl_EZfkctJz8gszP2LRkZM7DraDmWpf` (READY, healthy); Walk 5 package-only (no app wiring); Walk 6 shipped + deployed 2026-05-30 (middleware `aac-middleware-monorepo-d4035pj18`, agent `agent-c797dbh0c` (env-fix redeploy after `agent-mmxrl1p6m`); all three new endpoints respond 401 to unauthenticated POSTs as expected). Pre-existing bug surfaced during smoke-test: agent's prod env was missing `QUICKBOOKS_CLIENT_ID/SECRET/REALM_ID/REDIRECT_URI` (since Walk 2 shipped — `/api/health` had been 500ing for weeks); mirrored the four values from middleware's prod env. Long-term cleanup: `apps/agent/lib/env.ts` should make QB optional since current Walk 1–2 + Walk 6 paths don't call `getQuickBooks()`. Pipeline now covers all six trigger paths end-to-end through to the shadow queue: QB Estimate.Update webhook → `normalizeQbApproval`; daily QB reconciliation cron backstop; Quo `message.received` → customer classifier → `normalizeQuoCustomerIntent` (with calendar-based callback parent resolution); Quo `message.delivered` → matt classifier → `normalizeManualSchedule`; Quo `call.transcript.completed` → BOTH speakers classified in parallel → either normalizer. Directives carry `durationPrediction` (where attached to QB estimates) and write to `scheduling:pending:list` for command-center review. Walk #5 (`buildEventDescription`): pure function in `@aac/scheduling` with four post-LLM quality gates (address-present, line-item-referenced, no hallucinated phone/email/money figures, ≤1200 chars), up to 2 retries with gate-failure feedback, deterministic template fallback. Walk #6 (propose-dialogue): three-leg loop in shadow mode — middleware admin trigger (`/api/scheduling/send-proposal`) → agent `/api/proposals` → SMS to Matt → reply routed through existing Quo webhook → agent callback to middleware `/api/scheduling/proposal-decision` → command-center surfaces the verdict on each directive card with a coloured chip + verbatim-reply block. New shared types in `@aac/scheduling/proposal` + new shared keys (`agent:proposal:{id}`, `agent:active-proposal:{owner}` at 24h TTL; `scheduling:proposal-decision:{id}` + `scheduling:proposal-by-directive:{id}` at 30d TTL). New env on both apps: `SCHEDULING_PROPOSAL_SECRET`; plus `AGENT_BASE_URL` on middleware and `MIDDLEWARE_BASE_URL` on agent. Auto-fire from dispatch stays deferred to Walk #7 (confidence-gated autonomy). Test counts: scheduling 98, middleware 215 (+27), agent 102 (+15), api-clients 234. **Known dedup/cleanup gaps surfaced during Walk #4b deploy review are tolerable in shadow mode but blocking for Walk #7 — see Walk-#7 prerequisites section below.** Next concrete piece: Walk #7 (`executeDirective`) — must clear the four prereqs first.
+**Status (2026-05-30):** Walks 1–6 shipped + Walk #6 smoke-test executed end-to-end (Margie Mercadante directive, dir `5390ea40…`). Loop fired correctly (middleware → agent → SMS → reply → callback → command-center decision render) once an env-newline bug was patched. The smoke-test surfaced three orthogonal design gaps that promote **Walk #6.5** ahead of Walk #7. Latest prod deploys: middleware `aac-middleware-monorepo-2k46niw6p`, agent `agent-a9c6bqjd5` (both env-fix redeploys 2026-05-30 after the `\n`-in-env bug; see Walk #6 open follow-ups).
+
+**Walk #6.5 is now next** (small bundle, ~half day): (1) `defaultAssessmentHours: 1 → 0.5` per Matt's "every assessment is 30 min" clarification; (2) travel-time feasibility in `suggestSlot` (point-to-point drive using `@aac/api-clients/google-maps` already in workspace, 15-min buffer applied both arrival + departure, 5:30 PM hard return-home anchor at `30 Randlett Street, Quincy, MA 02170`); (3) confidence gate in `scheduling-dispatch.ts` — directives with `confidence.score < 0.7` stay in shadow queue without auto-propose. After 6.5, smoke-test re-runs to validate slot picks are now feasible. Classifier surgery (semantic intent confusion uncovered by Margie's case — see "Walk #6 smoke-test executed" section below) is **deferred to its own future spike**, not in Walk #6.5 scope.
+
+Pipeline now covers all six trigger paths end-to-end through to the shadow queue: QB Estimate.Update webhook → `normalizeQbApproval`; daily QB reconciliation cron backstop; Quo `message.received` → customer classifier → `normalizeQuoCustomerIntent` (with calendar-based callback parent resolution); Quo `message.delivered` → matt classifier → `normalizeManualSchedule`; Quo `call.transcript.completed` → BOTH speakers classified in parallel → either normalizer. Directives carry `durationPrediction` (where attached to QB estimates) and write to `scheduling:pending:list` for command-center review. Walk #5 (`buildEventDescription`): pure function in `@aac/scheduling` with four post-LLM quality gates (address-present, line-item-referenced, no hallucinated phone/email/money figures, ≤1200 chars), up to 2 retries with gate-failure feedback, deterministic template fallback. Walk #6 (propose-dialogue): three-leg loop in shadow mode — middleware admin trigger (`/api/scheduling/send-proposal`) → agent `/api/proposals` → SMS to Matt → reply routed through existing Quo webhook → agent callback to middleware `/api/scheduling/proposal-decision` → command-center surfaces the verdict on each directive card with a coloured chip + verbatim-reply block. New shared types in `@aac/scheduling/proposal` + new shared keys (`agent:proposal:{id}`, `agent:active-proposal:{owner}` at 24h TTL; `scheduling:proposal-decision:{id}` + `scheduling:proposal-by-directive:{id}` at 30d TTL). New env on both apps: `SCHEDULING_PROPOSAL_SECRET`; plus `AGENT_BASE_URL` on middleware and `MIDDLEWARE_BASE_URL` on agent. Auto-fire from dispatch stays deferred to Walk #7 (confidence-gated autonomy). Test counts pre-Walk-#6.5: scheduling 98, middleware 215 (+27), agent 102 (+15), api-clients 234. **Known dedup/cleanup gaps surfaced during Walk #4b deploy review are tolerable in shadow mode but blocking for Walk #7 — see Walk-#7 prerequisites section below.** Next concrete piece: **Walk #6.5** (assessment default + travel feasibility + confidence gate), then Walk #7 (`executeDirective`) — must clear the four prereqs first.
 **Owner:** Matt
 **Package home:** `packages/scheduling/`
 **Related package:** `packages/quoting/` (duration estimation lives here)
@@ -249,48 +253,149 @@ Shadow mode tolerates these gaps because nothing executes downstream. Before `ex
 
 Each of these is its own small ticket; total scope is ~1–2 sessions. The /health classifier counters are deliberately exposed now so Matt has real data on how often each scenario actually fires before we sink the engineering time. Re-evaluate after 2–4 weeks of shadow operation.
 
-### Walk #6 smoke-test plan (deferred — run when Matt has 5 min)
+### Walk #6 smoke-test executed 2026-05-30 — findings
 
-Walk #6 is deployed but un-exercised end-to-end. The loop is shadow-mode (no calendar writes), so a real-data smoke test is safe; it just texts Matt and records his reply in Redis + command-center.
+Picked Margie Mercadante directive `5390ea40-bcca-468e-af9f-0c344ee3bd21` (source `quo_text`, intent `quote_approved`, confidence 0.55). Loop fired correctly end-to-end after one infra fix and surfaced **three orthogonal design gaps** that scope Walk #6.5 below + one deferred classifier spike.
 
-**Steps:**
+#### Infra fix discovered + patched mid-test
 
-1. **Pick a directive id** from `/scheduling` in the command-center (the URL pattern `https://<command-center>/scheduling`). The id is in the "Raw directive" details disclosure as `"id"`. Fallback: `redis-cli LRANGE scheduling:pending:list 0 5` against the Upstash instance.
+When `vercel env add` reads a value from stdin that includes a trailing newline, the literal `\n` gets stored in the env value. HTTP `fetch` strips trailing `\n` from outgoing header values, but the agent's `=== env.scheduling.proposalSecret` comparison runs against the env value WITH the trailing newline — so middleware → agent POST got a 401 even though the secrets were "equal." Patched 4 vars on 2026-05-30 (mw: `AGENT_BASE_URL` + `SCHEDULING_PROPOSAL_SECRET`; ag: `MIDDLEWARE_BASE_URL` + `SCHEDULING_PROPOSAL_SECRET`) via `printf '%s' "$val" | vercel env add`. Redeployed both: `aac-middleware-monorepo-2k46niw6p`, `agent-a9c6bqjd5`. Smoke-test then fired clean: `proposalId: prop_eb5e27d8ca484c3b`, `smsId: AC426207a…`, `agentStatus: 200`. 5 other env vars on both apps have the same `\n` taint (mw `GEMINI_API_KEY`; ag four `QUICKBOOKS_*`); none are in Walk #6's hot path so left for the cleanup sweep noted in open follow-ups.
 
-2. **Fire the proposal** (one curl from any terminal with the CRON_SECRET on hand):
-   ```sh
-   curl -X POST \
-     -H "Authorization: Bearer $CRON_SECRET" \
-     -H "Content-Type: application/json" \
-     -d '{"directiveId":"<id from step 1>"}' \
-     https://aac-middleware-monorepo.vercel.app/api/scheduling/send-proposal
-   ```
-   Expected response: `200 OK` with `{ok: true, proposalId, smsId, suggestedSlotFound, descriptionUsedFallback, agentStatus: 200}`. If `suggestedSlotFound: false` the SMS still sends but with an empty slot — useful for verifying the bad-path UX.
+#### Three orthogonal bugs in Margie's directive
 
-3. **Expect SMS** on Matt's personal line from `+16177660151` within ~10s. Shape:
-   ```
-   📅 <Customer> — <intent label>
-   <one-line scope>
+Margie's actual Quo conversation:
 
-   <Weekday> <Mon> <D>  <Ham>–<Ham> ET (<Nh>)
-   why: <slot reasoning>
+```
+5/30 08:00  Matt → Margie: "I just sent that quote over... once approved we will
+                            get you on the calendar..."
+5/30 08:04  Margie → Matt: "Thank you. We are concerned that just fixing the crack
+                            may not be the solution to our problem. We need to do
+                            some more investigating."        ← NOT approving quote
+5/30 08:11  Matt → Margie: "Happy to do a free assessment first... Mike can be
+                            there at 11:30am on Monday June 8th."   ← Specific slot offered
+5/30 08:29  Margie → Matt: "Yes. That will work. Thank you."  ← Approving SLOT, not quote
+5/30 12:29  Directive emitted: intent=quote_approved, eventClass=job, conf=0.55
+```
 
-   Reply YES to confirm, NO to skip, or text an edit ("Thu 1pm").
-   ```
+The smoke-test SMS proposed Tue Jun 2 12:30 PM, a 2h slot. Both Matt's gut reactions were correct and traced to different bugs:
 
-4. **Reply** with one of:
-   - `yes` / `y` / `ok` / `confirm` / `lgtm` → recorded as `approved`
-   - `no` / `skip` / `cancel` / `pass` → recorded as `rejected`
-   - anything else (e.g. `Thu 1pm instead`) → recorded as `edit` with verbatim text
+| Tag | Bug | Where | Walk #6.5? |
+|---|---|---|---|
+| **A** | Classifier read "Yes. That will work" with no awareness of what was being approved. It needs the **previous outbound** as antecedent context. Margie was approving the assessment slot Matt offered, not a quote. Wrong intent (`quote_approved` vs `appointment_confirmed`). | Classifier prompt in middleware | No — deferred spike. |
+| **B** | Matt already named a specific slot (Mon Jun 8 11:30 AM) in the conversation. Even if intent were correctly classified, the system should detect the offered slot and emit a `manual_schedule` directive with `knownSlot` populated — which bypasses `suggestSlot` entirely. Instead it discarded Matt's offer and tried to propose its own. | Classifier scope/slot extraction | No — deferred spike. |
+| **C** | The 0.55 confidence (which already reflected "no QB estimate matches this approval — something's off" via the `no_open_qb_estimate` signal in `scoreQuoteApproved`) wasn't gating anything. `scheduling-dispatch.ts:166` logs confidence but queues all directives equally. | `apps/middleware/lib/scheduling-dispatch.ts` | **Yes — Walk #6.5.** |
 
-5. **Verify** in command-center `/scheduling`:
-   - Header chip turns emerald/rose/amber per decision
-   - Tinted block beneath the header shows verbatim reply + timestamp
+Additionally surfaced by the same SMS:
 
-Once verified, capture in `docs/DECISIONS.md` and decide whether to widen confidence threshold for Walk #7 auto-fire.
+| Tag | Bug | Where | Walk #6.5? |
+|---|---|---|---|
+| **D** | `defaultAssessmentHours: 1` in `DEFAULT_POLICY` — every assessment AAC has ever done is 30 minutes, per Matt. | `packages/scheduling/src/suggest-slot.ts:45` | **Yes — Walk #6.5.** |
+| **E** | `suggestSlot` ignores drive time (explicitly punted as "v1 concern" in the original spec). Walks suggested Tue 12:30 PM with no buffer between Sean's job ending in <wherever> and Margie's 30-min assessment in Falmouth, MA — physically infeasible. Even with eventClass corrected, the picker needs travel-time as a feasibility constraint, plus a hard return-home anchor (5:30 PM at Mike's house = `30 Randlett Street, Quincy, MA 02170`) for the last slot of the day. | `packages/scheduling/src/suggest-slot.ts` algorithm | **Yes — Walk #6.5.** |
+
+Note: the bugs are independent. Fixing only A/B without C+D+E would still produce infeasible slot suggestions. Fixing only C+D+E without A/B would still misclassify Margie-shaped cases. Walk #6.5 picks the cheap-to-ship fixes that get the **algorithm** trustworthy; A+B is a separate classifier spike.
+
+### Walk #6.5 scope — assessment default + travel feasibility + confidence gate
+
+Single commit, single deploy. Estimated ~half day.
+
+#### 1. `defaultAssessmentHours: 1 → 0.5`
+
+`packages/scheduling/src/suggest-slot.ts:45`. Single field change + one test update.
+
+#### 2. Travel-time feasibility + return-home anchor
+
+**Reuse existing infra**: `@aac/api-clients/google-maps` is already in the workspace; `apps/field/lib/travel-time.ts:27` already defines `DEFAULT_HOME_ADDRESS = '30 Randlett Street, Quincy, MA 02170'` and a Redis-cached, traffic-aware bucketed lookup (`field:travel-leg:*` key namespace).
+
+**Plan**:
+- Extract the travel primitive to `packages/scheduling/src/travel-time.ts` — `getTravelLeg(origin, dest, departure, {redis, maps})`. Migrate `apps/field/lib/travel-time.ts:resolveTravelLegs` to consume it in the same commit (per [[dry-principle]]).
+- `DEFAULT_HOME_ADDRESS` moves to `@aac/scheduling` alongside the policy default.
+
+**`suggestSlot` signature changes**:
+```ts
+suggestSlot({
+  directive,
+  customerAddress: string | null,        // NEW — required for travel feasibility
+  existingEvents,
+  now,
+  travel?: {                              // NEW — when null/omitted, v0 no-travel + warn
+    getLeg: (origin, dest, departure) => Promise<TravelEstimate | null>,
+    homeAddress: string,                  // defaults to DEFAULT_HOME_ADDRESS
+  },
+  policy?: Partial<SuggestSlotPolicy>,
+}): Promise<SuggestSlotResult>            // now async (was sync)
+```
+
+**`SuggestSlotPolicy` adds**:
+- `homeReturnDeadlineHour: 17.5` — hard 5:30 PM ceiling for tech to be back home (last slot of day must end at `5:30 PM − travel_back − buffer`).
+- `travelBufferMinutes: 15` — applied symmetrically (after travel-arrival AND before travel-departure to the next event). Per Matt's spec 2026-05-30.
+
+**New algorithm per day**, walking gaps:
+
+```
+For each candidate gap (before first event, between events, after last event):
+  prev_location = previous event with a location, else HOME
+  next_location = next event with a location, else HOME (with 17:30 deadline)
+
+  leg_to   = travel(prev_location → customer_addr, departureTime=prev_end)
+  leg_back = travel(customer_addr → next_location, departureTime=estimated_slot_end)
+
+  earliest_start = max(workStart, prev_end + leg_to + buffer)
+  slot_end       = earliest_start + duration
+
+  if next is home:
+    constraint = slot_end + leg_back + buffer ≤ homeReturnDeadlineHour
+  else:
+    constraint = slot_end + leg_back + buffer ≤ next.start
+
+  if constraint holds → return this slot
+  else → try next gap
+```
+
+**Fail-closed policy**: If Maps returns `null` for any leg (route unknown, API error, customer-address-not-geocodable), treat the slot as infeasible and try the next gap. Better to return `null` and surface "no feasible slot in 21-day window" than to propose an infeasible time.
+
+**Fallback**: If `customerAddress` is null OR `travel` deps are omitted, fall back to v0 no-travel behavior + log a warning. Lets test suites and edge cases still exercise the algorithm without GMaps.
+
+**Cost note**: Distance Matrix $5/1000 elements. Worst case ~420 elements per proposal (10 gaps × 2 legs × 21 days) ≈ $0.002 per proposal cold; weekday-hour bucketed cache (already in place for field) keeps warm cost near zero.
+
+**Out of Walk #6.5 scope** (deferred to later):
+- Per-tech home routing (Mike vs Matt vs salesperson). v0.5 assumes Mike's home anchors everything.
+- Route-shape clustering / backtracking penalties. Per Matt's call, point-to-point + return-home is enough for now.
+- Surfacing 3 candidate slots vs 1 (nice-to-have per [[variance-over-hard-rules]] but not required).
+
+#### 3. Confidence gate at dispatch
+
+`apps/middleware/lib/scheduling-dispatch.ts` currently writes every directive to `scheduling:pending:list` regardless of `directive.confidence.score`. Walk #6.5 adds a threshold:
+
+- **If `score >= 0.7`**: write to `scheduling:pending:list` as today.
+- **If `score < 0.7`**: write to a parallel `scheduling:pending-review:list` (new key). Surface in command-center `/scheduling` as a separate "Needs review" tab/section. Never auto-proposed; Matt manually triggers via `/api/scheduling/send-proposal` if he wants.
+
+Margie-shaped cases (0.55, missing-QB-estimate signal) would have landed in review, never produced an SMS. The classifier surgery (A+B) can ship later without rushing — the gate is the safety net that lets that be true.
+
+#### Smoke-test re-plan after Walk #6.5
+
+1. Re-fire Margie's directive with the same curl — expect either (a) directive routed to needs-review and `/api/scheduling/send-proposal` returns "directive below threshold; pass `?override=true` to force" OR (b) override path produces a slot like Tue Jun 2 ~13:50–14:20 (after Sean 12:30 + travel + buffer) with `back-home 15:45` confirmable.
+2. Re-fire a high-confidence directive (Matt Davis fixture `31b3fac7…`, conf 1.0) — expect proposal with travel-aware slot, return-home guard visible in reasoning string.
+
+Capture results in `docs/DECISIONS.md` once verified.
+
+### Future spike — classifier semantic surgery (A + B from Walk #6.5 findings)
+
+**Not in Walk #6.5.** Separate design doc. The Margie case proved the intent taxonomy and slot-extraction code have semantic gaps:
+
+- **A. Conversation-context-aware classification.** The classifier currently reads inbound messages in isolation. "Yes. That will work." is meaningless without the previous outbound. Fix: prompt the classifier with the most recent outbound + the inbound, ask what the inbound is approving/declining/etc.
+- **B. New intent `appointment_confirmed`** + slot extraction. When the previous outbound contains a specific time/date offer AND the inbound is affirmative, classify as `appointment_confirmed` and extract the offered slot into `knownSlot`. This routes through `normalizeManualSchedule` (or a near-cousin) which bypasses `suggestSlot` entirely — Matt's offer is honored verbatim. Likely also needs a backstop: if Matt's offered slot is in the past or conflicts with a now-existing event, fall back to a regular proposal SMS.
+
+**Why not in Walk #6.5**: A+B touches the intent taxonomy, the classifier prompt, the dispatch routing, and likely creates a new directive subtype. That's a real spike, not a tweak. The confidence gate (Walk #6.5 fix C) is the safety net that lets this be deferred without risking auto-proposed garbage.
+
+**Reference data**: The Margie conversation captured above is a clean fixture for the spike's first test case.
 
 ### Walk #6 open follow-ups (non-blocking)
 
+- **Env-value newline taint sweep (5 vars).** Smoke-test surfaced that `vercel env add` reading from stdin preserves trailing `\n` in the stored value. Patched the 4 in Walk #6's hot path on 2026-05-30 (mw: `AGENT_BASE_URL`, `SCHEDULING_PROPOSAL_SECRET`; ag: `MIDDLEWARE_BASE_URL`, `SCHEDULING_PROPOSAL_SECRET`). 5 more vars are still tainted and may be silently misbehaving:
+  - middleware: `GEMINI_API_KEY` — quietly may be authenticating fine (Google tolerates trailing whitespace on API keys) but worth cleaning.
+  - agent: `QUICKBOOKS_CLIENT_ID`, `QUICKBOOKS_CLIENT_SECRET`, `QUICKBOOKS_REALM_ID`, `QUICKBOOKS_REDIRECT_URI` — same. The whole agent QB block is set to be removed when QB-optional cleanup ships (next bullet), so do not strip these; let them die with their consumer.
+  
+  Going-forward defense: always use `printf '%s' "$value" | vercel env add NAME env` (not `echo`, not heredoc). Document in repo `CLAUDE.md` after first prod incident if any recur.
 - **apps/agent prod env: make QB optional.** During Walk #6 smoke-test prep, surfaced that agent prod was missing `QUICKBOOKS_CLIENT_ID/SECRET/REALM_ID/REDIRECT_URI` since Walk 2 shipped — `/api/health` had been 500ing for weeks. Patched by mirroring values from middleware. Long-term: `apps/agent/lib/env.ts` should mark QB optional, since current Walk 1–2 + Walk 6 paths don't construct `QuickBooksClient`. Quick fix; ~15 min.
 - **Pre-existing diagnostic-surface errors flagged 2026-05-29** (Matt forwarded the texts mid-session 2026-05-30; not Walk #6-caused):
   - `deal-reconcile` Pipedrive 429 at `2026-05-29T14:00:03Z` with `windowDays=7`. The cron sequentially calls `pipedrive.createDeal`/`updateDeal`/`setDealStage` for every reconciled estimate + invoice; bursts on a 7d window hit PD's per-second cap. Fix candidates: add per-request 100–200ms throttle, batch via `pipedrive.bulkUpdate` if available, or shrink default `windowDays` to 1–2.
