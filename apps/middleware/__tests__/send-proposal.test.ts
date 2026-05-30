@@ -38,6 +38,9 @@ vi.mock('../lib/env.js', () => ({
       proposalSecret: 'shared',
       agentBaseUrl: 'https://agent.example',
     },
+    google: {
+      technicianEmails: ['mike@attackacrack.com'],
+    },
     nodeEnv: 'development',
   }),
 }));

@@ -189,4 +189,27 @@ describe('buildProposalForDirective', () => {
     expect(deps.pd.getPerson).not.toHaveBeenCalled();
     expect(result!.payload.directive.customerName).toBe('John Smith');
   });
+
+  it('passes technicianEmails through to calendar.listEvents so non-tech events do not block scheduling', async () => {
+    const deps = makeDeps({
+      technicianEmails: ['mike@attackacrack.com', 'harrringtonm@gmail.com'],
+    });
+    mockGetPendingDirective.mockResolvedValueOnce(makeDirective());
+    await buildProposalForDirective(deps, 'dir_1');
+    expect(deps.calendar.listEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attendeeEmails: ['mike@attackacrack.com', 'harrringtonm@gmail.com'],
+      }),
+    );
+  });
+
+  it('omits attendeeEmails filter (and warns) when technicianEmails is not configured', async () => {
+    const deps = makeDeps(); // no technicianEmails
+    mockGetPendingDirective.mockResolvedValueOnce(makeDirective());
+    await buildProposalForDirective(deps, 'dir_1');
+    const callArg = (deps.calendar.listEvents as unknown as {
+      mock: { calls: Array<[Record<string, unknown>]> };
+    }).mock.calls[0][0];
+    expect(callArg).not.toHaveProperty('attendeeEmails');
+  });
 });

@@ -56,6 +56,15 @@ export interface ProposalBuilderDeps {
   redis?: Redis;
   /** Override for tests. Defaults to {@link DEFAULT_HOME_ADDRESS}. */
   homeAddress?: string;
+  /**
+   * Calendar attendee emails to filter by — only events where one of these
+   * emails is in the attendee list count as "blocking" the tech's day.
+   * Should be `env.google.technicianEmails`. Empty array / undefined means
+   * no filter (returns every event on the shared calendar — usually wrong
+   * for scheduling because non-tech events like 1-on-1s and BNI would
+   * incorrectly constrain the gap walker).
+   */
+  technicianEmails?: readonly string[];
   newProposalId?: () => string;
   now?: () => Date;
 }
@@ -278,7 +287,18 @@ async function runSuggestSlot(
   try {
     const timeMin = new Date(now.getTime() - CALENDAR_LOOKBACK_BUFFER_MS).toISOString();
     const timeMax = new Date(now.getTime() + CALENDAR_LOOKAHEAD_MS).toISOString();
-    const events = await deps.calendar.listEvents({ timeMin, timeMax, maxResults: 500 });
+    const techEmails = deps.technicianEmails ?? [];
+    if (techEmails.length === 0) {
+      log.warn('proposal-builder: no technicianEmails configured; calendar gap walker will block on every event including non-tech meetings', {
+        directiveId: directive.id,
+      });
+    }
+    const events = await deps.calendar.listEvents({
+      timeMin,
+      timeMax,
+      maxResults: 500,
+      ...(techEmails.length > 0 ? { attendeeEmails: [...techEmails] } : {}),
+    });
     return await suggestSlot({ ...baseInput, existingEvents: events });
   } catch (err) {
     await logHealthError(

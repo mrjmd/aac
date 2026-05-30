@@ -77,6 +77,7 @@ export default async function handler(
         gemini: getGemini(),
         maps: getMaps(),
         redis: getRedis(),
+        technicianEmails: env.google.technicianEmails,
       },
       directiveId,
     );
