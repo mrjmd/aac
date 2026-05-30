@@ -6,6 +6,32 @@ When a decision gets reversed, ADD a new entry with the reversal — don't delet
 
 ---
 
+## 2026-05-29 — SchedulingDirective carries the full DurationPrediction, not just the hours number
+
+**Decision:** `BaseDirective` exposes two duration fields:
+- `estimatedDurationHours: number | null` — the point estimate (cluster median)
+- `durationPrediction: DurationPrediction | null` — the full prediction blob with p25/p75, cv, confidence, signals, rationale, and up to 5 similar past cases
+
+Both are populated by `normalizeQbApproval` via `@aac/quoting/estimateDuration`. `normalizeManualSchedule` leaves both null in v1 (no estimate attached at that path yet).
+
+**Why:**
+- The whole point of the duration heuristic (per the [[variance-over-hard-rules]] memory and the entry above) is to give the agent variance + concrete reference cases to reason from. Lossy-compressing the prediction to a single number at the directive layer defeats the design.
+- The directive is persisted to Redis (`scheduling:pending:{id}`) and consumed by command-center / propose-dialogue / executeDirective. Embedding the prediction means none of those consumers need to refetch the QB Estimate to re-derive the variance.
+- The prediction blob is all-primitive (point/p25/p75/cv numbers, string rationale, array of primitive `SimilarCase`s) — JSON-roundtrip safe per the directive's transport-safety invariant.
+- `estimatedDurationHours` stays on the directive as a convenience for lean consumers that just want the scheduling-window length without parsing the prediction.
+
+**Alternatives considered:**
+- **Lean directive (just the hours number).** Rejected — downstream consumers would have to refetch QB and re-classify to get variance back, losing the reference-case context.
+- **No `estimatedDurationHours` shortcut, only `durationPrediction`.** Rejected — most consumers just want the slot length; forcing every caller through `durationPrediction?.point ?? null` is friction.
+- **Materialize the prediction only at suggestSlot time.** Rejected — same refetch problem, plus it means command-center's pending-directives view can't show the prediction without an extra round-trip.
+
+**How to apply:**
+- Trigger paths that have a QB Estimate (qb_webhook, qb_reconciliation): call `estimateDuration(estimate)` once during normalization; set both fields from the result.
+- Trigger paths without an estimate yet (assessment_requested, callback_opened, most manual_schedule cases): leave both null. Don't fabricate a prediction.
+- Consumers that need variance: read `directive.durationPrediction`. Consumers that just need a slot length: read `directive.estimatedDurationHours` and treat null as "no estimate available yet."
+
+---
+
 ## 2026-05-29 — Duration heuristic: 2-category taxonomy with variance surface, not flat lookup
 
 **Decision:** `@aac/quoting/estimate-duration` will classify estimates into Matt's 2 service categories (crack injection / concrete resurfacing) — with carbon-fiber-as-add-on and floor-cracks-as-resurfacing per his post-lunch correction — and return `{ point, p25, p75, cv, similar: PastCase[], rationale, isMultiDay }` instead of a flat `{ hours: number }`. Customer-facing communication translates the internal variance into tight scheduling windows ("3–4h, most of the day").

@@ -189,6 +189,18 @@ Daily QB reconciliation cron runs once a day to catch any QB approvals the webho
 
 **Goal:** prove the system can suggest the right slot, propose it cleanly, and execute writes when Matt approves.
 
+### Build order (proposed)
+
+1. **Command-center `Scheduling` view** (`apps/command-center/app/(dashboard)/scheduling/page.tsx`) — read `scheduling:pending:list` from Redis, render each directive with intent, customer, scope, duration prediction (point + p25/p75 + cv + similar cases), confidence signals. No "Approve" button yet; pure visibility. Unblocks all subsequent work by giving Matt an audit window into what the pipeline is producing.
+2. **`@aac/scheduling/suggestSlot`** — v0: next-available slot respecting duration prediction (ignore drive time + cross-customer optimization). Reads Google Calendar via `@aac/api-clients`. Pure function — receives a `Date` for "now" and a calendar-events array.
+3. **Daily QB reconciliation cron** — small Crawl backstop; runs `qb.listRecentEstimates` filtered to Accepted, dedups against `scheduling:pending:list`, replays missing ones through `normalizeQbApproval` with `source: 'qb_reconciliation'`.
+4. **Gemini classifier extension** — add 4 new labels (`quote_approved`, `assessment_requested`, `callback_opened`, `manual_schedule`) to middleware's existing entity-extraction call. Unblocks the text/call trigger paths #2–6.
+5. **`@aac/scheduling/buildEventDescription`** — LLM-summarize scope + Quo conversation history into the calendar event body. Quality gates per [[ai-quality-gates]].
+6. **Propose-dialogue endpoint** in `apps/agent` — middleware POSTs directive + suggested slot; agent texts Matt from agent line; Matt replies approve/edit; agent calls back to middleware.
+7. **`@aac/scheduling/executeDirective`** — writes Calendar event + PD update + Quo SMS once approved. Idempotency via the directive's `id`.
+
+Each piece is independently shippable and visible from the command-center view (#1) as it lands.
+
 ### Scope
 
 - **Duration model v1** (`@aac/quoting/estimate-duration`) — codified from Crawl's duration-analysis findings
@@ -306,10 +318,17 @@ Matt reviews the summary, redirects as needed, signs off. I codify the approved 
 
 ## Open design questions
 
-- **Slot algorithm parameters** — drive-time matrix source (Google Maps? cached lookup?); max jobs per day; weekday-only or include Saturdays for callbacks; salesperson-vs-tech allocation when Edward is involved.
-- **Callback parent-deal linkage** — when a callback opens via inbound text, how does the classifier identify which past job the customer is referring to? Most recent completed job for that customer is the default heuristic; needs handling for multi-job customers.
-- **Quote scope changes** — what happens when a QB Estimate is revised after the directive is fired but before the event is created?
-- **Multi-day jobs** — slot suggestion produces a span (start day + end day) or a sequence of contiguous events?
+**Block suggestSlot v0** (need answers before/during build):
+- **Max jobs per day** — hard cap (e.g., 2 jobs)? Soft target with revenue-maximizing override? Per-tech?
+- **Weekday-only or include Saturdays for callbacks** — and for assessments? regular jobs?
+- **Salesperson-vs-tech allocation** — when Edward is in the loop, does suggestSlot need a `crewType: 'tech' | 'salesperson'` input, or does it always assume Mike+Matt-tech?
+- **Lookahead window** — how far out does suggestSlot look (2 wks? 4 wks?)? The current calendar is booking 1–2 weeks out per the [[aac-operating-model]] memory.
+
+**Defer to v1+**:
+- **Drive-time matrix source** (Google Maps Routes API? cached pairwise lookup?) — v0 ignores drive time, picks slots by duration + clear calendar window.
+- **Callback parent-deal linkage** — when callback opens via inbound text, how does the classifier identify which past job? Most-recent-completed-for-this-customer is the v0 heuristic; multi-job customers will sometimes mis-link.
+- **Quote scope changes** — Estimate revised after directive fired but before event created. Detect via QB SyncToken or re-fetch at executeDirective time.
+- **Multi-day jobs** — slot suggestion produces a span vs. a sequence of contiguous events? Dataset has none in 180d; v1 returns `isMultiDay: false` and the heuristic flag is dormant.
 - **Customer SMS tone** — LLM-personalized but how much personality? Matt-voice or neutral? See [[agent-vision]] Layer 1 (voice fidelity) for the long-term answer.
 
 ---
