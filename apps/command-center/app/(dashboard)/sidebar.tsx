@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
+  CalendarClock,
   CheckSquare,
   DollarSign,
   Users,
@@ -22,6 +23,7 @@ const nav = [
   { href: "/", label: "Dashboard", icon: Activity },
   { href: "/health", label: "System Health", icon: Activity },
   { href: "/todos", label: "To-Do", icon: CheckSquare },
+  { href: "/scheduling", label: "Scheduling", icon: CalendarClock },
   { href: "/financials", label: "Financials", icon: DollarSign },
   { href: "/leads", label: "Leads", icon: Users },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
