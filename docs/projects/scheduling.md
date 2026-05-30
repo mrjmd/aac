@@ -1,6 +1,6 @@
 # Project Spec — `@aac/scheduling` Pipeline
 
-**Status (2026-05-30):** Walks 1–6 shipped + Walk #6 smoke-test executed end-to-end (Margie Mercadante directive, dir `5390ea40…`) + **Walk #6.5 shipped (algorithm correctness bundle)**. Loop fires correctly (middleware → agent → SMS → reply → callback → command-center decision render). Latest prod deploys pre-Walk-#6.5: middleware `aac-middleware-monorepo-2k46niw6p`, agent `agent-a9c6bqjd5` (Walk #6.5 deploys land below once verified).
+**Status (2026-05-30):** Walks 1–6 shipped + Walk #6 smoke-test executed end-to-end (Margie Mercadante directive, dir `5390ea40…`) + **Walk #6.5 shipped + deployed to prod** (mw `aac-middleware-monorepo-3aprt84pq`, deployed 2026-05-30 with new `GOOGLE_MAPS_API_KEY` env reused from apps/field). Re-fire of Margie's directive against new prod fired end-to-end and returned a fresh proposal (`prop_e90f10d62cf24642`) but its slot reasoning is the v0 string `first 2h gap on 2026-06-02 within 08:00–17:00`, NOT the travel-aware string. Root cause: Margie's directive has `pdPersonId: 5590` but NO `qbCustomerId`, so `proposal-builder.fetchCustomer` returns `customerAddress: null` and `suggestSlot` correctly falls back to its v0 path. The travel algorithm itself is verified by tests; what's missing is an **address-fallback path** in `proposal-builder` for text-only directives (Margie-shaped) — pull from PD person's custom address field (hashed key `5fc7cf5d8c890fe2f7062aaabe1e9b416c851511`) when QB customer is absent. Tracked as a Walk #6.5 follow-up below.
 
 **Walk #6.5 changes (shipped 2026-05-30, single commit):**
 1. `defaultAssessmentHours: 1 → 0.5` in `packages/scheduling/src/suggest-slot.ts` `DEFAULT_POLICY`.
@@ -397,6 +397,11 @@ Capture results in `docs/DECISIONS.md` once verified.
 **Why not in Walk #6.5**: A+B touches the intent taxonomy, the classifier prompt, the dispatch routing, and likely creates a new directive subtype. That's a real spike, not a tweak. The confidence gate (Walk #6.5 fix C) is the safety net that lets this be deferred without risking auto-proposed garbage.
 
 **Reference data**: The Margie conversation captured above is a clean fixture for the spike's first test case.
+
+### Walk #6.5 open follow-ups (non-blocking)
+
+- **PD address fallback in `proposal-builder.fetchCustomer`.** Margie's directive (`source: quo_text`, no `qbCustomerId`) post-Walk-#6.5 re-fire produced a v0 slot because no address could be resolved. Fix: extend `PipedrivePerson` interface (or add a helper) to surface the custom address fields (`5fc7cf5d8c890fe2f7062aaabe1e9b416c851511` plus the `_route`/`_locality`/`_admin_area_level_1`/`_postal_code` siblings), then in `fetchCustomer` use PD address when QB customer is absent. Until this lands, only `quote_approved` directives with a linked QB customer exercise the travel-aware path; `assessment_requested` / text-only paths stay on v0. Algorithm correctness fixes #1 (0.5h) and #3 (confidence gate) are still in effect — only travel-feasibility is muted for those directives.
+- **Smoke-test re-run blocked on address fallback.** Until the PD path lands, "Margie returns travel-aware reasoning" can't be smoke-tested. To validate travel-awareness in prod sooner, fire `/api/scheduling/send-proposal` against a directive that has `qbCustomerId` (e.g., a recent QB-approval directive).
 
 ### Walk #6 open follow-ups (non-blocking)
 
