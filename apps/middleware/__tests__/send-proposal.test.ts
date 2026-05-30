@@ -19,7 +19,10 @@ vi.mock('../lib/proposal-builder.js', () => ({
 vi.mock('../lib/agent-proposal-post.js', () => ({
   postProposalToAgent: mockPostProposalToAgent,
 }));
-vi.mock('../lib/redis.js', () => ({ logHealthError: mockLogHealthError }));
+vi.mock('../lib/redis.js', () => ({
+  logHealthError: mockLogHealthError,
+  getRedis: vi.fn(),
+}));
 vi.mock('../lib/cron.js', () => ({ verifyCronAuth: mockVerifyCronAuth }));
 vi.mock('../lib/clients.js', () => ({
   getPipedrive: vi.fn(),
@@ -27,6 +30,7 @@ vi.mock('../lib/clients.js', () => ({
   getQuo: vi.fn(),
   getGemini: vi.fn(),
   getCalendar: vi.fn(),
+  getMaps: vi.fn(),
 }));
 vi.mock('../lib/env.js', () => ({
   getEnv: () => ({

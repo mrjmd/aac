@@ -1,64 +1,39 @@
 /**
  * Drive-time estimates for the tech's daily schedule.
  *
- * For the first event of the day, origin = Mike's home. For subsequent
- * events, origin = the previous event's location. Distance Matrix is called
- * once per leg (traffic-aware via `departure_time` = event start).
+ * Per-event UI orchestration: walks the day's sorted events and produces a
+ * leg arriving at each event with a location (origin = previous event's
+ * location, or home for the first), plus a final "back home" leg.
  *
- * Cached in Redis keyed by (origin, destination, day-of-week, hour) for
- * 30 days. Traffic patterns at the same hour of the same weekday are
- * stable enough that a 30-day cache is plenty; first-time loads of a
- * common origin/destination pair are slow, repeats are instant + free.
+ * The single (origin → destination, departure) lookup primitive — including
+ * the Redis cache + Distance-Matrix call — lives in `@aac/scheduling/travel-time`
+ * so suggestSlot can share it. This file only owns the per-day fan-out.
  */
 
-import { createHash } from 'node:crypto';
-
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
-import type { TravelEstimate } from '@aac/api-clients/google-maps';
+import {
+  DEFAULT_HOME_ADDRESS,
+  getTravelLeg,
+  travelLegBucketKey,
+  type TravelLeg,
+} from '@aac/scheduling';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { getMaps, getRedis } from './clients';
 
-/**
- * Default home address used when the technician hasn't saved their own
- * via /settings. Kept here so the existing single-tech experience (Mike)
- * keeps working without a migration; overridden per-user once they edit
- * the address in the UI.
- */
-export const DEFAULT_HOME_ADDRESS = '30 Randlett Street, Quincy, MA 02170';
+export { DEFAULT_HOME_ADDRESS };
 
-export interface TravelLeg {
-  /** Drive duration in seconds. */
-  durationSec: number;
-  /** Drive distance in meters. */
-  distanceMeters: number;
+export interface DayTravelLeg extends TravelLeg {
   /** True for the first leg of the day (origin = home). */
   fromHome: boolean;
 }
 
 export interface DayTravel {
   /** Leg ending at each event with a location, keyed by event ID. */
-  byEvent: Map<string, TravelLeg>;
+  byEvent: Map<string, DayTravelLeg>;
   /** Final leg: from the last event back to home. Null if no events had locations. */
-  backHome: TravelLeg | null;
+  backHome: DayTravelLeg | null;
 }
 
-function bucketKey(origin: string, destination: string, departure: Date): string {
-  const dow = departure.getUTCDay(); // 0=Sun..6=Sat in UTC; fine for a stable cache bucket
-  const hour = departure.getUTCHours();
-  const hash = createHash('sha1').update(`${origin}|${destination}|${dow}|${hour}`).digest('hex').slice(0, 16);
-  return hash;
-}
-
-/**
- * Compute drive-time legs for a sorted list of same-day events. For each
- * event with a location, returns the leg arriving at that event (origin =
- * previous event's location, or home for the first). Also returns a
- * "back home" leg from the last event's location to home, departing at
- * the last event's end time.
- *
- * Events without a `location` are skipped — they contribute no leg, but
- * we still drive from wherever Mike actually was for the next leg.
- */
 export interface ResolveTravelLegsOptions {
   /**
    * Origin for the first leg of the day and destination for the back-home
@@ -91,9 +66,6 @@ export async function resolveTravelLegs(
   let lastEventEnd: string | null = null;
   for (const evt of events) {
     if (!evt.location) continue;
-    // First event: origin = home (if known). If no home is configured, skip
-    // the "from home" leg entirely and just don't render a chip before the
-    // first event.
     if (lastLocation === null && !homeAddress) {
       lastLocation = evt.location;
       lastEventEnd = evt.end;
@@ -111,7 +83,6 @@ export async function resolveTravelLegs(
     lastEventEnd = evt.end;
   }
 
-  // Append back-home leg if a home address is configured.
   if (lastLocation && lastEventEnd && homeAddress) {
     legs.push({
       eventId: null,
@@ -124,27 +95,30 @@ export async function resolveTravelLegs(
 
   if (legs.length === 0) return out;
 
-  // Phase 1: check cache for every leg in one mget.
   const redis = getRedis();
-  const cacheKeys = legs.map((l) => keys.fieldTravelLeg(bucketKey(l.origin, l.destination, l.departure)));
-  const cached = await redis.mget<(TravelEstimate | null)[]>(...cacheKeys);
+  const cacheKeys = legs.map((l) =>
+    keys.fieldTravelLeg(travelLegBucketKey(l.origin, l.destination, l.departure)),
+  );
+  const cached = await redis.mget<(TravelLeg | null)[]>(...cacheKeys);
 
-  // Phase 2: dispatch Distance Matrix in parallel for any cache misses.
   const maps = getMaps();
-  const fetches = legs.map(async (leg, i) => {
-    if (cached[i]) return cached[i];
-    const fresh = await maps.getTravelTime(leg.origin, leg.destination, { departureTime: leg.departure });
-    if (fresh) {
-      await redis.set(cacheKeys[i], fresh, { ex: ttl.fieldTravelLeg });
-    }
-    return fresh;
-  });
-  const resolved = await Promise.all(fetches);
+  const resolved = await Promise.all(
+    legs.map(async (leg, i) => {
+      if (cached[i]) return cached[i];
+      const fresh = await maps.getTravelTime(leg.origin, leg.destination, {
+        departureTime: leg.departure,
+      });
+      if (fresh) {
+        await redis.set(cacheKeys[i], fresh, { ex: ttl.fieldTravelLeg });
+      }
+      return fresh;
+    }),
+  );
 
   legs.forEach((leg, i) => {
     const est = resolved[i];
     if (!est) return;
-    const travel: TravelLeg = {
+    const travel: DayTravelLeg = {
       durationSec: est.durationSec,
       distanceMeters: est.distanceMeters,
       fromHome: leg.fromHome,
@@ -157,6 +131,26 @@ export async function resolveTravelLegs(
   });
 
   return out;
+}
+
+/**
+ * Adapter exposed for callers (e.g., scheduling proposal-builder running in
+ * apps/middleware can adapt its own Redis client; this is the field-app
+ * wrapper around the shared `getTravelLeg`).
+ */
+export async function fieldGetTravelLeg(
+  origin: string,
+  destination: string,
+  departure: Date,
+): Promise<TravelLeg | null> {
+  const redis = getRedis();
+  return getTravelLeg(origin, destination, departure, {
+    maps: getMaps(),
+    cache: {
+      get: (key) => redis.get<TravelLeg>(key),
+      set: (key, value, ttlSec) => redis.set(key, value, { ex: ttlSec }),
+    },
+  });
 }
 
 /** "23 min" or "1h 5min" — short, mobile-friendly. */

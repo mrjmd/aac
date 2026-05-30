@@ -22,6 +22,15 @@ export interface EnvConfig {
   gemini: {
     apiKey: string | null;
   };
+  googleMaps: {
+    /**
+     * Distance Matrix key, used by suggestSlot for drive-time feasibility
+     * checks. Null = the algorithm falls back to its no-travel path with a
+     * warning (deploys without the key still produce slots, just not
+     * travel-aware ones).
+     */
+    apiKey: string | null;
+  };
   quickbooks: {
     clientId: string;
     clientSecret: string;
@@ -93,6 +102,9 @@ export function getEnv(): EnvConfig {
     },
     gemini: {
       apiKey: process.env.GEMINI_API_KEY || null,
+    },
+    googleMaps: {
+      apiKey: process.env.GOOGLE_MAPS_API_KEY || null,
     },
     quickbooks: {
       clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),

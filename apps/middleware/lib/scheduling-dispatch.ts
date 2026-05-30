@@ -36,7 +36,12 @@ import {
   type QuoCustomerIntentLabel,
   type SchedulingDirective,
 } from '@aac/scheduling';
-import { logHealthError, trackSchedulingClassification, writePendingDirective } from './redis.js';
+import {
+  logHealthError,
+  SCHEDULING_AUTO_PROPOSE_THRESHOLD,
+  trackSchedulingClassification,
+  writePendingDirective,
+} from './redis.js';
 
 const log = createLogger('scheduling-dispatch');
 
@@ -159,11 +164,16 @@ export async function dispatchSchedulingIntent(
 
       await writePendingDirective(directive);
       summary.directivesWritten++;
+      const queue =
+        directive.confidence.score >= SCHEDULING_AUTO_PROPOSE_THRESHOLD
+          ? 'pending'
+          : 'pending-review';
       log.info('Scheduling directive written', {
         directiveId: directive.id,
         intent: directive.intent,
         source: directive.source,
         confidence: directive.confidence.score,
+        queue,
       });
     } catch (err) {
       summary.errors++;

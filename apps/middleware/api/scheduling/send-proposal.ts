@@ -25,10 +25,11 @@ import {
   getQuo,
   getGemini,
   getCalendar,
+  getMaps,
 } from '../../lib/clients.js';
 import { buildProposalForDirective } from '../../lib/proposal-builder.js';
 import { postProposalToAgent } from '../../lib/agent-proposal-post.js';
-import { logHealthError } from '../../lib/redis.js';
+import { getRedis, logHealthError } from '../../lib/redis.js';
 
 const log = createLogger('send-proposal');
 
@@ -74,6 +75,8 @@ export default async function handler(
         quo: getQuo(),
         calendar: getCalendar(),
         gemini: getGemini(),
+        maps: getMaps(),
+        redis: getRedis(),
       },
       directiveId,
     );

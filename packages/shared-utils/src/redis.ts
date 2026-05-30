@@ -129,6 +129,14 @@ export const keys = {
   schedulingPendingList: 'scheduling:pending:list' as const,
 
   /**
+   * LIST of directive IDs whose classifier confidence fell below the
+   * auto-propose threshold (default 0.7). Surfaced as a separate
+   * "Needs review" section in the command-center so Matt can decide
+   * manually instead of an SMS auto-fire. LPUSH + LTRIM at 500.
+   */
+  schedulingPendingReviewList: 'scheduling:pending-review:list' as const,
+
+  /**
    * Reverse index: QB Estimate ID → directive ID. Set by `writePendingDirective`
    * when the directive carries a `qbEstimateId`. Used by the QB reconciliation
    * cron to avoid creating a duplicate directive when the webhook already did.

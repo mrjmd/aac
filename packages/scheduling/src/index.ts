@@ -24,3 +24,4 @@ export * from './replay.js';
 export * from './suggest-slot.js';
 export * from './build-event-description.js';
 export * from './proposal.js';
+export * from './travel-time.js';

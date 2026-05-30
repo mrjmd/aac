@@ -214,12 +214,24 @@ export async function writeHeartbeat(): Promise<void> {
 // ── Scheduling Pipeline ─────────────────────────────────────────────
 
 /**
+ * Confidence threshold for routing a directive onto the auto-propose path.
+ * Directives at or above this score land on `scheduling:pending:list`;
+ * below it they land on `scheduling:pending-review:list` so Matt can
+ * triage manually (no auto-fire SMS).
+ *
+ * Calibrated against the Walk #6 smoke-test (Margie's directive scored
+ * ~0.55 and shouldn't have auto-fired).
+ */
+export const SCHEDULING_AUTO_PROPOSE_THRESHOLD = 0.7;
+
+/**
  * Write a SchedulingDirective to the Crawl shadow queue.
  *
- * Stores the directive blob under `scheduling:pending:{id}` and pushes
- * its id onto the head of `scheduling:pending:list` (capped at 500 for
- * command-center display). No TTL — the queue is for review, not transient
- * state.
+ * Stores the directive blob under `scheduling:pending:{id}`. Pushes its id
+ * onto `scheduling:pending:list` when confidence ≥ {@link SCHEDULING_AUTO_PROPOSE_THRESHOLD}
+ * (the auto-propose queue), or onto `scheduling:pending-review:list`
+ * otherwise (the manual-review queue). Both lists are capped at 500 entries.
+ * No TTL — the queue is for review, not transient state.
  *
  * When the directive carries a `qbEstimateId`, also writes a reverse
  * index `scheduling:directive-by-qb-estimate:{id}` so the QB reconciliation
@@ -227,12 +239,22 @@ export async function writeHeartbeat(): Promise<void> {
  * for this estimate.
  */
 export async function writePendingDirective<
-  T extends { id: string; qbEstimateId?: string },
+  T extends {
+    id: string;
+    qbEstimateId?: string;
+    confidence?: { score: number };
+  },
 >(directive: T): Promise<void> {
   const redis = getRedis();
+  const score = directive.confidence?.score ?? 0;
+  const targetList =
+    score >= SCHEDULING_AUTO_PROPOSE_THRESHOLD
+      ? keys.schedulingPendingList
+      : keys.schedulingPendingReviewList;
+
   const writes: Promise<unknown>[] = [
     redis.set(keys.schedulingPending(directive.id), directive),
-    redis.lpush(keys.schedulingPendingList, directive.id),
+    redis.lpush(targetList, directive.id),
   ];
   if (directive.qbEstimateId) {
     writes.push(
@@ -240,7 +262,7 @@ export async function writePendingDirective<
     );
   }
   await Promise.all(writes);
-  await redis.ltrim(keys.schedulingPendingList, 0, 499);
+  await redis.ltrim(targetList, 0, 499);
 }
 
 /**

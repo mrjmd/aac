@@ -1,15 +1,16 @@
 import {
   fetchPendingDirectives,
   type DirectiveProposalDecision,
+  type PendingDirectivesResult,
 } from "@/lib/scheduling";
 import type { SchedulingDirective } from "@aac/scheduling";
 
 export const revalidate = 15;
 
 export default async function SchedulingPage() {
-  let result;
+  let queues;
   try {
-    result = await fetchPendingDirectives(100);
+    queues = await fetchPendingDirectives(100);
   } catch (error) {
     return (
       <div>
@@ -24,12 +25,53 @@ export default async function SchedulingPage() {
     );
   }
 
-  const { directives, decisionsByDirectiveId, totalIds, fetched, staleIds } = result;
-
   return (
-    <div>
-      <div className="mb-6 flex items-baseline justify-between">
+    <div className="space-y-8">
+      <div className="flex items-baseline justify-between">
         <h2 className="font-display text-2xl font-bold">Scheduling</h2>
+      </div>
+
+      <QueueSection
+        title="Auto-propose queue"
+        subtitle="Confidence ≥ 0.7 — these directives can fire a propose-dialogue SMS."
+        emptyHint="The queue is empty. High-confidence directives appear here as QB approvals and scheduling intents arrive."
+        result={queues.autoPropose}
+      />
+
+      <QueueSection
+        title="Needs review"
+        subtitle="Confidence < 0.7 — Matt should triage manually instead of auto-firing."
+        emptyHint="Nothing currently flagged for manual review."
+        result={queues.needsReview}
+        accent="amber"
+      />
+    </div>
+  );
+}
+
+function QueueSection({
+  title,
+  subtitle,
+  emptyHint,
+  result,
+  accent,
+}: {
+  title: string;
+  subtitle: string;
+  emptyHint: string;
+  result: PendingDirectivesResult;
+  accent?: "amber";
+}) {
+  const { directives, decisionsByDirectiveId, totalIds, fetched, staleIds } = result;
+  const headerColor =
+    accent === "amber" ? "text-amber-700" : "text-aac-dark";
+  return (
+    <section>
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <div>
+          <h3 className={`font-display text-lg font-semibold ${headerColor}`}>{title}</h3>
+          <p className="text-xs text-zinc-500">{subtitle}</p>
+        </div>
         <p className="text-xs text-zinc-400">
           {fetched} of {totalIds} pending
           {staleIds.length > 0 && (
@@ -41,11 +83,8 @@ export default async function SchedulingPage() {
       </div>
 
       {directives.length === 0 ? (
-        <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center">
-          <p className="font-medium text-aac-dark">No pending directives</p>
-          <p className="mt-1 text-sm text-zinc-400">
-            The queue is empty. Directives appear here as QB approvals and scheduling intents arrive.
-          </p>
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 text-center">
+          <p className="text-sm text-zinc-500">{emptyHint}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -58,7 +97,7 @@ export default async function SchedulingPage() {
           ))}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 

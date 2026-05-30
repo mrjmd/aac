@@ -14,19 +14,25 @@
  */
 
 import { randomUUID } from 'crypto';
+import type { Redis } from '@upstash/redis';
 import { createLogger } from '@aac/shared-utils/logger';
 import type { GeminiClient } from '@aac/api-clients';
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import type { GoogleMapsClient } from '@aac/api-clients/google-maps';
 import type { PipedriveClient } from '@aac/api-clients/pipedrive';
 import type { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import type { QuoClient } from '@aac/api-clients/quo';
 import {
   buildEventDescription,
+  DEFAULT_HOME_ADDRESS,
+  getTravelLeg,
   suggestSlot,
   type EventDescriptionLineItem,
   type EventDescriptionMessage,
   type ProposalPayload,
   type SchedulingDirective,
+  type SuggestSlotTravelDeps,
+  type TravelLeg,
 } from '@aac/scheduling';
 import { getPendingDirective, logHealthError } from './redis.js';
 
@@ -38,6 +44,18 @@ export interface ProposalBuilderDeps {
   quo: QuoClient;
   calendar: GoogleCalendarClient;
   gemini: GeminiClient;
+  /**
+   * Distance Matrix client. Null disables travel-aware slot search and the
+   * builder falls back to the v0 no-travel path (with a logged warning).
+   */
+  maps?: GoogleMapsClient | null;
+  /**
+   * Upstash Redis client for caching travel-leg estimates. Optional — when
+   * absent, every leg call hits Distance Matrix fresh.
+   */
+  redis?: Redis;
+  /** Override for tests. Defaults to {@link DEFAULT_HOME_ADDRESS}. */
+  homeAddress?: string;
   newProposalId?: () => string;
   now?: () => Date;
 }
@@ -80,7 +98,7 @@ export async function buildProposalForDirective(
   );
 
   // ── Slot suggestion ───────────────────────────────────────────────
-  const slotResult = await runSuggestSlot(deps, directive, now);
+  const slotResult = await runSuggestSlot(deps, directive, customerAddress, now);
 
   // ── Event description ────────────────────────────────────────────
   const description = await buildEventDescription(
@@ -247,20 +265,59 @@ async function fetchConversation(
 async function runSuggestSlot(
   deps: ProposalBuilderDeps,
   directive: SchedulingDirective,
+  customerAddress: string | null,
   now: Date,
-): Promise<ReturnType<typeof suggestSlot>> {
+): Promise<Awaited<ReturnType<typeof suggestSlot>>> {
+  const travel = buildTravelDeps(deps, directive);
+  const baseInput = {
+    directive,
+    now,
+    ...(travel ? { travel } : {}),
+    ...(customerAddress ? { customerAddress } : {}),
+  };
   try {
     const timeMin = new Date(now.getTime() - CALENDAR_LOOKBACK_BUFFER_MS).toISOString();
     const timeMax = new Date(now.getTime() + CALENDAR_LOOKAHEAD_MS).toISOString();
     const events = await deps.calendar.listEvents({ timeMin, timeMax, maxResults: 500 });
-    return suggestSlot({ directive, existingEvents: events, now });
+    return await suggestSlot({ ...baseInput, existingEvents: events });
   } catch (err) {
     await logHealthError(
       'proposal-builder',
       `Calendar listEvents failed: ${(err as Error).message}`,
       { directiveId: directive.id },
     );
-    return suggestSlot({ directive, existingEvents: [], now });
+    return await suggestSlot({ ...baseInput, existingEvents: [] });
   }
+}
+
+function buildTravelDeps(
+  deps: ProposalBuilderDeps,
+  directive: SchedulingDirective,
+): SuggestSlotTravelDeps | null {
+  if (!deps.maps) {
+    log.warn('Maps client unavailable; suggestSlot will run in no-travel mode', {
+      directiveId: directive.id,
+    });
+    return null;
+  }
+  const maps = deps.maps;
+  const redis = deps.redis;
+  const homeAddress = deps.homeAddress ?? DEFAULT_HOME_ADDRESS;
+  return {
+    homeAddress,
+    getLeg: (origin, destination, departureTime) =>
+      getTravelLeg(origin, destination, departureTime, {
+        maps,
+        ...(redis
+          ? {
+              cache: {
+                get: (key: string) => redis.get<TravelLeg>(key),
+                set: (key: string, value: TravelLeg, ttlSec: number) =>
+                  redis.set(key, value, { ex: ttlSec }),
+              },
+            }
+          : {}),
+      }),
+  };
 }
 

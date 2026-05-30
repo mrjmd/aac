@@ -2,8 +2,11 @@
  * Read pending SchedulingDirectives from Redis.
  *
  * The middleware webhook handlers write directives via
- * `writePendingDirective` — blob stored at `scheduling:pending:{id}`, id
- * pushed onto `scheduling:pending:list` (capped at 500, newest first).
+ * `writePendingDirective`. Confidence ≥ 0.7 → blob stored at
+ * `scheduling:pending:{id}`, id pushed onto `scheduling:pending:list`
+ * (the auto-propose queue, newest first). Below 0.7 → blob at the same key
+ * but id goes on `scheduling:pending-review:list` (the manual-triage queue).
+ * Both are capped at 500.
  *
  * This is the read side for the command-center scheduling view.
  */
@@ -41,15 +44,31 @@ export interface PendingDirectivesResult {
   staleIds: string[];
 }
 
+export interface PendingDirectivesByQueue {
+  autoPropose: PendingDirectivesResult;
+  needsReview: PendingDirectivesResult;
+}
+
 /**
- * Read up to `limit` most-recent pending directives.
- * Returns the parsed blobs in list order (newest first).
+ * Read up to `limit` most-recent directives from the auto-propose queue
+ * AND the needs-review queue, fanned out in parallel.
  */
 export async function fetchPendingDirectives(
   limit = 100,
+): Promise<PendingDirectivesByQueue> {
+  const [autoPropose, needsReview] = await Promise.all([
+    readQueue(keys.schedulingPendingList, limit),
+    readQueue(keys.schedulingPendingReviewList, limit),
+  ]);
+  return { autoPropose, needsReview };
+}
+
+async function readQueue(
+  listKey: string,
+  limit: number,
 ): Promise<PendingDirectivesResult> {
   const redis = getRedis();
-  const ids = await redis.lrange<string>(keys.schedulingPendingList, 0, limit - 1);
+  const ids = await redis.lrange<string>(listKey, 0, limit - 1);
 
   if (ids.length === 0) {
     return {
@@ -61,7 +80,6 @@ export async function fetchPendingDirectives(
     };
   }
 
-  // Stage 1: directive blobs + (in parallel) proposal-id reverse-index lookups
   const stage1 = redis.pipeline();
   for (const id of ids) stage1.get(keys.schedulingPending(id));
   for (const id of ids) stage1.get(keys.schedulingProposalByDirective(id));
@@ -79,7 +97,6 @@ export async function fetchPendingDirectives(
     else staleIds.push(ids[i]);
   });
 
-  // Stage 2: hydrate proposal decisions for the ids that have one
   const decisionTargets: Array<{ directiveId: string; proposalId: string }> = [];
   proposalIdResults.forEach((pid, i) => {
     if (pid) decisionTargets.push({ directiveId: ids[i], proposalId: pid });

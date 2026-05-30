@@ -15,6 +15,7 @@ import { QuoClient } from '@aac/api-clients/quo';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { GeminiClient } from '@aac/api-clients/gemini';
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import { GoogleMapsClient } from '@aac/api-clients/google-maps';
 import { getEnv } from './env.js';
 import { getQBTokens, storeQBTokens } from './redis.js';
 
@@ -23,6 +24,7 @@ let _quo: QuoClient | null = null;
 let _quickbooks: QuickBooksClient | null = null;
 let _gemini: GeminiClient | null = null;
 let _calendar: GoogleCalendarClient | null = null;
+let _maps: GoogleMapsClient | null = null;
 
 export function getPipedrive(): PipedriveClient {
   if (!_pipedrive) {
@@ -76,6 +78,15 @@ export function getGemini(): GeminiClient {
     });
   }
   return _gemini;
+}
+
+export function getMaps(): GoogleMapsClient | null {
+  if (!_maps) {
+    const env = getEnv();
+    if (!env.googleMaps.apiKey) return null;
+    _maps = new GoogleMapsClient({ apiKey: env.googleMaps.apiKey });
+  }
+  return _maps;
 }
 
 export function getCalendar(): GoogleCalendarClient {
