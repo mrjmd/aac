@@ -404,10 +404,11 @@ describe('suggestSlot — travel-aware', () => {
     });
     expect(result.travelAware).toBe(true);
     expect(result.slot).not.toBeNull();
-    // 12:30 EDT = 16:30 UTC. +80min drive +15min buffer → 18:05 UTC = 14:05 EDT.
-    expect(result.slot!.startIso).toBe('2026-06-02T18:05:00.000Z');
-    // 0.5h on-site → 14:35 EDT = 18:35 UTC.
-    expect(result.slot!.endIso).toBe('2026-06-02T18:35:00.000Z');
+    // 12:30 EDT = 16:30 UTC. +80min drive +15min buffer → 18:05 UTC = 14:05 EDT,
+    // rounded UP to the next 15-min mark → 14:15 EDT = 18:15 UTC.
+    expect(result.slot!.startIso).toBe('2026-06-02T18:15:00.000Z');
+    // 0.5h on-site → 14:45 EDT = 18:45 UTC.
+    expect(result.slot!.endIso).toBe('2026-06-02T18:45:00.000Z');
   });
 
   it('skips a day whose return-home deadline would be missed', async () => {
@@ -506,6 +507,59 @@ describe('suggestSlot — travel-aware', () => {
     expect(result.slot!.startIso.slice(0, 10)).toBe('2026-06-02');
     // Pre-fix bug: would have returned 2026-06-01T15:25:00.000Z (overlapping Sean).
     expect(result.slot!.startIso).not.toMatch(/^2026-06-01/);
+  });
+
+  it('rounds slot start UP to the next 15-minute mark even on the home-anchored first gap', async () => {
+    // Constant 17min home→customer drive. Without rounding: 8:00 + 17min = 8:17.
+    // With 15-min rounding: 8:30 (next multiple of 15 after 8:17).
+    const result = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [],
+      now: NOW,
+      customerAddress: '1 Customer St, Boston, MA',
+      travel: constantTravel(17),
+    });
+    expect(result.slot!.startIso).toBe('2026-06-02T12:30:00.000Z'); // 8:30am ET
+    expect(result.slot!.endIso).toBe('2026-06-02T13:00:00.000Z');   // 9:00am ET
+  });
+
+  it('respects custom rounding policy (5-minute step)', async () => {
+    const result = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [],
+      now: NOW,
+      customerAddress: '1 Customer St, Boston, MA',
+      travel: constantTravel(17),
+      policy: { slotStartRoundingMinutes: 5 },
+    });
+    // 8:00 + 17min = 8:17, rounded UP to nearest 5min = 8:20am ET.
+    expect(result.slot!.startIso).toBe('2026-06-02T12:20:00.000Z');
+  });
+
+  it('rejects a slot when rounding pushes it past the home-return deadline', async () => {
+    // Customer is 75min from home, 230min back. After Sean (ends 12:30 EDT),
+    // earliestStart = 12:30 + 230min + 15min buffer = 16:15. Rounded to 16:15
+    // (already aligned). 0.5h on-site → end 16:45. legBack 75min + 15 buffer →
+    // arrives 18:15 ET, past 17:30 deadline. Should skip Tue Jun 2.
+    const SEAN = '99 Sean St, Boston, MA';
+    const FAR = '1 Far Way, MA';
+    const sean = ev('2026-06-02T12:30:00Z', '2026-06-02T16:30:00Z', '10', SEAN);
+    const routes = {
+      [`${HOME} → ${FAR}`]: 75,
+      [`${FAR} → ${HOME}`]: 75,
+      [`${HOME} → ${SEAN}`]: 10,
+      [`${SEAN} → ${FAR}`]: 230,
+      [`${FAR} → ${SEAN}`]: 230,
+      [`${SEAN} → ${HOME}`]: 10,
+    };
+    const result = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [sean],
+      now: NOW,
+      customerAddress: FAR,
+      travel: routedTravel(routes),
+    });
+    expect(result.slot!.startIso.slice(0, 10)).not.toBe('2026-06-02');
   });
 
   it('skips a gap when Maps returns null for the inbound leg', async () => {

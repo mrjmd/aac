@@ -59,6 +59,14 @@ export interface SuggestSlotPolicy {
   homeReturnDeadlineHour: number;
   /** Setup/intro slack added to each travel leg (in minutes). */
   travelBufferMinutes: number;
+  /**
+   * Slot starts are rounded UP to the next multiple of this many minutes,
+   * so we don't propose appointments like "11:33 AM". Set to 0 to disable.
+   * The rounded slot is re-validated against the gap's deadline; if rounding
+   * pushes the end past the constraint, the slot is rejected and we try the
+   * next gap.
+   */
+  slotStartRoundingMinutes: number;
 }
 
 export const DEFAULT_POLICY: SuggestSlotPolicy = {
@@ -74,6 +82,7 @@ export const DEFAULT_POLICY: SuggestSlotPolicy = {
   jobColorId: '10',
   homeReturnDeadlineHour: 17.5,
   travelBufferMinutes: 15,
+  slotStartRoundingMinutes: 15,
 };
 
 // ── I/O shapes ─────────────────────────────────────────────────────
@@ -277,18 +286,20 @@ function findSlotOnDay(
   let cursor = dayStartMs;
   for (const e of dayEvents) {
     const eventStart = Math.max(e.startMs, dayStartMs);
-    if (eventStart - cursor >= durationMs) {
+    const start = roundUpToMinutes(cursor, policy.slotStartRoundingMinutes);
+    if (eventStart - start >= durationMs) {
       return {
-        startIso: new Date(cursor).toISOString(),
-        endIso: new Date(cursor + durationMs).toISOString(),
+        startIso: new Date(start).toISOString(),
+        endIso: new Date(start + durationMs).toISOString(),
       };
     }
     cursor = Math.max(cursor, Math.min(e.endMs, dayEndMs));
   }
-  if (dayEndMs - cursor >= durationMs) {
+  const start = roundUpToMinutes(cursor, policy.slotStartRoundingMinutes);
+  if (dayEndMs - start >= durationMs) {
     return {
-      startIso: new Date(cursor).toISOString(),
-      endIso: new Date(cursor + durationMs).toISOString(),
+      startIso: new Date(start).toISOString(),
+      endIso: new Date(start + durationMs).toISOString(),
     };
   }
   return null;
@@ -470,7 +481,10 @@ async function findSlotOnDayWithTravel(
     } else {
       earliestStart = Math.max(dayStartMs, prev.endMs + legToMs + bufferMs);
     }
-    const slotEnd = earliestStart + durationMs;
+    // Round UP to the nearest customer-friendly clock mark (e.g., 11:33 → 11:45).
+    // Rounding can push the slot past the deadline; re-check.
+    const slotStart = roundUpToMinutes(earliestStart, policy.slotStartRoundingMinutes);
+    const slotEnd = slotStart + durationMs;
 
     if (slotEnd > homeDeadlineMs) continue;
 
@@ -498,13 +512,32 @@ async function findSlotOnDayWithTravel(
     const fromLabel = prev.isHome ? 'home' : 'previous job';
     const toLabel = next.isHome ? 'home (back by deadline)' : 'next event';
     return {
-      startIso: new Date(earliestStart).toISOString(),
+      startIso: new Date(slotStart).toISOString(),
       endIso: new Date(slotEnd).toISOString(),
       reasoning: `${dayKey}: ${fromLabel} → customer ${legToMin}min, ${durationHours}h on-site, customer → ${toLabel} ${legBackMin}min (+${policy.travelBufferMinutes}min buffer each leg)`,
     };
   }
 
   return null;
+}
+
+// ── Rounding ───────────────────────────────────────────────────────
+
+/**
+ * Round a UTC ms timestamp UP to the nearest multiple of `step` minutes.
+ * Already-aligned timestamps pass through unchanged. step ≤ 0 disables.
+ *
+ * Slot starts are rounded so we never propose appointments like "11:33 AM" —
+ * customers expect clean clock marks. We round UP rather than to-nearest so
+ * the slot still respects the upstream computed earliest-start (rounding
+ * down would put the slot before the tech could feasibly arrive).
+ */
+function roundUpToMinutes(ms: number, step: number): number {
+  if (step <= 0) return ms;
+  const stepMs = step * 60_000;
+  const remainder = ms % stepMs;
+  if (remainder === 0) return ms;
+  return ms + (stepMs - remainder);
 }
 
 // ── Timezone + date helpers ────────────────────────────────────────
