@@ -176,9 +176,13 @@ function DirectiveCard({ directive }: { directive: SchedulingDirective }) {
 function DurationBlock({ directive }: { directive: SchedulingDirective }) {
   const p = directive.durationPrediction;
   if (!p) {
+    const reason = directive.qbEstimateId
+      ? "Directive predates the @aac/quoting wire-up. Will populate on next directive from this trigger path."
+      : "Trigger path doesn't carry a QB Estimate (e.g., assessment_requested or text-only manual_schedule).";
     return (
       <div className="mb-3 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
-        No duration prediction (path doesn&apos;t have a QB Estimate yet).
+        <p className="font-medium text-zinc-600">No duration prediction</p>
+        <p className="mt-0.5">{reason}</p>
       </div>
     );
   }
