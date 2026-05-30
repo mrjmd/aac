@@ -1,6 +1,6 @@
 # Project Spec — `@aac/scheduling` Pipeline
 
-**Status:** Crawl pipeline live in prod 2026-05-29. QB webhook verified end-to-end (real Estimate flip Pending → Accepted produced directive `960c042c-...` at confidence 1.0/5 signals). Duration heuristic codified in `@aac/quoting` and wired into `normalizeQbApproval` — directives now carry both `estimatedDurationHours` and the full `durationPrediction` (variance + similar past cases). Next: command-center pending-directives view, then Walk-phase slot suggestion + propose-dialogue.
+**Status:** Crawl pipeline live in prod 2026-05-29 with e2e verification. Duration heuristic codified in `@aac/quoting` and wired into `normalizeQbApproval` — directives carry full `durationPrediction` (variance + similar past cases). Command-center `/scheduling` view shipped — Matt has live visibility on the queue. **Walk piece #2 (suggestSlot v0) is the next concrete build.**
 **Owner:** Matt
 **Package home:** `packages/scheduling/`
 **Related package:** `packages/quoting/` (duration estimation lives here)
@@ -162,7 +162,7 @@ Daily QB reconciliation cron runs once a day to catch any QB approvals the webho
 | 4 | Gemini classifier extension (4 new labels: `quote_approved`, `assessment_requested`, `callback_opened`, `manual_schedule`) | `apps/middleware` | ⏳ pending |
 | 5 | `normalizeManualSchedule(deps, classification, customer) → directive` | `@aac/scheduling` | ✅ shipped (13 tests) |
 | 6 | Shadow queue: write directives to Redis `scheduling:pending:{id}` + `scheduling:pending:list` | `apps/middleware` (`writePendingDirective`) | ✅ shipped |
-| 6b | Command-center pending-directives view | `apps/command-center` | ⏳ pending |
+| 6b | Command-center pending-directives view | `apps/command-center` | ✅ shipped 2026-05-29 (`/scheduling` route — reads `scheduling:pending:list`, renders intent + event-class chip + customer + scope + full `durationPrediction` with similar-cases collapsible + confidence chips + raw JSON; sidebar entry between To-Do and Financials) |
 | 7 | **Backtest harness** (90-day window) — replay past Quo + QB events through classifier+normalizer, diff against actual outcome | `tools/src/scheduling-backtest.ts` + `@aac/scheduling/replay` | ✅ scaffolded (8 tests, QB path live; manual-schedule path stub until #4 ships) |
 | 8 | **Duration analysis** — join 180-day QB Estimates with calendar events, cluster by service-line + size, produce summary + reference data | `tools/src/scratch/spike-duration-analysis.ts` + `tools/src/scratch/reclassify-and-drill.ts` + `tools/src/scratch/spike-output/duration-analysis-<date>.{md,json}` | ✅ spike complete (n=54 reliable pairs at 180d, classifier refined per Matt's 2-category taxonomy with warranty-boilerplate stripper) |
 | 8b | **Duration heuristic codification** — ship `@aac/quoting/estimate-duration` and wire into normalizer | `packages/quoting/src/{classify-scope,estimate-duration}.ts` + `packages/quoting/data/duration-reference-2026-05-29.json` + `packages/scheduling/src/normalize-qb-approval.ts` | ✅ complete 2026-05-29; 34 quoting tests + updated scheduling tests passing; directives now carry full `durationPrediction` blob |
@@ -189,10 +189,10 @@ Daily QB reconciliation cron runs once a day to catch any QB approvals the webho
 
 **Goal:** prove the system can suggest the right slot, propose it cleanly, and execute writes when Matt approves.
 
-### Build order (proposed)
+### Build order
 
-1. **Command-center `Scheduling` view** (`apps/command-center/app/(dashboard)/scheduling/page.tsx`) — read `scheduling:pending:list` from Redis, render each directive with intent, customer, scope, duration prediction (point + p25/p75 + cv + similar cases), confidence signals. No "Approve" button yet; pure visibility. Unblocks all subsequent work by giving Matt an audit window into what the pipeline is producing.
-2. **`@aac/scheduling/suggestSlot`** — v0: next-available slot respecting duration prediction (ignore drive time + cross-customer optimization). Reads Google Calendar via `@aac/api-clients`. Pure function — receives a `Date` for "now" and a calendar-events array.
+1. **Command-center `Scheduling` view** (`apps/command-center/app/(dashboard)/scheduling/page.tsx` + `lib/scheduling.ts`) — ✅ shipped 2026-05-29. Reads `scheduling:pending:list` from Redis, renders each directive with intent + event-class chip + customer + scope (line-clamped with show-more) + full `durationPrediction` (point/p25-p75/cv/confidence/rationale/up-to-5-similar-cases collapsible) + confidence bar with signal chips + raw-JSON disclosure for debugging. Sidebar entry between To-Do and Financials. Gracefully handles legacy directives that predate the heuristic wire-up by showing "No duration prediction" instead of failing.
+2. **`@aac/scheduling/suggestSlot`** — v0: next-available slot respecting duration prediction (ignore drive time + cross-customer optimization). Reads Google Calendar via `@aac/api-clients`. Pure function — receives a `Date` for "now" and a calendar-events array. Policies locked per [[project-scheduling-v0-policies]]: soft 2 jobs/day, no Saturdays by default, 21-day lookahead.
 3. **Daily QB reconciliation cron** — small Crawl backstop; runs `qb.listRecentEstimates` filtered to Accepted, dedups against `scheduling:pending:list`, replays missing ones through `normalizeQbApproval` with `source: 'qb_reconciliation'`.
 4. **Gemini classifier extension** — add 4 new labels (`quote_approved`, `assessment_requested`, `callback_opened`, `manual_schedule`) to middleware's existing entity-extraction call. Unblocks the text/call trigger paths #2–6.
 5. **`@aac/scheduling/buildEventDescription`** — LLM-summarize scope + Quo conversation history into the calendar event body. Quality gates per [[ai-quality-gates]].
