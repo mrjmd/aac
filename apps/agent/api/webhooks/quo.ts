@@ -26,11 +26,14 @@ import { getQuo } from '../../lib/clients.js';
 import {
   appendAgentAuditEntry,
   markAgentQuoEventProcessed,
+  getActiveProposalForOwner,
+  clearActiveProposalForOwner,
 } from '../../lib/redis.js';
 import {
   handleInboundAgentMessage,
   type ParsedInboundEvent,
 } from '../../lib/inbound-handler.js';
+import { postProposalDecision } from '../../lib/middleware-callback.js';
 
 const log = createLogger('agent:quo-webhook');
 
@@ -165,6 +168,15 @@ export async function POST(request: Request): Promise<Response> {
       audit: appendAgentAuditEntry,
       agentPhoneNumber: env.quo.agentPhoneNumber,
       roleMap: env.userRoles,
+      proposalReply: {
+        getActiveProposalForOwner,
+        clearActiveProposalForOwner,
+        postDecisionCallback: (payload) =>
+          postProposalDecision(payload, {
+            middlewareBaseUrl: env.scheduling.middlewareBaseUrl,
+            proposalSecret: env.scheduling.proposalSecret,
+          }),
+      },
     });
 
     return json({ status: 'processed', decision: result.decision });

@@ -23,3 +23,4 @@ export * from './resolve-callback-parent.js';
 export * from './replay.js';
 export * from './suggest-slot.js';
 export * from './build-event-description.js';
+export * from './proposal.js';

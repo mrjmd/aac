@@ -1,4 +1,7 @@
-import { fetchPendingDirectives } from "@/lib/scheduling";
+import {
+  fetchPendingDirectives,
+  type DirectiveProposalDecision,
+} from "@/lib/scheduling";
 import type { SchedulingDirective } from "@aac/scheduling";
 
 export const revalidate = 15;
@@ -21,7 +24,7 @@ export default async function SchedulingPage() {
     );
   }
 
-  const { directives, totalIds, fetched, staleIds } = result;
+  const { directives, decisionsByDirectiveId, totalIds, fetched, staleIds } = result;
 
   return (
     <div>
@@ -47,7 +50,11 @@ export default async function SchedulingPage() {
       ) : (
         <div className="space-y-4">
           {directives.map((d) => (
-            <DirectiveCard key={d.id} directive={d} />
+            <DirectiveCard
+              key={d.id}
+              directive={d}
+              decision={decisionsByDirectiveId[d.id] ?? null}
+            />
           ))}
         </div>
       )}
@@ -70,7 +77,13 @@ const intentLabels: Record<SchedulingDirective["intent"], string> = {
   manual_schedule: "Manual schedule",
 };
 
-function DirectiveCard({ directive }: { directive: SchedulingDirective }) {
+function DirectiveCard({
+  directive,
+  decision,
+}: {
+  directive: SchedulingDirective;
+  decision: DirectiveProposalDecision | null;
+}) {
   const created = new Date(directive.createdAt);
   return (
     <article className="rounded-2xl border border-zinc-200 bg-white p-5">
@@ -87,6 +100,7 @@ function DirectiveCard({ directive }: { directive: SchedulingDirective }) {
           {directive.eventClass}
         </span>
         <span className="text-xs text-zinc-400">{directive.source}</span>
+        {decision && <DecisionChip decision={decision} />}
         <span className="ml-auto text-xs text-zinc-400" title={directive.createdAt}>
           {created.toLocaleString("en-US", {
             month: "short",
@@ -96,6 +110,8 @@ function DirectiveCard({ directive }: { directive: SchedulingDirective }) {
           })}
         </span>
       </header>
+
+      {decision && <DecisionBlock decision={decision} />}
 
       {/* Customer + entity refs */}
       <div className="mb-3 grid gap-2 sm:grid-cols-2">
@@ -247,6 +263,67 @@ function DurationBlock({ directive }: { directive: SchedulingDirective }) {
           </ul>
         </details>
       )}
+    </div>
+  );
+}
+
+// ── Decision block ────────────────────────────────────────────────
+
+const decisionStyles: Record<DirectiveProposalDecision["decision"], string> = {
+  approved: "bg-emerald-100 text-emerald-700",
+  rejected: "bg-rose-100 text-rose-700",
+  edit: "bg-amber-100 text-amber-700",
+};
+
+const decisionLabels: Record<DirectiveProposalDecision["decision"], string> = {
+  approved: "Matt approved",
+  rejected: "Matt rejected",
+  edit: "Matt edit",
+};
+
+function DecisionChip({ decision }: { decision: DirectiveProposalDecision }) {
+  return (
+    <span
+      className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+        decisionStyles[decision.decision]
+      }`}
+      title={`Decided at ${decision.decidedAt}`}
+    >
+      {decisionLabels[decision.decision]}
+    </span>
+  );
+}
+
+function DecisionBlock({ decision }: { decision: DirectiveProposalDecision }) {
+  const decidedAt = new Date(decision.decidedAt);
+  return (
+    <div
+      className={`mb-3 rounded-lg border p-3 text-sm ${
+        decision.decision === "approved"
+          ? "border-emerald-200 bg-emerald-50"
+          : decision.decision === "rejected"
+            ? "border-rose-200 bg-rose-50"
+            : "border-amber-200 bg-amber-50"
+      }`}
+    >
+      <div className="mb-1 flex items-baseline gap-2">
+        <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+          Proposal reply
+        </p>
+        <span className="text-xs text-zinc-500">
+          {decidedAt.toLocaleString("en-US", {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })}
+        </span>
+      </div>
+      <p className="whitespace-pre-wrap text-aac-dark">
+        {decision.replyText.trim() || (
+          <span className="italic text-zinc-400">(empty reply)</span>
+        )}
+      </p>
     </div>
   );
 }

@@ -7,21 +7,30 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const {
   markAgentQuoEventProcessed,
   appendAgentAuditEntry,
+  getActiveProposalForOwner,
+  clearActiveProposalForOwner,
   getQuo,
   handleInboundAgentMessage,
+  postProposalDecision,
 } = vi.hoisted(() => ({
   markAgentQuoEventProcessed: vi.fn(),
   appendAgentAuditEntry: vi.fn(),
+  getActiveProposalForOwner: vi.fn(),
+  clearActiveProposalForOwner: vi.fn(),
   getQuo: vi.fn(),
   handleInboundAgentMessage: vi.fn(),
+  postProposalDecision: vi.fn(),
 }));
 
 vi.mock('../lib/redis.js', () => ({
   markAgentQuoEventProcessed,
   appendAgentAuditEntry,
+  getActiveProposalForOwner,
+  clearActiveProposalForOwner,
 }));
 vi.mock('../lib/clients.js', () => ({ getQuo }));
 vi.mock('../lib/inbound-handler.js', () => ({ handleInboundAgentMessage }));
+vi.mock('../lib/middleware-callback.js', () => ({ postProposalDecision }));
 
 import { POST } from '../api/webhooks/quo.js';
 import { resetEnvCache } from '../lib/env.js';

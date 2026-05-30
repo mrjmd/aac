@@ -43,6 +43,20 @@ export interface EnvConfig {
   cron: {
     secret: string | null;
   };
+  scheduling: {
+    /**
+     * Shared secret for the middleware ↔ agent proposal handshake. The
+     * middleware POSTs proposals to the agent endpoint with this header;
+     * the agent POSTs decision callbacks back with the same. Null in dev
+     * = both endpoints refuse.
+     */
+    proposalSecret: string | null;
+    /**
+     * Base URL of the apps/agent endpoint, used when firing a proposal.
+     * e.g. https://aac-agent.vercel.app
+     */
+    agentBaseUrl: string | null;
+  };
   redis: {
     url: string;
     token: string;
@@ -102,6 +116,10 @@ export function getEnv(): EnvConfig {
     },
     cron: {
       secret: process.env.CRON_SECRET || null,
+    },
+    scheduling: {
+      proposalSecret: process.env.SCHEDULING_PROPOSAL_SECRET || null,
+      agentBaseUrl: process.env.AGENT_BASE_URL || null,
     },
     redis: {
       url: requireEnv('UPSTASH_REDIS_REST_URL'),

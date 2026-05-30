@@ -150,6 +150,40 @@ export const keys = {
   schedulingDirectivesFromQuo: (eventType: string, day: string) =>
     `scheduling:directives-from-quo:${eventType}:${day}` as const,
 
+  /**
+   * Active scheduling proposal sent to the agent line. Written by the agent's
+   * proposals endpoint when middleware pushes a proposal. JSON blob with
+   * directive id + slot + reasoning + draft event description + SMS id +
+   * owner phone. 24h TTL. Reverse-keyed by `agentActiveProposalForOwner`.
+   */
+  agentProposal: (proposalId: string) => `agent:proposal:${proposalId}` as const,
+
+  /**
+   * Reverse index for the owner's currently-active scheduling proposal.
+   * Single value (proposalId) per owner phone so the inbound reply router
+   * can find the proposal Matt's reply targets. 24h TTL.
+   */
+  agentActiveProposalForOwner: (ownerPhoneE164: string) =>
+    `agent:active-proposal:${ownerPhoneE164}` as const,
+
+  /**
+   * Decision made by Matt on a scheduling proposal. Written by the middleware
+   * proposal-decision endpoint when the agent calls back. JSON blob with
+   * decision (approved/rejected/edit) + replyText + decidedAt. Read by the
+   * command-center scheduling view to surface decisions next to each
+   * directive. 30d TTL.
+   */
+  schedulingProposalDecision: (proposalId: string) =>
+    `scheduling:proposal-decision:${proposalId}` as const,
+
+  /**
+   * Reverse index: directive ID → most recent proposal ID. Used by the
+   * command-center to look up a directive's decision without a scan.
+   * 30d TTL.
+   */
+  schedulingProposalByDirective: (directiveId: string) =>
+    `scheduling:proposal-by-directive:${directiveId}` as const,
+
   // ── Agent (Conversational Operations Runtime) ──────────────────────
 
   /** Per-cron-job cursor (e.g. last surfaced error ID in error-surface tick). No TTL. */
@@ -180,4 +214,6 @@ export const ttl = {
   fieldOAuthState: 600,      // 10 minutes (just long enough to complete the redirect)
   fieldEventCustomer: 86_400, // 24h — PD address edits propagate within a day
   fieldTravelLeg: 2_592_000, // 30d — driving patterns at the same hour-of-week don't change fast
+  agentProposal: 86_400,     // 24h — Matt either responds same day or we move on
+  schedulingProposalDecision: 2_592_000, // 30d — kept for command-center retro view
 } as const;

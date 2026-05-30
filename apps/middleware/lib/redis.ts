@@ -255,6 +255,60 @@ export async function getDirectiveIdByEstimate(
   return (await redis.get<string>(keys.schedulingDirectiveByEstimate(qbEstimateId))) ?? null;
 }
 
+/**
+ * Read a single SchedulingDirective from the shadow queue by id. Used by
+ * the admin send-proposal trigger and the proposal-decision endpoint to
+ * look up the directive in context.
+ */
+export async function getPendingDirective<T = unknown>(
+  directiveId: string,
+): Promise<T | null> {
+  const redis = getRedis();
+  return (await redis.get<T>(keys.schedulingPending(directiveId))) ?? null;
+}
+
+/**
+ * Record the proposal decision posted back by the agent. Stores the
+ * decision blob with a 30-day TTL and a reverse index from directive id
+ * → proposal id, so the command-center can show the decision next to
+ * each pending directive.
+ */
+export interface RecordedProposalDecision {
+  proposalId: string;
+  directiveId: string;
+  decision: 'approved' | 'rejected' | 'edit';
+  replyText: string;
+  decidedAt: string;
+  recordedAt: string;
+}
+
+export async function recordProposalDecision(
+  payload: RecordedProposalDecision,
+): Promise<void> {
+  const redis = getRedis();
+  await Promise.all([
+    redis.set(keys.schedulingProposalDecision(payload.proposalId), payload, {
+      ex: ttl.schedulingProposalDecision,
+    }),
+    redis.set(keys.schedulingProposalByDirective(payload.directiveId), payload.proposalId, {
+      ex: ttl.schedulingProposalDecision,
+    }),
+  ]);
+}
+
+export async function getProposalDecisionForDirective(
+  directiveId: string,
+): Promise<RecordedProposalDecision | null> {
+  const redis = getRedis();
+  const proposalId = await redis.get<string>(
+    keys.schedulingProposalByDirective(directiveId),
+  );
+  if (!proposalId) return null;
+  return (await redis.get<RecordedProposalDecision>(
+    keys.schedulingProposalDecision(proposalId),
+  )) ?? null;
+}
+
 // ── Cron Job Tracking ───────────────────────────────────────────────
 
 /**

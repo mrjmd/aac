@@ -42,6 +42,19 @@ export interface AgentEnvConfig {
   cron: {
     secret: string | null;
   };
+  scheduling: {
+    /**
+     * Shared HMAC-shaped secret used to authenticate proposal posts
+     * (middleware → agent) and decision callbacks (agent → middleware).
+     * Same value set on both apps. Null in dev = endpoints refuse.
+     */
+    proposalSecret: string | null;
+    /**
+     * Base URL of the middleware app, used by the agent to POST decision
+     * callbacks. e.g. https://aac-middleware-monorepo.vercel.app
+     */
+    middlewareBaseUrl: string | null;
+  };
   redis: {
     url: string;
     token: string;
@@ -89,6 +102,10 @@ export function getEnv(): AgentEnvConfig {
     userRoles: parseAgentUserRoles(process.env.AGENT_USER_ROLES),
     cron: {
       secret: process.env.CRON_SECRET || null,
+    },
+    scheduling: {
+      proposalSecret: process.env.SCHEDULING_PROPOSAL_SECRET || null,
+      middlewareBaseUrl: process.env.MIDDLEWARE_BASE_URL || null,
     },
     redis: {
       url: requireEnv('UPSTASH_REDIS_REST_URL'),

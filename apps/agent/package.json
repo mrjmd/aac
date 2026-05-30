@@ -15,6 +15,7 @@
   "dependencies": {
     "@aac/agent-tools": "workspace:*",
     "@aac/api-clients": "workspace:*",
+    "@aac/scheduling": "workspace:*",
     "@aac/shared-utils": "workspace:*",
     "@upstash/redis": "^1.28.0",
     "@vercel/node": "^5"

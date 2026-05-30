@@ -158,4 +158,81 @@ describe('handleInboundAgentMessage', () => {
     );
     expect(result.decision).toBe('ack');
   });
+
+  // ── Walk #6.2: proposal reply routing ─────────────────────────────
+
+  it('routes owner reply to proposal-reply path when an active proposal exists', async () => {
+    const activeProposal = {
+      proposalId: 'prop_99',
+      directive: {
+        id: 'dir_99',
+        intent: 'quote_approved' as const,
+        eventClass: 'job' as const,
+        customerName: 'John Smith',
+        customerPhone: '+16175550123',
+        scopeSummary: 'crack injection',
+      },
+      slot: {
+        startIso: '2026-06-02T13:00:00.000Z',
+        endIso: '2026-06-02T17:00:00.000Z',
+        reasoning: 'next available',
+      },
+      eventDescription: '...',
+      descriptionUsedFallback: false,
+      createdAt: '2026-05-30T12:00:00.000Z',
+      ownerPhoneE164: MATT,
+      smsId: 'sms_orig',
+    };
+    const proposalReply = {
+      getActiveProposalForOwner: vi.fn().mockResolvedValue(activeProposal),
+      clearActiveProposalForOwner: vi.fn().mockResolvedValue(undefined),
+      postDecisionCallback: vi.fn().mockResolvedValue(true),
+    };
+    const deps = makeDeps({ proposalReply });
+    const result = await handleInboundAgentMessage(
+      makeEvent({ body: 'yes', eventId: 'evt_propreply_1' }),
+      deps,
+    );
+    expect(result.decision).toBe('proposal_decision');
+    expect(proposalReply.getActiveProposalForOwner).toHaveBeenCalledWith(MATT);
+    expect(proposalReply.postDecisionCallback).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'approved', proposalId: 'prop_99' }),
+    );
+    expect(proposalReply.clearActiveProposalForOwner).toHaveBeenCalledWith(MATT);
+    // The reply ack went via deps.quo.sendMessage (inside handleProposalReply)
+    expect(deps.quo.sendMessage).toHaveBeenCalled();
+    const audited = (deps.audit as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(audited.decision).toBe('proposal_decision');
+    expect(audited.replyText).toContain('approved');
+  });
+
+  it('falls through to the intent router when no active proposal exists', async () => {
+    const proposalReply = {
+      getActiveProposalForOwner: vi.fn().mockResolvedValue(null),
+      clearActiveProposalForOwner: vi.fn(),
+      postDecisionCallback: vi.fn(),
+    };
+    const deps = makeDeps({ proposalReply });
+    const result = await handleInboundAgentMessage(
+      makeEvent({ body: 'check the Davis deal', eventId: 'evt_propreply_2' }),
+      deps,
+    );
+    expect(result.decision).toBe('ack');
+    expect(proposalReply.getActiveProposalForOwner).toHaveBeenCalledOnce();
+    expect(proposalReply.postDecisionCallback).not.toHaveBeenCalled();
+  });
+
+  it('does NOT consult proposal-reply for non-owner roles even when configured', async () => {
+    const proposalReply = {
+      getActiveProposalForOwner: vi.fn(),
+      clearActiveProposalForOwner: vi.fn(),
+      postDecisionCallback: vi.fn(),
+    };
+    const deps = makeDeps({ proposalReply });
+    await handleInboundAgentMessage(
+      makeEvent({ from: MIKE, body: 'yes', eventId: 'evt_propreply_3' }),
+      deps,
+    );
+    expect(proposalReply.getActiveProposalForOwner).not.toHaveBeenCalled();
+  });
 });

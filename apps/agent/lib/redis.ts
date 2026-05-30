@@ -11,6 +11,7 @@ import { Redis } from '@upstash/redis';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { createLogger } from '@aac/shared-utils/logger';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
+import type { StoredProposal } from '@aac/scheduling';
 import { getEnv } from './env.js';
 import type { AgentRole } from './roles.js';
 
@@ -143,7 +144,9 @@ export type AgentAuditDecision =
   | 'unknown_caller'
   | 'duplicate'
   | 'wrong_line'
-  | 'unsupported_event';
+  | 'unsupported_event'
+  | 'proposal_received'
+  | 'proposal_decision';
 
 export interface AgentAuditEntry {
   /** ISO 8601 timestamp of when the agent processed the event */
@@ -163,6 +166,65 @@ export interface AgentAuditEntry {
 }
 
 const AGENT_AUDIT_TEXT_MAX = 500;
+
+// ── Scheduling proposals ────────────────────────────────────────────
+//
+// Middleware POSTs a proposal here; we stash it, send Matt the SMS, and
+// wait for his reply. Matt's reply lands on the existing quo-webhook;
+// the inbound handler looks up the active proposal for his phone, calls
+// the proposal-reply module, which calls back to middleware.
+
+/**
+ * Store a proposal AND set the reverse index pointing to it. Both keys
+ * carry the 24h TTL — Matt typically replies same day; stale proposals
+ * just expire. Returns whether this proposal id is new (true) or an
+ * idempotent retry from middleware (false).
+ */
+export async function writeProposal(proposal: StoredProposal): Promise<boolean> {
+  const redis = getRedis();
+  const stored = await redis.set(
+    keys.agentProposal(proposal.proposalId),
+    JSON.stringify(proposal),
+    { nx: true, ex: ttl.agentProposal },
+  );
+  if (stored !== 'OK') return false;
+  // Overwrite the active pointer: newest proposal wins. The previous
+  // proposal stays addressable by id but won't be the default target of
+  // Matt's reply. This is intentional simplicity for Walk #6.
+  await redis.set(
+    keys.agentActiveProposalForOwner(proposal.ownerPhoneE164),
+    proposal.proposalId,
+    { ex: ttl.agentProposal },
+  );
+  return true;
+}
+
+export async function getProposalById(proposalId: string): Promise<StoredProposal | null> {
+  const redis = getRedis();
+  const raw = await redis.get<string | StoredProposal>(keys.agentProposal(proposalId));
+  if (!raw) return null;
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw) as StoredProposal;
+    } catch (err) {
+      log.warn('Failed to parse stored proposal', { proposalId, err: (err as Error).message });
+      return null;
+    }
+  }
+  return raw;
+}
+
+export async function getActiveProposalForOwner(ownerPhoneE164: string): Promise<StoredProposal | null> {
+  const redis = getRedis();
+  const proposalId = await redis.get<string>(keys.agentActiveProposalForOwner(ownerPhoneE164));
+  if (!proposalId) return null;
+  return getProposalById(proposalId);
+}
+
+export async function clearActiveProposalForOwner(ownerPhoneE164: string): Promise<void> {
+  const redis = getRedis();
+  await redis.del(keys.agentActiveProposalForOwner(ownerPhoneE164));
+}
 
 export async function appendAgentAuditEntry(entry: AgentAuditEntry): Promise<void> {
   const safeInbound =

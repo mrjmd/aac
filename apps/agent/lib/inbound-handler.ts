@@ -17,8 +17,13 @@
 
 import { createLogger } from '@aac/shared-utils/logger';
 import { normalizePhone } from '@aac/shared-utils/phone';
+import type {
+  ProposalDecisionPayload,
+  StoredProposal,
+} from '@aac/scheduling';
 import { lookupRole, type AgentRole } from './roles.js';
 import { routeIntent } from './intent-router.js';
+import { handleProposalReply } from './proposal-reply.js';
 import type { AgentAuditDecision, AgentAuditEntry } from './redis.js';
 
 const log = createLogger('agent:inbound');
@@ -53,11 +58,22 @@ export interface InboundDeps {
   roleMap: Record<string, AgentRole>;
   /** Test seam for deterministic timestamps */
   now?: () => Date;
+  /**
+   * Optional proposal reply hook (Walk #6.2). When provided and the
+   * sender is the owner with an active scheduling proposal in flight,
+   * the handler routes to the proposal reply path BEFORE the generic
+   * intent router. Leave undefined to disable (e.g. early tests).
+   */
+  proposalReply?: {
+    getActiveProposalForOwner(ownerPhoneE164: string): Promise<StoredProposal | null>;
+    clearActiveProposalForOwner(ownerPhoneE164: string): Promise<void>;
+    postDecisionCallback(payload: ProposalDecisionPayload): Promise<boolean>;
+  };
 }
 
 export type InboundResult = {
   decision: AgentAuditDecision;
-  /** Reply text actually sent, when decision is `ack` */
+  /** Reply text actually sent, when decision is `ack` or `proposal_decision` */
   replyText?: string;
 };
 
@@ -136,6 +152,33 @@ export async function handleInboundAgentMessage(
       eventId: event.eventId,
     });
     return { decision: 'unknown_caller' };
+  }
+
+  // ── 3.5. Proposal reply path (Walk #6.2) ─────────────────────────
+  // If the sender is the owner AND there's an active proposal awaiting
+  // their reply, route there before the generic intent router. We only
+  // short-circuit on owner role — proposals are owner-targeted today.
+  if (role === 'owner' && deps.proposalReply) {
+    const proposal = await deps.proposalReply.getActiveProposalForOwner(senderE164);
+    if (proposal) {
+      const result = await handleProposalReply(proposal, event.body, {
+        quo: deps.quo,
+        clearActiveProposalForOwner: deps.proposalReply.clearActiveProposalForOwner,
+        postDecisionCallback: deps.proposalReply.postDecisionCallback,
+        agentPhoneNumber: deps.agentPhoneNumber,
+        now: deps.now,
+      });
+      await deps.audit({
+        timestamp,
+        caller: senderE164,
+        role,
+        inboundText: event.body,
+        decision: 'proposal_decision',
+        replyText: `${result.decision}${result.callbackOk ? '' : ' (callback failed)'} → ${result.replyText}`,
+        eventId: event.eventId,
+      });
+      return { decision: 'proposal_decision', replyText: result.replyText };
+    }
   }
 
   // ── 4. Route through the intent router ────────────────────────────
