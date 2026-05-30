@@ -473,6 +473,41 @@ describe('suggestSlot — travel-aware', () => {
     expect(result.slot!.endIso).toBe('2026-06-02T12:30:00.000Z');
   });
 
+  it('merges overlapping events into one busy span (no phantom gap inside the long event)', async () => {
+    // Mon Jun 1 calendar: Sean 8:30am–4:30pm at SEAN, Ed 1-on-1 9:30–10am at HOME.
+    // The 1-on-1 nests inside Sean's day. Pre-merge, the gap walker would mistake
+    // 10:00 → 17:30 for a free 7.5h window. Post-merge, the span is [8:30, 16:30]
+    // and the only gap after is [16:30, 17:30] — a single hour, can't fit a 0.5h
+    // assessment in a faraway customer (drive eats it).
+    const SEAN = '99 Sean St, Boston, MA';
+    const FALMOUTH = '5 Customer Way, Falmouth, MA';
+    const sean = ev('2026-06-01T12:30:00Z', '2026-06-01T20:30:00Z', '10', SEAN);
+    const ed = ev('2026-06-01T13:30:00Z', '2026-06-01T14:00:00Z', '3'); // no location → HOME proxy
+    const routes = {
+      [`${HOME} → ${FALMOUTH}`]: 90,
+      [`${FALMOUTH} → ${HOME}`]: 90,
+      [`${SEAN} → ${FALMOUTH}`]: 80,
+      [`${FALMOUTH} → ${SEAN}`]: 80,
+      [`${HOME} → ${SEAN}`]: 10,
+      [`${SEAN} → ${HOME}`]: 10,
+    };
+    const monNow = new Date('2026-05-31T13:00:00.000Z'); // Sunday — earliestDay=Mon
+    const result = await suggestSlot({
+      directive: assessment({ id: '01HQOVERLAP' }),
+      existingEvents: [sean, ed],
+      now: monNow,
+      customerAddress: FALMOUTH,
+      travel: routedTravel(routes),
+    });
+    // Mon Jun 1 can't fit (Sean's span fills until 16:30, customer is 80min away,
+    // so earliest start = 16:30 + 80 + 15 = 18:05 — past 17:30). Algorithm must
+    // skip to Tue Jun 2.
+    expect(result.slot).not.toBeNull();
+    expect(result.slot!.startIso.slice(0, 10)).toBe('2026-06-02');
+    // Pre-fix bug: would have returned 2026-06-01T15:25:00.000Z (overlapping Sean).
+    expect(result.slot!.startIso).not.toMatch(/^2026-06-01/);
+  });
+
   it('skips a gap when Maps returns null for the inbound leg', async () => {
     // Empty calendar; getLeg returns null → all gaps skipped → result null.
     const travel: SuggestSlotTravelDeps = {

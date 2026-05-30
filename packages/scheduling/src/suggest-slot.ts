@@ -297,11 +297,20 @@ function findSlotOnDay(
 /**
  * Travel-aware day search.
  *
- * Synthesizes "home" fences at both ends of the day, then walks each gap
- * between consecutive fences (home → first event, between events, last
- * event → home). For each gap:
- *   prev_location = previous fence's location (HOME or previous event)
- *   next_location = next fence's location (HOME or next event)
+ * Merges overlapping events into busy spans, then walks each free gap
+ * between consecutive busy spans (home anchor at both ends of the day).
+ * The merge is essential — without it, a long event (e.g. an 8-hour job)
+ * with a short 1-on-1 nested inside it sorts as two separate fences and
+ * the walker mistakes the post-1-on-1 portion of the long job for a free
+ * gap.
+ *
+ * For each gap:
+ *   prev_location = previous span's representative location (HOME or
+ *                   whichever overlapping event ends latest with a non-empty
+ *                   `location`)
+ *   next_location = next span's representative location (HOME or whichever
+ *                   overlapping event starts earliest with a non-empty
+ *                   `location`)
  *   leg_to    = drive(prev_location → customer, departing prev.end)
  *   slot_start = (prev=home) workStart + leg_to
  *                else        max(workStart, prev.end + leg_to + buffer)
@@ -310,8 +319,8 @@ function findSlotOnDay(
  *   arrivalAtNext = slot_end + leg_back + buffer
  *   feasible IFF arrivalAtNext ≤ next.start
  *
- * `next.start` for the last fence is `homeReturnDeadlineHour` — hard
- * anchor regardless of `workEndHour`.
+ * `next.start` for the trailing home fence is `homeReturnDeadlineHour` —
+ * hard anchor regardless of `workEndHour`.
  */
 async function findSlotOnDayWithTravel(
   dayKey: string,
@@ -351,34 +360,95 @@ async function findSlotOnDayWithTravel(
   const homeAddr = travel.homeAddress;
 
   interface Fence {
-    location: string;
-    /** End of the prior event (or workStart for the synthetic home anchor). */
+    /** Used when this fence is `prev` — i.e., where Mike departs from to drive INTO the customer site. */
+    departLocation: string;
+    /** Used when this fence is `next` — i.e., where Mike needs to arrive AT after the customer slot. */
+    arriveLocation: string;
+    /** End of the prior busy span (or workStart for the synthetic home anchor). */
     endMs: number;
-    /** Start of this event (or homeDeadline for the synthetic home anchor). */
+    /** Start of this busy span (or homeDeadline for the synthetic home anchor). */
     startMs: number;
     isHome: boolean;
   }
+
+  // Merge overlapping events into busy spans first. Each span:
+  //   - startMs = min(start of any merged event)
+  //   - endMs   = max(end of any merged event)
+  //   - location for the "leg INTO" check (when this span is `prev`): pick the
+  //     event in the merge that ends latest with a non-empty location — Mike
+  //     departs from wherever the last-finishing job actually was.
+  //   - location for the "leg OUT" check (when this span is `next`): pick the
+  //     event in the merge that starts earliest with a non-empty location —
+  //     that's where Mike needs to arrive next.
+  // For homogeneous merges (single event, or all sharing one location) both
+  // collapse to the same address; the distinction matters for nested events.
+  interface BusySpan {
+    startMs: number;
+    endMs: number;
+    arriveLocation: string; // for "leg out of customer → here"
+    departLocation: string; // for "leg from here → into customer"
+  }
+  const busy: BusySpan[] = [];
+  for (const e of dayEvents) {
+    const last = busy[busy.length - 1];
+    const eventLoc = e.location || '';
+    if (last && e.startMs <= last.endMs) {
+      // Extend the current span; track the dominant locations.
+      if (e.endMs > last.endMs) {
+        last.endMs = e.endMs;
+        if (eventLoc) last.departLocation = eventLoc;
+      }
+      // Earliest-start arrive-location only updates if this event starts
+      // before the existing arriveLocation event AND has a location.
+      // Since events are sorted by startMs, only the FIRST event in a merge
+      // sets arriveLocation — but it may have been empty. Fill it from a
+      // later event in the merge if the first had no location.
+      if (!last.arriveLocation && eventLoc) {
+        last.arriveLocation = eventLoc;
+      }
+    } else {
+      busy.push({
+        startMs: e.startMs,
+        endMs: e.endMs,
+        arriveLocation: eventLoc,
+        departLocation: eventLoc,
+      });
+    }
+  }
+
   const fences: Fence[] = [
-    { location: homeAddr, endMs: dayStartMs, startMs: dayStartMs, isHome: true },
-    ...dayEvents.map((e) => ({
-      location: e.location || homeAddr,
-      endMs: e.endMs,
-      startMs: e.startMs,
+    {
+      departLocation: homeAddr,
+      arriveLocation: homeAddr,
+      endMs: dayStartMs,
+      startMs: dayStartMs,
+      isHome: true,
+    },
+    ...busy.map((b) => ({
+      departLocation: b.departLocation || homeAddr,
+      arriveLocation: b.arriveLocation || homeAddr,
+      endMs: b.endMs,
+      startMs: b.startMs,
       isHome: false,
     })),
-    { location: homeAddr, endMs: homeDeadlineMs, startMs: homeDeadlineMs, isHome: true },
+    {
+      departLocation: homeAddr,
+      arriveLocation: homeAddr,
+      endMs: homeDeadlineMs,
+      startMs: homeDeadlineMs,
+      isHome: true,
+    },
   ];
 
   for (let i = 0; i < fences.length - 1; i++) {
     const prev = fences[i];
     const next = fences[i + 1];
 
-    // Overlapping / back-to-back events: no gap to evaluate.
     if (next.startMs <= prev.endMs) continue;
 
     // Drive into the customer site.
     const legTo = await travel.getLeg(
-      prev.location,
+      prev.departLocation,
       customerAddress,
       new Date(prev.endMs),
     );
@@ -386,7 +456,7 @@ async function findSlotOnDayWithTravel(
       log.warn('travel-aware: inbound leg unavailable, skipping gap', {
         dayKey,
         gapIndex: i,
-        prevLocation: prev.location,
+        prevLocation: prev.departLocation,
         customerAddress,
       });
       continue;
@@ -407,7 +477,7 @@ async function findSlotOnDayWithTravel(
     // Drive out toward whatever comes next (real event or home).
     const legBack = await travel.getLeg(
       customerAddress,
-      next.location,
+      next.arriveLocation,
       new Date(slotEnd),
     );
     if (!legBack) {
@@ -415,7 +485,7 @@ async function findSlotOnDayWithTravel(
         dayKey,
         gapIndex: i,
         customerAddress,
-        nextLocation: next.location,
+        nextLocation: next.arriveLocation,
       });
       continue;
     }
