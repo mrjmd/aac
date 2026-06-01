@@ -240,7 +240,7 @@ describe('dispatchSchedulingIntent', () => {
     expect(written.originalServiceType).toBe('Crack Injection');
   });
 
-  it('skips callback when parent deal cannot be resolved and logs health error', async () => {
+  it('skips callback when parent deal cannot be resolved (soft failure — does NOT page Matt)', async () => {
     const gemini = makeGemini([
       makeClassification({
         intent: 'callback_opened', score: 0.85, confidence: 'high',
@@ -260,11 +260,9 @@ describe('dispatchSchedulingIntent', () => {
     expect(summary.directivesWritten).toBe(0);
     expect(summary.callbackParentMisses).toBe(1);
     expect(mockWritePendingDirective).not.toHaveBeenCalled();
-    expect(mockLogHealthError).toHaveBeenCalledWith(
-      'quo',
-      'Callback intent detected but parent deal could not be resolved',
-      expect.objectContaining({ eventId: 'evt-1' }),
-    );
+    // Soft failure — business outcome, not system error. The error-surface
+    // SMS channel is reserved for real failures.
+    expect(mockLogHealthError).not.toHaveBeenCalled();
   });
 
   it('writes a ManualScheduleDirective from Matt outbound', async () => {
@@ -353,11 +351,10 @@ describe('dispatchSchedulingIntent', () => {
 
     expect(summary.errors).toBe(1);
     expect(summary.directivesWritten).toBe(1);
-    expect(mockLogHealthError).toHaveBeenCalledWith(
-      'quo',
-      expect.stringContaining('Scheduling classifier failed'),
-      expect.objectContaining({ eventId: 'evt-tx' }),
-    );
+    // Soft failure — classifier degraded gracefully (no directive for that
+    // input). Logged at error level for observability but NOT routed to the
+    // error-surface SMS channel (which is reserved for real system failures).
+    expect(mockLogHealthError).not.toHaveBeenCalled();
   });
 
   it('returns empty summary when no inputs pass the gate', async () => {

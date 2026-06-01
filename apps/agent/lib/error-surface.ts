@@ -38,11 +38,18 @@ const MAX_SURFACED_PER_TICK = 5;
 
 /**
  * How much of the error message to fold into the dedup fingerprint.
- * Long enough to distinguish different errors from the same source;
- * short enough that varying suffixes (IDs, timestamps embedded in the
- * message) don't defeat dedup.
+ *
+ * Kept SHORT and conservative (60 chars after stripping JSON payloads) so
+ * that the dynamic tail of an error — Gemini's varying response body,
+ * upstream API error details, request IDs — doesn't defeat dedup. The
+ * stable "operation failed" prefix is what we want to fingerprint.
+ *
+ * Trade-off: occasional false-merge across two genuinely different errors
+ * that happen to share a 60-char prefix. Acceptable — false-merge means we
+ * MISS one notification (still see the other 99); the alternative is
+ * Matt getting blasted.
  */
-const FINGERPRINT_MESSAGE_CHARS = 120;
+const FINGERPRINT_MESSAGE_CHARS = 60;
 
 export interface SurfaceResult {
   scanned: number;
@@ -60,7 +67,16 @@ export interface SurfaceResult {
  * (which often carry per-event IDs that would defeat dedup).
  */
 export function errorFingerprint(entry: HealthErrorEntry): string {
-  const messageHead = entry.message.slice(0, FINGERPRINT_MESSAGE_CHARS).replace(/\s+/g, ' ').trim();
+  // Strip JSON/array bodies that vary per occurrence — anything after
+  // `: {` or `: [` is a payload, not the error category.
+  const stripped = entry.message.split(/:\s*[{[]/, 1)[0] ?? entry.message;
+  // Also clip on the first newline (multi-line messages often embed
+  // varying upstream response text in subsequent lines).
+  const firstLine = stripped.split('\n', 1)[0] ?? stripped;
+  const messageHead = firstLine
+    .slice(0, FINGERPRINT_MESSAGE_CHARS)
+    .replace(/\s+/g, ' ')
+    .trim();
   const slug = `${entry.source}|${messageHead}`;
   return createHash('sha1').update(slug).digest('hex').slice(0, 16);
 }

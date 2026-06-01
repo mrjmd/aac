@@ -263,6 +263,40 @@ describe('errorFingerprint', () => {
     expect(errorFingerprint(a)).toBe(errorFingerprint(b));
   });
 
+  it('strips JSON payloads after ": {" so varying response bodies dedupe to one fingerprint', () => {
+    const a: HealthErrorEntry = {
+      timestamp: 't1',
+      source: 'quo',
+      message: 'Scheduling classifier failed: Intent JSON parse failed: {\n"intent": null,\n"rationale": "first response varies here"\n}',
+    };
+    const b: HealthErrorEntry = {
+      timestamp: 't2',
+      source: 'quo',
+      message: 'Scheduling classifier failed: Intent JSON parse failed: {\n"intent": null,\n"rationale": "wildly different second response"\n}',
+    };
+    expect(errorFingerprint(a)).toBe(errorFingerprint(b));
+  });
+
+  it('strips array payloads after ": [" too', () => {
+    const a: HealthErrorEntry = {
+      timestamp: 't1', source: 'pd', message: 'Persons fetch failed: [{ id: 1, oops: true }]',
+    };
+    const b: HealthErrorEntry = {
+      timestamp: 't2', source: 'pd', message: 'Persons fetch failed: [{ id: 999, oops: false }]',
+    };
+    expect(errorFingerprint(a)).toBe(errorFingerprint(b));
+  });
+
+  it('only takes the first line so multi-line tracebacks dedupe to the headline', () => {
+    const a: HealthErrorEntry = {
+      timestamp: 't1', source: 'q', message: 'Quo send failed\nat Quo.send (file:1:1)\n    at next (file:2:2)',
+    };
+    const b: HealthErrorEntry = {
+      timestamp: 't2', source: 'q', message: 'Quo send failed\nat Quo.send (other:9:9)',
+    };
+    expect(errorFingerprint(a)).toBe(errorFingerprint(b));
+  });
+
   it('produces different fingerprints for different sources or messages', () => {
     const base: HealthErrorEntry = {
       timestamp: '2026-05-28T12:00:00Z',

@@ -132,14 +132,13 @@ export async function dispatchSchedulingIntent(
   for (const result of settled) {
     if (result.status === 'rejected') {
       summary.errors++;
+      // Soft failure: classifier could not produce an intent (Gemini malformed
+      // JSON, transient error, etc.). We degrade gracefully — no directive,
+      // no caller-facing impact. Log for observability but do NOT page Matt
+      // (the error-surface SMS channel is reserved for real system failures).
       log.error('Classifier failed for one input', result.reason as Error, {
         eventId: context.eventId,
       });
-      await logHealthError(
-        'quo',
-        `Scheduling classifier failed: ${(result.reason as Error)?.message ?? 'unknown'}`,
-        { eventId: context.eventId },
-      );
       continue;
     }
 
@@ -152,18 +151,17 @@ export async function dispatchSchedulingIntent(
     try {
       const directive = await buildDirective(deps, context, input, classification!, now);
       if (!directive) {
-        // The most common reason: callback_opened without a resolvable parent
+        // The most common reason: callback_opened without a resolvable parent.
+        // This is a business-data outcome (we couldn't find the original
+        // deal), not a system error — don't page Matt via the error-surface
+        // SMS. Count it; future "directive queue review" surface can show it.
         if (classification!.intent === 'callback_opened') {
           summary.callbackParentMisses++;
-          await logHealthError(
-            'quo',
-            'Callback intent detected but parent deal could not be resolved',
-            {
-              eventId: context.eventId,
-              customerPhone: context.customerPhone,
-              pdPersonId: String(context.pdPersonId),
-            },
-          );
+          log.warn('Callback intent detected but parent deal could not be resolved', {
+            eventId: context.eventId,
+            customerPhone: context.customerPhone,
+            pdPersonId: String(context.pdPersonId),
+          });
         }
         continue;
       }
