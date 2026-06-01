@@ -170,7 +170,7 @@ describe('GeminiClient', () => {
       expect(result).toBe('Generated caption about foundation repair');
 
       const url = mockFetch.mock.calls[0][0] as string;
-      expect(url).toContain('gemini-2.0-flash');
+      expect(url).toContain('gemini-2.5-flash');
       expect(url).toContain('generateContent');
     });
 

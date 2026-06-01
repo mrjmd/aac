@@ -16,7 +16,7 @@ const log = createLogger('gemini');
 
 export interface GeminiConfig {
   apiKey: string;
-  /** Text model for generateContent(). Default: gemini-2.0-flash */
+  /** Text model for generateContent(). Default: gemini-2.5-flash */
   textModel?: string;
   /** Image model for generateImage(). Default: imagen-4.0-generate-001 */
   imageModel?: string;
@@ -120,7 +120,7 @@ interface ImagenResponse {
 // ── Constants ────────────────────────────────────────────────────────
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_TEXT_MODEL = 'gemini-2.0-flash';
+const DEFAULT_TEXT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_IMAGE_MODEL = 'imagen-4.0-generate-001';
 const IMAGE_TIMEOUT_MS = 45_000;
 const TEXT_TIMEOUT_MS = 30_000;

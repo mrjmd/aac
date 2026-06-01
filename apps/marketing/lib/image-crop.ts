@@ -5,7 +5,7 @@
  */
 import sharp from "sharp";
 
-const VISION_MODEL = "gemini-2.0-flash";
+const VISION_MODEL = "gemini-2.5-flash";
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 interface FocalPoint {
