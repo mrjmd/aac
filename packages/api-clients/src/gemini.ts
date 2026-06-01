@@ -230,7 +230,15 @@ export class GeminiClient {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               contents: [{ parts: [{ text: EXTRACTION_PROMPT + text }] }],
-              generationConfig: { temperature: 0.1, maxOutputTokens: 500 },
+              generationConfig: {
+                temperature: 0.1,
+                maxOutputTokens: 500,
+                // Gemini 2.5 enables "thinking" by default; thinking tokens
+                // count against maxOutputTokens, which truncates the actual
+                // JSON response mid-string and triggers parse_error. We don't
+                // need reasoning for a small extraction task — disable it.
+                thinkingConfig: { thinkingBudget: 0 },
+              },
             }),
             signal: AbortSignal.timeout(15_000),
           }
@@ -364,7 +372,12 @@ export class GeminiClient {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: { temperature: 0.1, maxOutputTokens: 400 },
+              generationConfig: {
+                temperature: 0.1,
+                maxOutputTokens: 400,
+                // Same reason as extractEntities — see comment there.
+                thinkingConfig: { thinkingBudget: 0 },
+              },
             }),
             signal: AbortSignal.timeout(15_000),
           },

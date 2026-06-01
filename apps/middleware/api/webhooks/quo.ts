@@ -385,15 +385,13 @@ export async function POST(request: Request): Promise<Response> {
       try {
         await ensureInboundLeadDeal(pd, pipedrivePersonId, e164Phone);
       } catch (error) {
+        // Soft failure: the deal spine is downstream of the user's actual
+        // signal — the nightly deal-reconcile cron sweeps any missed
+        // inbound-lead deals. Log here for observability; don't page Matt.
         log.error('Inbound lead deal creation failed', error as Error, {
           personId: pipedrivePersonId,
           phone: e164Phone,
         });
-        await logHealthError(
-          'quo',
-          `Inbound lead deal creation failed: ${(error as Error).message}`,
-          { personId: String(pipedrivePersonId), phone: e164Phone },
-        );
       }
     }
 
@@ -548,6 +546,9 @@ export async function POST(request: Request): Promise<Response> {
           personId: pipedrivePersonId,
           reason,
         });
+        // Surface to error-surface — if extraction is failing in production
+        // Matt needs to know so we can fix the root cause (not silence it).
+        // The agent-side dedup keeps recurring failures from spamming him.
         await logHealthError('quo', `AI extraction failed (${reason}): ${(error as Error).message.substring(0, 200)}`, {
           personId: String(pipedrivePersonId),
           reason,
