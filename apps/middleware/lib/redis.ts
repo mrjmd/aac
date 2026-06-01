@@ -195,10 +195,15 @@ export async function logHealthError(
   details?: Record<string, unknown>
 ): Promise<void> {
   const redis = getRedis();
+  // Vercel injects VERCEL_GIT_COMMIT_SHA per deploy; we stamp it on each
+  // error so the agent-side notifier can dedupe within a deploy but reset
+  // on a new one (Matt knows whether a fix worked instead of staying silent).
+  const commitSha = process.env.VERCEL_GIT_COMMIT_SHA || 'local';
   const error = JSON.stringify({
     source,
     message,
     details,
+    commitSha,
     timestamp: new Date().toISOString(),
   });
 

@@ -1,22 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { readRecentHealthErrors, getCronCursor, setCronCursor } = vi.hoisted(() => ({
+const { readRecentHealthErrors, getCronCursor, setCronCursor, claimErrorSurfaceNotification } = vi.hoisted(() => ({
   readRecentHealthErrors: vi.fn(),
   getCronCursor: vi.fn(),
   setCronCursor: vi.fn(),
+  claimErrorSurfaceNotification: vi.fn(),
 }));
 
 vi.mock('../lib/redis.js', () => ({
   readRecentHealthErrors,
   getCronCursor,
   setCronCursor,
+  claimErrorSurfaceNotification,
 }));
 
-import { runErrorSurfaceTick, formatErrorSms } from '../lib/error-surface.js';
+import { runErrorSurfaceTick, formatErrorSms, errorFingerprint } from '../lib/error-surface.js';
 import type { HealthErrorEntry } from '../lib/redis.js';
 
-function makeError(ts: string, source = 'middleware', message = 'boom'): HealthErrorEntry {
-  return { timestamp: ts, source, message, details: { foo: 'bar' } };
+function makeError(
+  ts: string,
+  source = 'middleware',
+  message = 'boom',
+  commitSha = 'deploy-sha-a',
+): HealthErrorEntry {
+  return { timestamp: ts, source, message, details: { foo: 'bar' }, commitSha };
 }
 
 function makeQuo() {
@@ -28,6 +35,9 @@ beforeEach(() => {
   readRecentHealthErrors.mockResolvedValue([]);
   getCronCursor.mockResolvedValue(null);
   setCronCursor.mockResolvedValue(undefined);
+  // Default: every claim succeeds (no dedup hits). Individual tests
+  // override to simulate "already notified".
+  claimErrorSurfaceNotification.mockResolvedValue(true);
 });
 
 describe('formatErrorSms', () => {
@@ -165,5 +175,101 @@ describe('runErrorSurfaceTick', () => {
     expect(result.surfaced).toBe(0);
     expect(quo.sendMessage).not.toHaveBeenCalled();
     expect(setCronCursor).not.toHaveBeenCalled();
+  });
+
+  describe('per-deploy dedup', () => {
+    it('skips entries whose fingerprint is already claimed on the same deploy SHA', async () => {
+      const errs = [
+        makeError('2026-05-28T12:00:02Z', 'quo', 'AI extraction failed: Gemini 404 model retired', 'sha-a'),
+        makeError('2026-05-28T12:00:01Z', 'quo', 'AI extraction failed: Gemini 404 model retired', 'sha-a'),
+      ];
+      readRecentHealthErrors.mockResolvedValue(errs);
+      getCronCursor.mockResolvedValue('2026-05-28T12:00:00Z');
+      // First claim wins; the duplicate fails to claim.
+      claimErrorSurfaceNotification
+        .mockResolvedValueOnce(true)   // oldest (12:00:01) wins claim
+        .mockResolvedValueOnce(false); // newest (12:00:02) is a dup
+
+      const quo = makeQuo();
+      const result = await runErrorSurfaceTick({ quo, recipient: '+1', sender: '+2' });
+
+      expect(result.surfaced).toBe(1);
+      expect(result.skipped_deduped).toBe(1);
+      expect(quo.sendMessage).toHaveBeenCalledTimes(1);
+      // Cursor advances past the duplicate so we don't re-scan it next tick.
+      expect(setCronCursor).toHaveBeenCalledWith('error-surface', '2026-05-28T12:00:02Z');
+    });
+
+    it('resurfaces the same error fingerprint after a new deploy (different commitSha)', async () => {
+      // Same fingerprint (source + message), different SHA → claim succeeds again.
+      const errs = [
+        makeError('2026-05-28T12:00:02Z', 'quo', 'Same error', 'sha-NEW'),
+      ];
+      readRecentHealthErrors.mockResolvedValue(errs);
+      getCronCursor.mockResolvedValue('2026-05-28T12:00:00Z');
+      claimErrorSurfaceNotification.mockResolvedValue(true);
+
+      const quo = makeQuo();
+      const result = await runErrorSurfaceTick({ quo, recipient: '+1', sender: '+2' });
+
+      expect(result.surfaced).toBe(1);
+      expect(claimErrorSurfaceNotification).toHaveBeenCalledWith('sha-NEW', expect.any(String));
+    });
+
+    it('falls back to SHA "unknown" when commitSha is missing on the entry', async () => {
+      const entry: HealthErrorEntry = {
+        timestamp: '2026-05-28T12:00:02Z',
+        source: 'quo',
+        message: 'legacy error without sha',
+      };
+      readRecentHealthErrors.mockResolvedValue([entry]);
+      getCronCursor.mockResolvedValue('2026-05-28T12:00:00Z');
+
+      const quo = makeQuo();
+      await runErrorSurfaceTick({ quo, recipient: '+1', sender: '+2' });
+
+      expect(claimErrorSurfaceNotification).toHaveBeenCalledWith('unknown', expect.any(String));
+    });
+
+    it('forwards anyway when the dedup claim itself throws (fail-open)', async () => {
+      const errs = [makeError('2026-05-28T12:00:02Z')];
+      readRecentHealthErrors.mockResolvedValue(errs);
+      getCronCursor.mockResolvedValue('2026-05-28T12:00:00Z');
+      claimErrorSurfaceNotification.mockRejectedValueOnce(new Error('redis down'));
+
+      const quo = makeQuo();
+      const result = await runErrorSurfaceTick({ quo, recipient: '+1', sender: '+2' });
+
+      expect(result.surfaced).toBe(1);
+      expect(quo.sendMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe('errorFingerprint', () => {
+  it('produces the same fingerprint for entries with same source + message head', () => {
+    const a: HealthErrorEntry = {
+      timestamp: '2026-05-28T12:00:00Z',
+      source: 'quo',
+      message: 'AI extraction failed (api_error): Gemini API error 404',
+      details: { personId: '1' },
+    };
+    const b: HealthErrorEntry = {
+      timestamp: '2026-05-28T13:00:00Z',
+      source: 'quo',
+      message: 'AI extraction failed (api_error): Gemini API error 404',
+      details: { personId: '99' }, // different ctx, same fingerprint
+    };
+    expect(errorFingerprint(a)).toBe(errorFingerprint(b));
+  });
+
+  it('produces different fingerprints for different sources or messages', () => {
+    const base: HealthErrorEntry = {
+      timestamp: '2026-05-28T12:00:00Z',
+      source: 'quo',
+      message: 'Some error',
+    };
+    expect(errorFingerprint(base)).not.toBe(errorFingerprint({ ...base, source: 'pipedrive' }));
+    expect(errorFingerprint(base)).not.toBe(errorFingerprint({ ...base, message: 'Other error' }));
   });
 });

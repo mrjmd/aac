@@ -79,6 +79,32 @@ export interface HealthErrorEntry {
   source: string;
   message: string;
   details?: Record<string, unknown> | string;
+  /**
+   * Middleware deploy SHA at the time the error was logged. Used by the
+   * error-surface tick to scope dedup per-deploy (so a fix-and-deploy
+   * resets dedup and Matt finds out whether the fix held).
+   */
+  commitSha?: string;
+}
+
+/**
+ * Claim "we already SMS'd Matt about this error on this deploy". Returns
+ * true iff this is the first time we're surfacing this fingerprint on
+ * this commit SHA. 24h TTL — even without a redeploy, the same error
+ * eventually resurfaces.
+ *
+ * The dedup namespace is (commitSha, fingerprint). When middleware ships
+ * a new deploy, the SHA changes and previously-silenced errors resurface
+ * naturally — that's how Matt knows whether a fix worked.
+ */
+export async function claimErrorSurfaceNotification(
+  commitSha: string,
+  fingerprint: string,
+): Promise<boolean> {
+  const redis = getRedis();
+  const key = keys.dedupe('error-surface', `${commitSha}:${fingerprint}`);
+  const result = await redis.set(key, 'sent', { nx: true, ex: ttl.dedupe });
+  return result === 'OK';
 }
 
 /**

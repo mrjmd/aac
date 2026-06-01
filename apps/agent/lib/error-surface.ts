@@ -18,9 +18,16 @@
  * surface.
  */
 
+import { createHash } from 'node:crypto';
 import { createLogger } from '@aac/shared-utils/logger';
 import { QuoClient } from '@aac/api-clients/quo';
-import { readRecentHealthErrors, getCronCursor, setCronCursor, HealthErrorEntry } from './redis.js';
+import {
+  readRecentHealthErrors,
+  getCronCursor,
+  setCronCursor,
+  claimErrorSurfaceNotification,
+  HealthErrorEntry,
+} from './redis.js';
 
 const log = createLogger('agent:error-surface');
 
@@ -29,13 +36,33 @@ const JOB_NAME = 'error-surface';
 /** Cap per tick — even if many errors accumulated, don't dump >5 SMS at once. */
 const MAX_SURFACED_PER_TICK = 5;
 
+/**
+ * How much of the error message to fold into the dedup fingerprint.
+ * Long enough to distinguish different errors from the same source;
+ * short enough that varying suffixes (IDs, timestamps embedded in the
+ * message) don't defeat dedup.
+ */
+const FINGERPRINT_MESSAGE_CHARS = 120;
+
 export interface SurfaceResult {
   scanned: number;
   surfaced: number;
   skipped_first_run: number;
   skipped_stale: number;
+  skipped_deduped: number;
   errors: number;
   newest_timestamp: string | null;
+}
+
+/**
+ * Build a stable, short fingerprint for an error entry. Same source +
+ * same opening 120 chars → same fingerprint, regardless of details/ctx
+ * (which often carry per-event IDs that would defeat dedup).
+ */
+export function errorFingerprint(entry: HealthErrorEntry): string {
+  const messageHead = entry.message.slice(0, FINGERPRINT_MESSAGE_CHARS).replace(/\s+/g, ' ').trim();
+  const slug = `${entry.source}|${messageHead}`;
+  return createHash('sha1').update(slug).digest('hex').slice(0, 16);
 }
 
 interface SurfaceDeps {
@@ -80,6 +107,7 @@ export async function runErrorSurfaceTick(deps: SurfaceDeps): Promise<SurfaceRes
     surfaced: 0,
     skipped_first_run: 0,
     skipped_stale: 0,
+    skipped_deduped: 0,
     errors: 0,
     newest_timestamp: cursor,
   };
@@ -121,6 +149,26 @@ export async function runErrorSurfaceTick(deps: SurfaceDeps): Promise<SurfaceRes
   }
 
   for (const entry of toSurface) {
+    const sha = entry.commitSha || 'unknown';
+    const fingerprint = errorFingerprint(entry);
+    let claimed: boolean;
+    try {
+      claimed = await claimErrorSurfaceNotification(sha, fingerprint);
+    } catch (err) {
+      // If dedup claim itself fails, fall through and send — better to
+      // double-notify than swallow a real error.
+      log.warn('Dedup claim failed; forwarding anyway', { err: (err as Error).message });
+      claimed = true;
+    }
+
+    if (!claimed) {
+      result.skipped_deduped += 1;
+      // Still advance the cursor past the duplicate so we don't keep
+      // re-checking the same entries every tick.
+      result.newest_timestamp = entry.timestamp;
+      continue;
+    }
+
     try {
       await deps.quo.sendMessage(deps.recipient, formatErrorSms(entry), deps.sender);
       result.surfaced += 1;
