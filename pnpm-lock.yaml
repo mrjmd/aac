@@ -363,6 +363,9 @@ importers:
       '@aac/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
+      '@types/node':
+        specifier: ^22
+        version: 22.19.15
       typescript:
         specifier: ^5.8
         version: 5.9.3
