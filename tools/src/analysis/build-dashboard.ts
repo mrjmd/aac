@@ -78,6 +78,7 @@ interface DashboardData {
     closeRatePct: number;
   };
   monthly: Array<{ month: string; revenue: number; cogs: number; opex: number; netIncome: number }>;
+  calendarYears: Array<{ year: string; revenue: number; netIncome: number; months: number; complete: boolean }>;
   yoy: Array<{ month: string; y2025: number; y2026: number; growth: number | null }>;
   cumulative: Array<{ month: string; total: number }>;
   topCustomers: Array<{ name: string; total: number; count: number }>;
@@ -154,6 +155,28 @@ function build(dataDir: string): DashboardData {
     opex: num(opexRow?.[i + 1]?.value),
     netIncome: num(niRow?.[i + 1]?.value),
   }));
+
+  // Revenue + net income totals per calendar year (Jan–Dec)
+  const yearTotals = new Map<string, { revenue: number; netIncome: number; months: number }>();
+  for (const m of monthly) {
+    const ym = m.month.match(/(\d{4})/);
+    if (!ym) continue;
+    const year = ym[1];
+    const cur = yearTotals.get(year) ?? { revenue: 0, netIncome: 0, months: 0 };
+    cur.revenue += m.revenue;
+    cur.netIncome += m.netIncome;
+    cur.months += 1;
+    yearTotals.set(year, cur);
+  }
+  const calendarYears = [...yearTotals.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([year, t]) => ({
+      year,
+      revenue: t.revenue,
+      netIncome: t.netIncome,
+      months: t.months,
+      complete: t.months === 12,
+    }));
 
   // YoY same-month comparison (any month present in both years)
   const yoyMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -328,6 +351,7 @@ function build(dataDir: string): DashboardData {
       closeRatePct,
     },
     monthly,
+    calendarYears,
     yoy,
     cumulative,
     topCustomers,
@@ -372,6 +396,12 @@ function renderHtml(data: DashboardData): string {
   .ytd-card .ytd-title { color: #c8d0dc; font-size: 14px; font-weight: 600; margin: 0 0 4px; }
   .ytd-card .ytd-sub { color: #8a94a6; font-size: 12px; margin-bottom: 16px; }
   .ytd-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .cy-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
+  .cy-col { padding: 12px 0; }
+  .cy-col .ytd-label { color: #8a94a6; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .cy-col .ytd-value { font-size: 28px; font-weight: 700; margin-top: 6px; color: #f0f3f8; }
+  .cy-col .ytd-ni { color: #8a94a6; font-size: 12px; margin-top: 4px; }
+  .cy-col .cy-partial { color: #d29922; }
   .ytd-col { padding: 12px 0; }
   .ytd-col .ytd-label { color: #8a94a6; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
   .ytd-col .ytd-value { font-size: 28px; font-weight: 700; margin-top: 6px; color: #f0f3f8; }
@@ -394,6 +424,12 @@ function renderHtml(data: DashboardData): string {
 </header>
 <main>
   <section class="tiles" id="tiles"></section>
+
+  <section class="ytd-card" id="cy-card" style="display:none;">
+    <div class="ytd-title">Revenue by calendar year (Jan–Dec)</div>
+    <div class="ytd-sub">QuickBooks Total Income, accrual basis. Partial years flagged.</div>
+    <div class="cy-row" id="cy-row"></div>
+  </section>
 
   <section class="ytd-card" id="ytd-card" style="display:none;">
     <div class="ytd-title">Year-to-date revenue — apples-to-apples</div>
@@ -475,6 +511,16 @@ const tiles = [
 document.getElementById('tiles').innerHTML = tiles.map(([l, v, s]) =>
   \`<div class="tile"><div class="label">\${l}</div><div class="value">\${v}</div><div class="sub">\${s}</div></div>\`
 ).join('');
+
+// Revenue by calendar year
+if (D.calendarYears && D.calendarYears.length) {
+  document.getElementById('cy-card').style.display = '';
+  document.getElementById('cy-row').innerHTML = D.calendarYears.map(y => {
+    const tag = y.complete ? '' : \`<div class="ytd-ni cy-partial">Partial — \${y.months} mo</div>\`;
+    const ni = \`<div class="ytd-ni">Net income: \${fmt$(y.netIncome)}</div>\`;
+    return \`<div class="cy-col"><div class="ytd-label">\${y.year} revenue</div><div class="ytd-value">\${fmt$(y.revenue)}</div>\${ni}\${tag}</div>\`;
+  }).join('');
+}
 
 // YTD apples-to-apples comparison card
 if (D.ytdCompare) {

@@ -145,7 +145,14 @@ async function main(): Promise<void> {
   const outDir = path.resolve(projectRoot, 'analysis/data/qbo');
   fs.mkdirSync(outDir, { recursive: true });
 
-  const today = new Date().toISOString().slice(0, 10);
+  // "As-of" date for all period end-dates. Defaults to today, but can be
+  // overridden via the first CLI arg or QBO_AS_OF env (YYYY-MM-DD) to pull a
+  // clean period boundary — e.g. month-end — instead of a mid-month snapshot.
+  const asOfOverride = process.argv[2] ?? process.env.QBO_AS_OF;
+  if (asOfOverride && !/^\d{4}-\d{2}-\d{2}$/.test(asOfOverride)) {
+    throw new Error(`Invalid as-of date "${asOfOverride}" — expected YYYY-MM-DD`);
+  }
+  const today = asOfOverride ?? new Date().toISOString().slice(0, 10);
   const startDate = '2024-09-01';
   const yearStart = `${today.slice(0, 4)}-01-01`;
   const priorYear = String(parseInt(today.slice(0, 4), 10) - 1);
