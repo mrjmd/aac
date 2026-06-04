@@ -12,6 +12,18 @@ import { createLogger } from '@aac/shared-utils/logger';
 
 const log = createLogger('pipedrive');
 
+/**
+ * Minimum gap between outbound requests. Pipedrive's API-token budget is
+ * burst-sensitive; spacing calls keeps batch jobs (e.g. the deal-reconcile
+ * cron, which loops one search/update per QB record) under the limit.
+ */
+const REQUEST_DELAY_MS = 200;
+/** Max 429 retries before giving up and surfacing the error to the caller. */
+const MAX_RETRIES = 3;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 // ── Interfaces ───────────────────────────────────────────────────────
 
 export interface PipedriveConfig {
@@ -364,6 +376,8 @@ export function shouldUpdateName(currentName: string | undefined, newName: strin
 // ── Client ───────────────────────────────────────────────────────────
 
 export class PipedriveClient {
+  private lastRequestTime = 0;
+
   constructor(private config: PipedriveConfig) {}
 
   // ── Private request helper ──────────────────────────────────────
@@ -376,25 +390,52 @@ export class PipedriveClient {
     const url = new URL(`${baseUrl}${endpoint}`);
     url.searchParams.set('api_token', this.config.apiKey);
 
-    const response = await fetch(url.toString(), {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
+    for (let attempt = 0; ; attempt++) {
+      // Throttle: keep a minimum gap since the last request so batch jobs
+      // don't trip Pipedrive's burst limit in the first place.
+      const elapsed = Date.now() - this.lastRequestTime;
+      if (elapsed < REQUEST_DELAY_MS) {
+        await sleep(REQUEST_DELAY_MS - elapsed);
+      }
+      this.lastRequestTime = Date.now();
 
-    if (!response.ok) {
-      const error = await response.text();
-      log.error('Pipedrive API error', new Error(error), {
-        endpoint,
-        status: response.status,
+      const response = await fetch(url.toString(), {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
       });
-      throw new Error(`Pipedrive API error: ${response.status} - ${error}`);
-    }
 
-    const data = await response.json();
-    return data.data as T;
+      // 429 = rate limited. Back off and retry; honor Retry-After when
+      // Pipedrive sends it, otherwise exponential (2s, 4s, 8s).
+      if (response.status === 429 && attempt < MAX_RETRIES) {
+        const retryAfter = Number(response.headers?.get?.('retry-after'));
+        const backoffMs =
+          Number.isFinite(retryAfter) && retryAfter > 0
+            ? retryAfter * 1000
+            : 2 ** (attempt + 1) * 1000;
+        log.warn('Pipedrive rate limited; backing off', {
+          endpoint,
+          attempt: attempt + 1,
+          backoffMs,
+        });
+        await sleep(backoffMs);
+        continue;
+      }
+
+      if (!response.ok) {
+        const error = await response.text();
+        log.error('Pipedrive API error', new Error(error), {
+          endpoint,
+          status: response.status,
+        });
+        throw new Error(`Pipedrive API error: ${response.status} - ${error}`);
+      }
+
+      const data = await response.json();
+      return data.data as T;
+    }
   }
 
   // ── Person CRUD ─────────────────────────────────────────────────
