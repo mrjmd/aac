@@ -2,6 +2,10 @@
   "buildCommand": "cd ../.. && pnpm turbo build --filter=@aac/middleware",
   "outputDirectory": ".",
   "functions": {
+    "api/cron/*.ts": {
+      "maxDuration": 300,
+      "memory": 256
+    },
     "api/**/*.ts": {
       "maxDuration": 30,
       "memory": 256

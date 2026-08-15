@@ -382,33 +382,28 @@ export class PipedriveClient {
 
   // ── Private request helper ──────────────────────────────────────
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    const baseUrl = 'https://api.pipedrive.com/v1';
-    const url = new URL(`${baseUrl}${endpoint}`);
-    url.searchParams.set('api_token', this.config.apiKey);
-
+  /**
+   * Shared fetch path for ALL Pipedrive calls: paces requests to stay
+   * under the burst limit, and backs off + retries on 429 (honoring
+   * Retry-After when sent, otherwise exponential: 2s, 4s, 8s). Every
+   * outbound request must go through here — an unthrottled fetch was how
+   * the deal-reconcile cron's /deals/search loop tripped daily 429s for
+   * a month while request() sat throttled right next to it.
+   */
+  private async throttledFetch(
+    url: string,
+    options: RequestInit,
+    endpoint: string
+  ): Promise<Response> {
     for (let attempt = 0; ; attempt++) {
-      // Throttle: keep a minimum gap since the last request so batch jobs
-      // don't trip Pipedrive's burst limit in the first place.
       const elapsed = Date.now() - this.lastRequestTime;
       if (elapsed < REQUEST_DELAY_MS) {
         await sleep(REQUEST_DELAY_MS - elapsed);
       }
       this.lastRequestTime = Date.now();
 
-      const response = await fetch(url.toString(), {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          ...options.headers,
-        },
-      });
+      const response = await fetch(url, options);
 
-      // 429 = rate limited. Back off and retry; honor Retry-After when
-      // Pipedrive sends it, otherwise exponential (2s, 4s, 8s).
       if (response.status === 429 && attempt < MAX_RETRIES) {
         const retryAfter = Number(response.headers?.get?.('retry-after'));
         const backoffMs =
@@ -424,18 +419,41 @@ export class PipedriveClient {
         continue;
       }
 
-      if (!response.ok) {
-        const error = await response.text();
-        log.error('Pipedrive API error', new Error(error), {
-          endpoint,
-          status: response.status,
-        });
-        throw new Error(`Pipedrive API error: ${response.status} - ${error}`);
-      }
-
-      const data = await response.json();
-      return data.data as T;
+      return response;
     }
+  }
+
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<T> {
+    const baseUrl = 'https://api.pipedrive.com/v1';
+    const url = new URL(`${baseUrl}${endpoint}`);
+    url.searchParams.set('api_token', this.config.apiKey);
+
+    const response = await this.throttledFetch(
+      url.toString(),
+      {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      },
+      endpoint
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      log.error('Pipedrive API error', new Error(error), {
+        endpoint,
+        status: response.status,
+      });
+      throw new Error(`Pipedrive API error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return data.data as T;
   }
 
   // ── Person CRUD ─────────────────────────────────────────────────
@@ -818,7 +836,7 @@ export class PipedriveClient {
     url.searchParams.set('api_token', this.config.apiKey);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
 
-    const response = await fetch(url.toString());
+    const response = await this.throttledFetch(url.toString(), {}, endpoint);
     if (!response.ok) {
       const error = await response.text();
       log.error('Pipedrive raw GET failed', new Error(error), { endpoint, status: response.status });

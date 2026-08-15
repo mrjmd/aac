@@ -173,6 +173,74 @@ describe('QuoClient', () => {
     });
   });
 
+  describe('rate limiting (429 handling)', () => {
+    function mock429(retryAfter?: string) {
+      const headers = new Map<string, string>();
+      if (retryAfter !== undefined) headers.set('retry-after', retryAfter);
+      return Promise.resolve({
+        ok: false,
+        status: 429,
+        headers,
+        text: () => Promise.resolve('{"code":"RATE_LIMIT_EXCEEDED","status":429}'),
+      });
+    }
+
+    it('retries after a 429 and succeeds', async () => {
+      vi.useFakeTimers();
+      try {
+        const client = makeClient();
+        mockFetch
+          .mockReturnValueOnce(mock429())
+          .mockReturnValueOnce(mockResponse({ data: [] }));
+
+        const promise = client.findContactByExternalId('+15551234567');
+        await vi.runAllTimersAsync();
+        const result = await promise;
+
+        expect(result).toBeNull();
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('honors the Retry-After header for backoff timing', async () => {
+      vi.useFakeTimers();
+      try {
+        const client = makeClient();
+        mockFetch
+          .mockReturnValueOnce(mock429('2'))
+          .mockReturnValueOnce(mockResponse({ data: [] }));
+
+        const promise = client.findContactByExternalId('+15551234567');
+        await vi.runAllTimersAsync();
+        await promise;
+
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('surfaces the error after exhausting retries', async () => {
+      vi.useFakeTimers();
+      try {
+        const client = makeClient();
+        // Attempts 0..3 all 429 → 4 fetches, then throw.
+        for (let i = 0; i < 4; i++) mockFetch.mockReturnValueOnce(mock429());
+
+        const promise = client.findContactByExternalId('+15551234567');
+        const expectation = expect(promise).rejects.toThrow('Quo API error: 429');
+        await vi.runAllTimersAsync();
+        await expectation;
+
+        expect(mockFetch).toHaveBeenCalledTimes(4);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe('findContactByPhone', () => {
     it('returns immediately on externalId hit without paginating', async () => {
       const client = makeClient();

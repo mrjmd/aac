@@ -13,6 +13,9 @@ const log = createLogger('quo');
 
 const QUO_API_BASE = 'https://api.openphone.com/v1';
 
+/** Max 429 retries before surfacing the error to the caller. */
+const MAX_RETRIES_429 = 3;
+
 // ── Interfaces ───────────────────────────────────────────────────────
 
 export interface QuoConfig {
@@ -154,14 +157,37 @@ export class QuoClient {
   ): Promise<T> {
     const url = `${QUO_API_BASE}${endpoint}`;
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        'Authorization': this.config.apiKey,
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
+    let response!: Response;
+    for (let attempt = 0; ; attempt++) {
+      response = await fetch(url, {
+        ...options,
+        headers: {
+          'Authorization': this.config.apiKey,
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+
+      // Quo's limit is 10 req/s per API key, shared across all concurrent
+      // lambdas — bursts (e.g. several webhooks landing together) trip it
+      // transiently. Back off and retry; honor Retry-After when sent,
+      // otherwise 1s, 2s, 4s.
+      if (response.status === 429 && attempt < MAX_RETRIES_429) {
+        const retryAfter = Number(response.headers?.get?.('retry-after'));
+        const backoffMs =
+          Number.isFinite(retryAfter) && retryAfter > 0
+            ? retryAfter * 1000
+            : 2 ** attempt * 1000;
+        log.warn('Quo rate limited; backing off', {
+          endpoint,
+          attempt: attempt + 1,
+          backoffMs,
+        });
+        await new Promise((r) => setTimeout(r, backoffMs));
+        continue;
+      }
+      break;
+    }
 
     if (!response.ok) {
       const error = await response.text();

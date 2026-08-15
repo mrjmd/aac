@@ -674,6 +674,28 @@ describe('PipedriveClient — Deal CRUD', () => {
       }
     });
 
+    it('rawGet retries after a 429 and succeeds (deal-reconcile regression)', async () => {
+      // findDealByExternalId → rawGet('/deals/search') used to bypass the
+      // throttle/retry path entirely; a burst 429 aborted the whole
+      // deal-reconcile cron run almost daily for a month.
+      vi.useFakeTimers();
+      try {
+        const client = makeClient();
+        mockFetch
+          .mockReturnValueOnce(mock429())
+          .mockReturnValueOnce(mockResponse({ found: true }));
+
+        const promise = client.rawGet('/deals/search', { term: 'qb-est-1' });
+        await vi.runAllTimersAsync();
+        const result = await promise;
+
+        expect(result.data).toEqual({ found: true });
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('surfaces the error after exhausting retries', async () => {
       vi.useFakeTimers();
       try {
