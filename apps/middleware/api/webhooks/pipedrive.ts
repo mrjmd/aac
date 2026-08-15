@@ -495,11 +495,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const quoContactId = quoResult.status === 'fulfilled' ? quoResult.value : null;
     const qbCustomerId = qbResult.status === 'fulfilled' ? qbResult.value : null;
 
+    // Surface sync failures in health:errors (→ error-surface SMS). These
+    // were previously only log.error'd, which meant a hard Quo outage could
+    // run for weeks without anyone being paged.
     if (quoResult.status === 'rejected') {
       log.error('Quo sync failed', quoResult.reason as Error, { pipedriveId: data.id });
+      await logHealthError('pipedrive', `Quo sync failed: ${(quoResult.reason as Error).message}`, {
+        pipedriveId: String(data.id),
+      });
     }
     if (qbResult.status === 'rejected') {
       log.error('QuickBooks sync failed', qbResult.reason as Error, { pipedriveId: data.id });
+      await logHealthError('pipedrive', `QuickBooks sync failed: ${(qbResult.reason as Error).message}`, {
+        pipedriveId: String(data.id),
+      });
     }
 
     log.info('Phase: sync-complete', { elapsed: Date.now() - startTime });

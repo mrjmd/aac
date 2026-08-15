@@ -72,7 +72,7 @@ export interface QuoContactCreate {
   };
   customFields?: QuoCustomFieldValue[];
   // Quo lets external systems set their own ID + source. We use externalId =
-  // E.164 phone so future lookups can use the fast ?externalIds[]= query
+  // E.164 phone so future lookups can use the fast ?externalIds= query
   // instead of paginating every contact. See findContactByExternalId.
   externalId?: string;
   source?: string;
@@ -187,13 +187,31 @@ export class QuoClient {
    * O(1) lookup using Quo's externalId index. Returns the contact whose
    * externalId matches (we use E.164 phone), or null. Single API call, no
    * pagination. Prefer this over searchContactByPhone whenever possible.
+   *
+   * The param is `externalIds=` (no brackets). Quo's Aug 2026 backend
+   * migration stopped parsing the PHP-style `externalIds[]=` form; unknown
+   * params are silently ignored, so the old syntax returned the entire
+   * unfiltered contact list and `data[0]` linked every lead to one
+   * arbitrary contact. The exact-match check below exists so that failure
+   * mode can never be silent again: if the API returns contacts that don't
+   * actually match, we throw instead of "linking" a stranger.
    */
   async findContactByExternalId(externalId: string): Promise<QuoContact | null> {
     const params = new URLSearchParams({ maxResults: '50' });
-    params.append('externalIds[]', externalId);
+    params.append('externalIds', externalId);
 
     const result = await this.request<{ data: QuoContact[] }>(`/contacts?${params.toString()}`);
-    const match = result.data?.[0] ?? null;
+    const contacts = result.data ?? [];
+    const match = contacts.find((c) => c.externalId === externalId) ?? null;
+
+    if (!match && contacts.length > 0) {
+      throw new Error(
+        `Quo externalIds filter appears broken: query for ${externalId} returned ` +
+        `${contacts.length} contact(s), none with a matching externalId ` +
+        `(first: ${contacts[0].id}, externalId ${JSON.stringify(contacts[0].externalId)})`
+      );
+    }
+
     if (match) {
       log.debug('Found contact by externalId', { externalId, contactId: match.id });
     }

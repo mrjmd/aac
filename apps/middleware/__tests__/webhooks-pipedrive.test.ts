@@ -185,6 +185,36 @@ describe('pipedrive webhook', () => {
     // Should still return 200 — fail safe
     expect(res.status).toHaveBeenCalledWith(200);
   });
+
+  it('logs a health error when Quo sync fails so error-surface can page', async () => {
+    mockQuo.createContact.mockRejectedValue(new Error('API down'));
+
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+
+    const redis = await import('../lib/redis.js');
+    expect(redis.logHealthError).toHaveBeenCalledWith(
+      'pipedrive',
+      expect.stringContaining('Quo sync failed: API down'),
+      expect.objectContaining({ pipedriveId: '100' })
+    );
+  });
+
+  it('logs a health error when QuickBooks sync fails so error-surface can page', async () => {
+    mockQuickBooks.isConnected.mockResolvedValue(true);
+    mockQuickBooks.createCustomer.mockRejectedValueOnce(new Error('QB down'));
+
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+
+    const redis = await import('../lib/redis.js');
+    expect(redis.logHealthError).toHaveBeenCalledWith(
+      'pipedrive',
+      expect.stringContaining('QuickBooks sync failed: QB down'),
+      expect.objectContaining({ pipedriveId: '100' })
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
 });
 
 describe('buildQbDisplayName', () => {

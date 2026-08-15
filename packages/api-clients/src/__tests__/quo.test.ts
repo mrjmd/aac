@@ -117,11 +117,12 @@ describe('QuoClient', () => {
   });
 
   describe('findContactByExternalId', () => {
-    it('queries with externalIds[]= and returns the first match', async () => {
+    it('queries with externalIds= (no brackets) and returns the exact match', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(mockResponse({
         data: [{
           id: 'quo-9',
+          externalId: '+15085231758',
           defaultFields: {
             firstName: 'Nick', lastName: 'Puccio', company: null,
             emails: [], phoneNumbers: [{ value: '+15085231758' }], role: null,
@@ -134,7 +135,8 @@ describe('QuoClient', () => {
 
       expect(result?.id).toBe('quo-9');
       const url = mockFetch.mock.calls[0][0] as string;
-      expect(url).toContain('externalIds%5B%5D=%2B15085231758');
+      expect(url).toContain('externalIds=%2B15085231758');
+      expect(url).not.toContain('externalIds%5B%5D');
     });
 
     it('returns null when nothing matches', async () => {
@@ -144,6 +146,31 @@ describe('QuoClient', () => {
       const result = await client.findContactByExternalId('+15559999999');
       expect(result).toBeNull();
     });
+
+    it('throws loudly when the API ignores the filter and returns unrelated contacts', async () => {
+      // Regression guard for the Aug 2026 outage: Quo silently dropped
+      // support for externalIds[]= and returned the full unfiltered list,
+      // so data[0] "matched" an arbitrary contact and every new lead got
+      // linked to (and overwrote) the same Quo contact.
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        data: [
+          {
+            id: 'quo-stranger',
+            externalId: null,
+            defaultFields: {
+              firstName: 'Someone', lastName: 'Else', company: null,
+              emails: [], phoneNumbers: [{ value: '+16175550000' }], role: null,
+            },
+            createdAt: '2026-08-05', updatedAt: '2026-08-15',
+          },
+        ],
+      }));
+
+      await expect(client.findContactByExternalId('+15559999999')).rejects.toThrow(
+        /externalIds filter appears broken/
+      );
+    });
   });
 
   describe('findContactByPhone', () => {
@@ -152,6 +179,7 @@ describe('QuoClient', () => {
       mockFetch.mockReturnValueOnce(mockResponse({
         data: [{
           id: 'quo-fast',
+          externalId: '+15551234567',
           defaultFields: {
             firstName: 'Fast', lastName: 'Path', company: null,
             emails: [], phoneNumbers: [{ value: '+15551234567' }], role: null,
