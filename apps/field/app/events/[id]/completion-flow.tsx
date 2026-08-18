@@ -12,6 +12,7 @@ import {
   updateNote,
   type ActionState,
 } from './actions';
+import PhotoLightbox from '@/components/photo-lightbox';
 import type { CompletionEdit, CompletionPhoto, CompletionRecord, PaymentStatus } from '@/lib/completion';
 import type { EventType } from '@/lib/event-classification';
 import type { EventTimeBucket } from '@/lib/event-time-bucket';
@@ -326,6 +327,7 @@ function StepIcon({ number, state }: { number: number; state: RowState }) {
 // ─── Done-state sub-views ────────────────────────────────────────────────
 
 function BeforeThumbnail({ eventId, completion }: { eventId: string; completion: CompletionRecord }) {
+  const [viewerOpen, setViewerOpen] = useState(false);
   const before = completion.photos.find((p) => p.label === 'before');
   if (!before) return null;
   // Mid-flow only (not yet completed): allow retake — deleting the Before
@@ -333,25 +335,29 @@ function BeforeThumbnail({ eventId, completion }: { eventId: string; completion:
   const midFlow = completion.phase !== 'completed';
   return (
     <div className="space-y-1.5">
-      <a href={before.url} target="_blank" rel="noreferrer" className="inline-block">
+      <button type="button" onClick={() => setViewerOpen(true)} className="inline-block">
         <img
           src={before.url}
           alt="Before"
           className="size-24 object-cover rounded-md border border-emerald-200"
         />
-      </a>
+      </button>
       {midFlow && <DeletePhotoButton eventId={eventId} photo={before} variant="retake" />}
+      {viewerOpen && (
+        <PhotoLightbox photos={[before]} startIndex={0} onClose={() => setViewerOpen(false)} />
+      )}
     </div>
   );
 }
 
 function CompletedDetails({ eventId, completion }: { eventId: string; completion: CompletionRecord }) {
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   return (
     <div className="space-y-3">
       <ul className="flex flex-wrap gap-2">
-        {completion.photos.map((p) => (
+        {completion.photos.map((p, i) => (
           <li key={p.url} className="space-y-1">
-            <a href={p.url} target="_blank" rel="noreferrer" className="block">
+            <button type="button" onClick={() => setViewerIndex(i)} className="block">
               {p.kind === 'video' ? (
                 <div className="relative size-20 overflow-hidden rounded-md border border-emerald-200 bg-black">
                   <video
@@ -372,11 +378,18 @@ function CompletedDetails({ eventId, completion }: { eventId: string; completion
                   className="size-20 rounded-md border border-emerald-200 object-cover"
                 />
               )}
-            </a>
+            </button>
             <DeletePhotoButton eventId={eventId} photo={p} variant="delete" />
           </li>
         ))}
       </ul>
+      {viewerIndex !== null && (
+        <PhotoLightbox
+          photos={completion.photos}
+          startIndex={viewerIndex}
+          onClose={() => setViewerIndex(null)}
+        />
+      )}
       <AddMorePhotos eventId={eventId} />
       {completion.paymentStatus && (
         <p className="text-sm text-emerald-900">
