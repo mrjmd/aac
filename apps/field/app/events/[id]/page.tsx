@@ -9,6 +9,7 @@ import { extractDriveFileId, getDriveInfos, thumbnailUrl } from '@/lib/drive';
 import { getEnv } from '@/lib/env';
 import { formatEventTime, formatDateDisplay } from '@/lib/dates';
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
+import { bucketForEvent, daysLate } from '@/lib/event-time-bucket';
 import CompletionChecklist from './completion-flow';
 
 export const dynamic = 'force-dynamic';
@@ -65,6 +66,8 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
   const type = classifyEvent(evt.colorId);
   const eventDateLabel = dateLabelFromISO(evt.start);
   const completion = await getCompletion(id);
+  const bucket = bucketForEvent(evt.start, completion);
+  const lateDays = bucket === 'past_not_completed' ? daysLate(evt.start) : 0;
   const env = getEnv();
 
   // Resolve the PD person so we can surface call/text actions on the
@@ -218,17 +221,33 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
 
         <div className="pt-2 border-t border-zinc-200">
           <h2 className="text-lg font-semibold mb-3 mt-4">
-            {completion?.phase === 'completed'
-              ? 'Done'
-              : completion === null
-                ? `Start this ${labelForType(type).toLowerCase()}`
-                : `Continue this ${labelForType(type).toLowerCase()}`}
+            {headingForBucket(bucket, completion?.phase, type)}
           </h2>
-          <CompletionChecklist eventId={id} eventType={type} completion={completion} />
+          <CompletionChecklist
+            eventId={id}
+            eventType={type}
+            completion={completion}
+            bucket={bucket}
+            daysLate={lateDays}
+          />
         </div>
       </section>
     </main>
   );
+}
+
+function headingForBucket(
+  bucket: ReturnType<typeof bucketForEvent>,
+  phase: string | undefined,
+  type: ReturnType<typeof classifyEvent>,
+): string {
+  if (bucket === 'cancelled') return 'Cancelled';
+  if (bucket === 'future') return `Upcoming ${labelForType(type).toLowerCase()}`;
+  if (phase === 'completed') return 'Done';
+  if (bucket === 'past_not_completed') {
+    return phase ? 'Continue (logging late)' : 'Log late completion';
+  }
+  return phase ? `Continue this ${labelForType(type).toLowerCase()}` : `Start this ${labelForType(type).toLowerCase()}`;
 }
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {

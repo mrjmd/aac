@@ -2,14 +2,27 @@
 
 import { useActionState, useRef, useState, useTransition } from 'react';
 import { upload } from '@vercel/blob/client';
-import { checkIn, submitBeforePhoto, submitCompletion, type ActionState } from './actions';
-import type { CompletionPhoto, CompletionRecord, PaymentStatus } from '@/lib/completion';
+import {
+  addPhotos,
+  cancelEvent,
+  checkIn,
+  deletePhoto,
+  submitBeforePhoto,
+  submitCompletion,
+  updateNote,
+  type ActionState,
+} from './actions';
+import type { CompletionEdit, CompletionPhoto, CompletionRecord, PaymentStatus } from '@/lib/completion';
 import type { EventType } from '@/lib/event-classification';
+import type { EventTimeBucket } from '@/lib/event-time-bucket';
 
 interface Props {
   eventId: string;
   eventType: EventType;
   completion: CompletionRecord | null;
+  bucket: EventTimeBucket;
+  /** Days late if bucket is past_not_completed; 0 otherwise. Used for the "logging late" banner copy. */
+  daysLate: number;
 }
 
 /**
@@ -22,9 +35,18 @@ interface Props {
  *
  * Non-job events (assessments, callbacks) skip the Before-Photo row.
  */
-export default function CompletionChecklist({ eventId, eventType, completion }: Props) {
+export default function CompletionChecklist({ eventId, eventType, completion, bucket, daysLate }: Props) {
+  if (bucket === 'cancelled' && completion?.cancelledAt) {
+    return <CancelledView completion={completion} />;
+  }
+
+  if (bucket === 'future') {
+    return <FutureView />;
+  }
+
+  const isLate = bucket === 'past_not_completed';
   const phase = completion?.phase ?? null;
-  const checkedIn = phase !== null;
+  const checkedIn = phase !== null && phase !== 'cancelled';
   const beforeTaken = phase === 'before_photo_taken' || phase === 'completed';
   const completed = phase === 'completed';
   const allDone = completed;
@@ -41,14 +63,21 @@ export default function CompletionChecklist({ eventId, eventType, completion }: 
 
   return (
     <div className="space-y-3">
+      {isLate && !completed && <LateBanner daysLate={daysLate} />}
+
       {allDone && (
         <div className="bg-emerald-100 border border-emerald-300 rounded-lg px-4 py-3 text-emerald-900 font-semibold text-center">
           ✓ Complete
+          {typeof completion?.loggedLateBy === 'number' && completion.loggedLateBy > 0 && (
+            <span className="ml-2 text-xs font-normal text-emerald-800">
+              (logged {completion.loggedLateBy} day{completion.loggedLateBy === 1 ? '' : 's'} late)
+            </span>
+          )}
         </div>
       )}
 
-      <StepRow number={1} state={checkInState} title="Check in" doneSummary={checkedIn ? `at ${formatTime(completion!.checkedInAt)}` : undefined}>
-        {checkInState === 'current' && <CheckInStep eventId={eventId} />}
+      <StepRow number={1} state={checkInState} title={isLate ? 'Late check in' : 'Check in'} doneSummary={checkedIn ? `at ${formatTime(completion!.checkedInAt)}` : undefined}>
+        {checkInState === 'current' && <CheckInStep eventId={eventId} skipGeo={isLate} />}
         {/* No expanded content for done — summary is in the row header */}
       </StepRow>
 
@@ -67,7 +96,9 @@ export default function CompletionChecklist({ eventId, eventType, completion }: 
               autoSubmit
             />
           )}
-          {beforeState === 'done' && completion && <BeforeThumbnail completion={completion} />}
+          {beforeState === 'done' && completion && (
+            <BeforeThumbnail eventId={eventId} completion={completion} />
+          )}
         </StepRow>
       )}
 
@@ -93,9 +124,134 @@ export default function CompletionChecklist({ eventId, eventType, completion }: 
             renderNoteField
           />
         )}
-        {completeState === 'done' && completion && <CompletedDetails completion={completion} />}
+        {completeState === 'done' && completion && (
+          <CompletedDetails eventId={eventId} completion={completion} />
+        )}
       </StepRow>
+
+      {isLate && !completed && <CancelEventSection eventId={eventId} />}
     </div>
+  );
+}
+
+// ─── Bucket-specific views ───────────────────────────────────────────────
+
+function LateBanner({ daysLate }: { daysLate: number }) {
+  return (
+    <div className="bg-amber-50 border border-amber-300 rounded-lg px-4 py-3">
+      <p className="text-sm font-medium text-amber-900">
+        Logging this {daysLate} day{daysLate === 1 ? '' : 's'} late
+      </p>
+      <p className="text-xs text-amber-800 mt-0.5">
+        This job was scheduled in the past. We&apos;ll record it as a late completion.
+      </p>
+    </div>
+  );
+}
+
+function FutureView() {
+  return (
+    <div className="bg-zinc-50 border border-zinc-200 rounded-lg px-4 py-6 text-center">
+      <p className="text-sm font-medium text-zinc-700">This job is in the future.</p>
+      <p className="text-xs text-zinc-600 mt-1">
+        Check in on the day of the job.
+      </p>
+    </div>
+  );
+}
+
+function CancelledView({ completion }: { completion: CompletionRecord }) {
+  return (
+    <div className="bg-zinc-100 border border-zinc-300 rounded-lg px-4 py-4 space-y-2">
+      <p className="text-sm font-semibold text-zinc-800">Cancelled / not done</p>
+      {completion.cancelledAt && (
+        <p className="text-xs text-zinc-600">
+          {formatTime(completion.cancelledAt)}
+          {completion.cancelledByEmail ? ` · ${completion.cancelledByEmail}` : ''}
+        </p>
+      )}
+      {completion.cancellationReason && (
+        <p className="text-sm text-zinc-800 whitespace-pre-wrap italic">
+          “{completion.cancellationReason}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CancelEventSection({ eventId }: { eventId: string }) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <div className="pt-2">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="text-sm text-zinc-600 underline underline-offset-2"
+        >
+          Didn&apos;t do this job? Mark as cancelled / not done
+        </button>
+      </div>
+    );
+  }
+  return <CancelForm eventId={eventId} onClose={() => setOpen(false)} />;
+}
+
+function CancelForm({ eventId, onClose }: { eventId: string; onClose: () => void }) {
+  const [reason, setReason] = useState('');
+  const [state, formAction] = useActionState<ActionState | null, FormData>(cancelEvent, null);
+  const [isPending, startTransition] = useTransition();
+
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!reason.trim()) return;
+    const fd = new FormData();
+    fd.set('eventId', eventId);
+    fd.set('reason', reason.trim());
+    startTransition(() => formAction(fd));
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-3"
+    >
+      <div>
+        <p className="text-sm font-semibold text-amber-900">Mark as cancelled / not done</p>
+        <p className="text-xs text-amber-800 mt-1">
+          This removes the job from your owed-photos list. Please say what happened.
+        </p>
+      </div>
+      <label className="block">
+        <span className="text-xs font-medium text-amber-900">Reason (required)</span>
+        <textarea
+          required
+          rows={3}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Customer cancelled morning of, rescheduled to next week"
+          className="mt-1 block w-full rounded-lg border border-amber-300 bg-white p-3 text-base"
+        />
+      </label>
+      <ErrorBox error={state?.error} />
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={isPending || !reason.trim()}
+          className="flex-1 py-2.5 rounded-lg bg-amber-700 text-white font-medium disabled:bg-zinc-300 disabled:text-zinc-600"
+        >
+          {isPending ? 'Cancelling…' : 'Confirm cancel'}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={isPending}
+          className="flex-1 py-2.5 rounded-lg border border-zinc-300 bg-white text-zinc-800 font-medium disabled:opacity-50"
+        >
+          Back
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -169,50 +325,59 @@ function StepIcon({ number, state }: { number: number; state: RowState }) {
 
 // ─── Done-state sub-views ────────────────────────────────────────────────
 
-function BeforeThumbnail({ completion }: { completion: CompletionRecord }) {
+function BeforeThumbnail({ eventId, completion }: { eventId: string; completion: CompletionRecord }) {
   const before = completion.photos.find((p) => p.label === 'before');
   if (!before) return null;
+  // Mid-flow only (not yet completed): allow retake — deleting the Before
+  // photo reverts the phase so the step re-prompts.
+  const midFlow = completion.phase !== 'completed';
   return (
-    <a href={before.url} target="_blank" rel="noreferrer">
-      <img
-        src={before.url}
-        alt="Before"
-        className="size-24 object-cover rounded-md border border-emerald-200"
-      />
-    </a>
+    <div className="space-y-1.5">
+      <a href={before.url} target="_blank" rel="noreferrer" className="inline-block">
+        <img
+          src={before.url}
+          alt="Before"
+          className="size-24 object-cover rounded-md border border-emerald-200"
+        />
+      </a>
+      {midFlow && <DeletePhotoButton eventId={eventId} photo={before} variant="retake" />}
+    </div>
   );
 }
 
-function CompletedDetails({ completion }: { completion: CompletionRecord }) {
-  const afterPhoto = completion.photos.find((p) => p.label === 'after' || p.label === 'photo');
+function CompletedDetails({ eventId, completion }: { eventId: string; completion: CompletionRecord }) {
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-2">
+      <ul className="flex flex-wrap gap-2">
         {completion.photos.map((p) => (
-          <a key={p.url} href={p.url} target="_blank" rel="noreferrer" className="block">
-            {p.kind === 'video' ? (
-              <div className="relative size-20 overflow-hidden rounded-md border border-emerald-200 bg-black">
-                <video
+          <li key={p.url} className="space-y-1">
+            <a href={p.url} target="_blank" rel="noreferrer" className="block">
+              {p.kind === 'video' ? (
+                <div className="relative size-20 overflow-hidden rounded-md border border-emerald-200 bg-black">
+                  <video
+                    src={p.url}
+                    className="h-full w-full object-cover"
+                    muted
+                    playsInline
+                    preload="metadata"
+                  />
+                  <span className="absolute inset-0 flex items-center justify-center text-2xl text-white">
+                    ▶
+                  </span>
+                </div>
+              ) : (
+                <img
                   src={p.url}
-                  className="h-full w-full object-cover"
-                  muted
-                  playsInline
-                  preload="metadata"
+                  alt={p.label}
+                  className="size-20 rounded-md border border-emerald-200 object-cover"
                 />
-                <span className="absolute inset-0 flex items-center justify-center text-2xl text-white">
-                  ▶
-                </span>
-              </div>
-            ) : (
-              <img
-                src={p.url}
-                alt={p.label}
-                className="size-20 rounded-md border border-emerald-200 object-cover"
-              />
-            )}
-          </a>
+              )}
+            </a>
+            <DeletePhotoButton eventId={eventId} photo={p} variant="delete" />
+          </li>
         ))}
-      </div>
+      </ul>
+      <AddMorePhotos eventId={eventId} />
       {completion.paymentStatus && (
         <p className="text-sm text-emerald-900">
           Payment: <span className="font-medium">{labelForPayment(completion.paymentStatus)}</span>
@@ -237,14 +402,241 @@ function CompletedDetails({ completion }: { completion: CompletionRecord }) {
           (±{Math.round(completion.checkInLocation.accuracy)}m)
         </p>
       )}
-      {completion.note && (
-        <p className="text-sm text-emerald-900 whitespace-pre-wrap italic">
-          “{completion.note}”
-        </p>
-      )}
-      {!afterPhoto && null /* afterPhoto unused — silences lint */}
+      <EditableNote eventId={eventId} note={completion.note} />
+      <ActivityLog completion={completion} />
     </div>
   );
+}
+
+/**
+ * Two-tap delete: first tap arms an inline confirm, second tap deletes.
+ * `retake` variant is the mid-flow Before-photo case (delete reverts the
+ * phase so the step re-prompts).
+ */
+function DeletePhotoButton({
+  eventId,
+  photo,
+  variant,
+}: {
+  eventId: string;
+  photo: CompletionPhoto;
+  variant: 'delete' | 'retake';
+}) {
+  const [armed, setArmed] = useState(false);
+  const [state, formAction] = useActionState<ActionState | null, FormData>(deletePhoto, null);
+  const [isPending, startTransition] = useTransition();
+
+  function handleDelete() {
+    const fd = new FormData();
+    fd.set('eventId', eventId);
+    fd.set('photoUrl', photo.url);
+    startTransition(() => formAction(fd));
+  }
+
+  if (!armed) {
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={() => setArmed(true)}
+          className="text-xs text-zinc-500 underline underline-offset-2"
+        >
+          {variant === 'retake' ? 'Retake' : 'Delete'}
+        </button>
+        {state?.error && <p className="text-xs text-red-700 mt-1 max-w-40">{state.error}</p>}
+      </div>
+    );
+  }
+  return (
+    <div className="flex gap-1.5">
+      <button
+        type="button"
+        onClick={handleDelete}
+        disabled={isPending}
+        className="rounded bg-red-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
+      >
+        {isPending ? '…' : variant === 'retake' ? 'Retake?' : 'Delete?'}
+      </button>
+      <button
+        type="button"
+        onClick={() => setArmed(false)}
+        disabled={isPending}
+        className="rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700"
+      >
+        Keep
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Post-completion uploader: each picked file goes straight to Blob, then a
+ * single addPhotos action attaches the batch to the record.
+ */
+function AddMorePhotos({ eventId }: { eventId: string }) {
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [state, formAction] = useActionState<ActionState | null, FormData>(addPhotos, null);
+  const [, startTransition] = useTransition();
+
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    e.target.value = '';
+    setError(null);
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.set('eventId', eventId);
+      for (const file of files) {
+        const isVideo = file.type.startsWith('video/');
+        const ext = file.name.split('.').pop() || (isVideo ? 'mp4' : 'jpg');
+        const path = `field/${eventId}/extra-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const blob = await upload(path, file, {
+          access: 'public',
+          handleUploadUrl: '/api/photo-upload',
+        });
+        fd.append('photoUrl', blob.url);
+        fd.append('photoKind', isVideo ? 'video' : 'image');
+      }
+      startTransition(() => formAction(fd));
+    } catch (err) {
+      console.error('add-more upload failed', err);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
+        disabled={busy}
+        className="block w-full rounded-lg border-2 border-dashed border-emerald-300 py-2 text-sm text-emerald-700 hover:border-aac-blue hover:text-aac-blue active:bg-emerald-50 disabled:opacity-50"
+      >
+        {busy ? 'Uploading…' : '+ Add photo or video'}
+      </button>
+      {error && <p className="text-xs text-red-700">Upload failed: {error}</p>}
+      <ErrorBox error={state?.error} />
+    </div>
+  );
+}
+
+function EditableNote({ eventId, note }: { eventId: string; note?: string }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(note ?? '');
+  const [state, formAction] = useActionState<ActionState | null, FormData>(updateNote, null);
+  const [isPending, startTransition] = useTransition();
+
+  function handleSave(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const fd = new FormData();
+    fd.set('eventId', eventId);
+    fd.set('note', draft);
+    startTransition(() => {
+      formAction(fd);
+      setEditing(false);
+    });
+  }
+
+  if (!editing) {
+    return (
+      <div className="space-y-1">
+        {note ? (
+          <p className="text-sm text-emerald-900 whitespace-pre-wrap italic">“{note}”</p>
+        ) : (
+          <p className="text-sm text-zinc-500 italic">No notes.</p>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(note ?? '');
+            setEditing(true);
+          }}
+          className="text-xs text-zinc-500 underline underline-offset-2"
+        >
+          {note ? 'Edit note' : 'Add a note'}
+        </button>
+        <ErrorBox error={state?.error} />
+      </div>
+    );
+  }
+  return (
+    <form onSubmit={handleSave} className="space-y-2">
+      <textarea
+        rows={3}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="Anything Matt should know?"
+        className="block w-full rounded-lg border border-zinc-300 p-3 text-base"
+      />
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={isPending}
+          className="flex-1 py-2 rounded-lg bg-aac-blue text-white text-sm font-medium disabled:bg-zinc-300"
+        >
+          {isPending ? 'Saving…' : 'Save note'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          disabled={isPending}
+          className="flex-1 py-2 rounded-lg border border-zinc-300 bg-white text-sm text-zinc-800"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Check-in / completion timestamps plus every post-submission edit. */
+function ActivityLog({ completion }: { completion: CompletionRecord }) {
+  const entries: { at: string; text: string }[] = [
+    { at: completion.checkedInAt, text: `Checked in · ${completion.checkedInByEmail}` },
+  ];
+  if (completion.completedAt) {
+    const late =
+      typeof completion.loggedLateBy === 'number' && completion.loggedLateBy > 0
+        ? ` (${completion.loggedLateBy}d late)`
+        : '';
+    entries.push({ at: completion.completedAt, text: `Completed${late}` });
+  }
+  for (const e of completion.edits ?? []) {
+    entries.push({ at: e.at, text: `${labelForEdit(e)} · ${e.byEmail}` });
+  }
+  return (
+    <div className="border-t border-emerald-200 pt-2">
+      <p className="text-xs font-medium uppercase tracking-wide text-emerald-800 mb-1">Activity</p>
+      <ul className="space-y-0.5">
+        {entries.map((e, i) => (
+          <li key={`${e.at}-${i}`} className="text-xs text-emerald-700">
+            {formatDateTime(e.at)} — {e.text}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function labelForEdit(e: CompletionEdit): string {
+  switch (e.action) {
+    case 'photo_added': return 'Photo added';
+    case 'photo_deleted': return 'Photo deleted';
+    case 'note_updated': return 'Note updated';
+  }
 }
 
 function labelForPayment(s: PaymentStatus): string {
@@ -258,21 +650,27 @@ function labelForPayment(s: PaymentStatus): string {
 
 // ─── Current-step interactive widgets ────────────────────────────────────
 
-function CheckInStep({ eventId }: { eventId: string }) {
+function CheckInStep({ eventId, skipGeo = false }: { eventId: string; skipGeo?: boolean }) {
   const [state, formAction] = useActionState<ActionState | null, FormData>(checkIn, null);
   const [isPending, startTransition] = useTransition();
 
   async function handleCheckIn() {
-    const geo = await getGeolocationOnce({ timeoutMs: 5000, maxAgeMs: 60_000 });
     const fd = new FormData();
     fd.set('eventId', eventId);
-    if (geo.ok) {
-      fd.set('lat', String(geo.coords.latitude));
-      fd.set('lng', String(geo.coords.longitude));
-      fd.set('accuracy', String(geo.coords.accuracy));
-      fd.set('geoTakenAt', new Date().toISOString());
+    if (!skipGeo) {
+      const geo = await getGeolocationOnce({ timeoutMs: 5000, maxAgeMs: 60_000 });
+      if (geo.ok) {
+        fd.set('lat', String(geo.coords.latitude));
+        fd.set('lng', String(geo.coords.longitude));
+        fd.set('accuracy', String(geo.coords.accuracy));
+        fd.set('geoTakenAt', new Date().toISOString());
+      } else {
+        fd.set('geoError', geo.error);
+      }
     } else {
-      fd.set('geoError', geo.error);
+      // Late check-in: skip geo entirely — Mike isn't at the site, his
+      // current location would be misleading data.
+      fd.set('geoError', 'skipped-late-check-in');
     }
     startTransition(() => formAction(fd));
   }
@@ -285,7 +683,7 @@ function CheckInStep({ eventId }: { eventId: string }) {
         disabled={isPending}
         className="w-full py-3 rounded-lg bg-aac-blue text-white font-medium active:bg-aac-blue/90 disabled:bg-zinc-300 disabled:text-zinc-600"
       >
-        {isPending ? 'Checking in…' : 'Check In'}
+        {isPending ? 'Checking in…' : skipGeo ? 'Log late check-in' : 'Check In'}
       </button>
       <ErrorBox error={state?.error} />
     </div>
@@ -574,6 +972,17 @@ function ErrorBox({ error }: { error?: string | null }) {
       {error}
     </div>
   );
+}
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'America/New_York',
+  });
 }
 
 function formatTime(iso: string): string {

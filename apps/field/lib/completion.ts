@@ -9,7 +9,7 @@ import { keys } from '@aac/shared-utils/redis';
 import { getRedis } from './clients';
 
 export type PaymentStatus = 'cash' | 'check' | 'card' | 'not_yet_paid';
-export type Phase = 'checked_in' | 'before_photo_taken' | 'completed';
+export type Phase = 'checked_in' | 'before_photo_taken' | 'completed' | 'cancelled';
 
 /**
  * One uploaded media item attached to a completion.
@@ -26,6 +26,22 @@ export interface CompletionPhoto {
   label: 'before' | 'after' | 'photo' | 'extra';
   takenAt: string;
   kind?: 'image' | 'video';
+}
+
+/**
+ * One post-submission edit to a completion record. The record's core
+ * timestamps (checkedInAt, completedAt) cover the original flow; this
+ * trail covers everything that changed after Mark Complete.
+ */
+export interface CompletionEdit {
+  at: string;
+  byEmail: string;
+  action: 'photo_added' | 'photo_deleted' | 'note_updated';
+  /**
+   * Audit payload: for photos, the Blob URL (kept even after deletion so
+   * the trail survives the cascade); for notes, the previous text.
+   */
+  detail?: string;
 }
 
 export interface GeoCoords {
@@ -63,6 +79,19 @@ export interface CompletionRecord {
   linkedInvoiceId?: string;
   /** QB Payment ID created by Cash/Check branch (null for Card / Not Yet Paid). */
   linkedPaymentId?: string | null;
+  /**
+   * Days between event.start and completedAt when Mike logged the job
+   * retroactively (event was in the past at submit time). 0 for same-day
+   * completions. Absent for never-completed records.
+   */
+  loggedLateBy?: number;
+  /** Set when the event is marked cancelled / not done; phase moves to 'cancelled'. */
+  cancelledAt?: string;
+  cancelledByEmail?: string;
+  /** Required free-text reason captured at cancellation. */
+  cancellationReason?: string;
+  /** Post-submission edits (add/delete photo, note change), oldest first. */
+  edits?: CompletionEdit[];
 }
 
 export async function getCompletion(eventId: string): Promise<CompletionRecord | null> {

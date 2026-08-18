@@ -8,7 +8,10 @@
 
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { NextResponse } from 'next/server';
+import { createLogger } from '@aac/shared-utils/logger';
 import { getCurrentSession } from '@/lib/session';
+
+const log = createLogger('field:photo-upload');
 
 export async function POST(request: Request): Promise<NextResponse> {
   // Belt-and-suspenders: middleware already gated by cookie presence; here we
@@ -16,6 +19,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   // signed upload URL.
   const session = await getCurrentSession();
   if (!session) {
+    log.warn('Upload token rejected: no session');
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   }
 
@@ -27,8 +31,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       request,
       onBeforeGenerateToken: async (pathname) => {
         if (!pathname.startsWith('field/')) {
+          log.warn('Upload token rejected: bad pathname', { email: session.email, pathname });
           throw new Error('Upload path must begin with "field/"');
         }
+        log.info('Issued upload token', { email: session.email, pathname });
         return {
           allowedContentTypes: [
             'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif',
@@ -39,15 +45,17 @@ export async function POST(request: Request): Promise<NextResponse> {
           maximumSizeInBytes: 100 * 1024 * 1024,
         };
       },
-      onUploadCompleted: async () => {
-        // No-op — completion is recorded via the form's server action after the
-        // user clicks the next step. Orphans (uploaded but never confirmed)
-        // are tolerable for now; future: nightly cleanup of unreferenced blobs.
+      onUploadCompleted: async ({ blob }) => {
+        // Webhook fired by Vercel Blob after the direct-from-browser upload
+        // finishes. Recording is still the server action's job; this log
+        // exists so Matt can confirm each photo actually landed in Blob
+        // during live tests, separate from whether the form action ran.
+        log.info('Photo landed in Blob', { url: blob.url, pathname: blob.pathname });
       },
     });
     return NextResponse.json(json);
   } catch (err) {
-    console.error('photo-upload token issuance failed', err);
+    log.error('photo-upload handler failed', err as Error);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
       { status: 400 },
