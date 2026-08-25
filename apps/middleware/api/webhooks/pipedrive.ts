@@ -117,6 +117,15 @@ export function buildQbDisplayName(rawName: string, e164Phone: string): string {
 }
 
 /**
+ * QB API errors surface as Error messages containing the raw fault JSON
+ * (see QuickBooksClient.request). Match on the structured fault code rather
+ * than the human-readable text, which Intuit has reworded before.
+ */
+export function isQbErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && error.message.includes(`"code":"${code}"`);
+}
+
+/**
  * Main webhook handler
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -407,29 +416,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const syncToken = (existingCustomer as unknown as Record<string, unknown>)
             .SyncToken as string;
 
-          await qb.updateCustomer(qbCustomerId, {
-            SyncToken: syncToken,
-            DisplayName: qbDisplayName,
-            GivenName: firstName,
-            FamilyName: lastName || undefined,
-            CompanyName: company,
-            PrimaryEmailAddr: primaryEmail ? { Address: primaryEmail } : undefined,
-            PrimaryPhone: { FreeFormNumber: e164Phone },
-            BillAddr: addressLine1
-              ? {
-                  Line1: addressLine1,
-                  City: locality,
-                  CountrySubDivisionCode: state,
-                  PostalCode: postalCode,
-                }
-              : undefined,
-          });
+          try {
+            await qb.updateCustomer(qbCustomerId, {
+              SyncToken: syncToken,
+              DisplayName: qbDisplayName,
+              GivenName: firstName,
+              FamilyName: lastName || undefined,
+              CompanyName: company,
+              PrimaryEmailAddr: primaryEmail ? { Address: primaryEmail } : undefined,
+              PrimaryPhone: { FreeFormNumber: e164Phone },
+              BillAddr: addressLine1
+                ? {
+                    Line1: addressLine1,
+                    City: locality,
+                    CountrySubDivisionCode: state,
+                    PostalCode: postalCode,
+                  }
+                : undefined,
+            });
 
-          log.info('Updated QuickBooks customer', {
-            pipedriveId: data.id,
-            qbCustomerId,
-            displayName: qbDisplayName,
-          });
+            log.info('Updated QuickBooks customer', {
+              pipedriveId: data.id,
+              qbCustomerId,
+              displayName: qbDisplayName,
+            });
+          } catch (error) {
+            // Pipedrive fires person.added + person.updated near-simultaneously,
+            // so a concurrent invocation may have updated this customer between
+            // our SyncToken read and this write. The winner wrote the same data —
+            // treat the stale-token rejection (5010) as success.
+            if (!isQbErrorCode(error, '5010')) throw error;
+            log.info('Concurrent QB update won the race, skipping (stale SyncToken)', {
+              pipedriveId: data.id,
+              qbCustomerId,
+            });
+          }
         }
       } else {
         // Search by email first (most reliable identity match)
@@ -460,14 +481,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           });
         } else {
           // Create new customer in QuickBooks
-          const newCustomer = await qb.createCustomer({
-            displayName: qbDisplayName,
-            firstName,
-            lastName: lastName || undefined,
-            companyName: company,
-            email: primaryEmail,
-            phone: e164Phone,
-          });
+          let newCustomer: { Id?: string } | null = null;
+          try {
+            newCustomer = await qb.createCustomer({
+              displayName: qbDisplayName,
+              firstName,
+              lastName: lastName || undefined,
+              companyName: company,
+              email: primaryEmail,
+              phone: e164Phone,
+            });
+            log.info('Created new QuickBooks customer', {
+              pipedriveId: data.id,
+              qbCustomerId: newCustomer.Id,
+              displayName: qbDisplayName,
+            });
+          } catch (error) {
+            // Duplicate name (6240): either a concurrent invocation created the
+            // customer between our search and this create (Pipedrive fires
+            // person.added + person.updated near-simultaneously for new leads),
+            // or the name belongs to an inactive customer, which the plain
+            // search can't see but QB's uniqueness constraint still spans.
+            // Recover by re-searching including inactive and linking instead.
+            if (!isQbErrorCode(error, '6240')) throw error;
+            const existing = await qb.searchCustomerByName(qbDisplayName, {
+              includeInactive: true,
+            });
+            if (!existing || !existing.Id) throw error;
+            if (existing.Active === false) {
+              await qb.updateCustomer(existing.Id, {
+                SyncToken: existing.SyncToken ?? '0',
+                Active: true,
+                DisplayName: qbDisplayName,
+                GivenName: firstName,
+                FamilyName: lastName || undefined,
+                CompanyName: company,
+                PrimaryEmailAddr: primaryEmail ? { Address: primaryEmail } : undefined,
+                PrimaryPhone: { FreeFormNumber: e164Phone },
+              });
+            }
+            newCustomer = existing;
+            log.info('Recovered from QB duplicate-name (6240), linked existing customer', {
+              pipedriveId: data.id,
+              qbCustomerId: existing.Id,
+              displayName: qbDisplayName,
+              reactivated: existing.Active === false,
+            });
+          }
 
           qbCustomerId = newCustomer.Id || null;
           if (qbCustomerId) {
@@ -479,11 +539,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               qbCustomerId
             );
           }
-          log.info('Created new QuickBooks customer', {
-            pipedriveId: data.id,
-            qbCustomerId,
-            displayName: qbDisplayName,
-          });
         }
       }
 

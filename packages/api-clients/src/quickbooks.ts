@@ -295,10 +295,17 @@ export class QuickBooksClient {
     }
   }
 
-  async searchCustomerByName(displayName: string): Promise<QBCustomer | null> {
+  async searchCustomerByName(
+    displayName: string,
+    opts?: { includeInactive?: boolean }
+  ): Promise<QBCustomer | null> {
     try {
       const escapedName = displayName.replace(/'/g, "\\'");
-      const query = `SELECT * FROM Customer WHERE DisplayName = '${escapedName}'`;
+      // QBO's unique-DisplayName constraint spans inactive customers, but plain
+      // queries only return active ones — includeInactive lets callers resolve
+      // a "Duplicate Name Exists" (6240) against a deactivated customer.
+      const activeClause = opts?.includeInactive ? " AND Active IN (true, false)" : '';
+      const query = `SELECT * FROM Customer WHERE DisplayName = '${escapedName}'${activeClause}`;
 
       const result = await this.request<QBResponse<QBCustomer>>(
         `/query?query=${encodeURIComponent(query)}`

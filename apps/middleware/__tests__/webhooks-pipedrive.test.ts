@@ -48,7 +48,7 @@ vi.mock('../lib/clients.js', () => ({
   getGemini: vi.fn(() => ({ extractEntities: vi.fn().mockResolvedValue(null) })),
 }));
 
-import handler, { buildQbDisplayName } from '../api/webhooks/pipedrive.js';
+import handler, { buildQbDisplayName, isQbErrorCode } from '../api/webhooks/pipedrive.js';
 import { markEventProcessed, storePhoneMapping, trackWebhookProcessed } from '../lib/redis.js';
 
 function makeReq(body: Record<string, unknown>, method = 'POST') {
@@ -214,6 +214,127 @@ describe('pipedrive webhook', () => {
       expect.objectContaining({ pipedriveId: '100' })
     );
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  const qbFault = (code: string) =>
+    new Error(
+      `QuickBooks API error: 400 - {"Fault":{"Error":[{"Message":"x","Detail":"x","code":"${code}"}],"type":"ValidationFault"}}`
+    );
+
+  it('recovers from duplicate-name (6240) create race by linking the winner', async () => {
+    mockQuickBooks.isConnected.mockResolvedValue(true);
+    mockQuickBooks.createCustomer.mockRejectedValueOnce(qbFault('6240'));
+    // First search (pre-create) misses; recovery search finds the winner
+    mockQuickBooks.searchCustomerByName
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ Id: 'qb-winner', DisplayName: 'John Doe', Active: true });
+
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+
+    const redis = await import('../lib/redis.js');
+    expect(mockQuickBooks.searchCustomerByName).toHaveBeenLastCalledWith(
+      expect.any(String),
+      { includeInactive: true }
+    );
+    expect(redis.storePipedriveToQbMapping).toHaveBeenCalledWith('100', 'qb-winner');
+    expect(mockQuickBooks.updateCustomer).not.toHaveBeenCalled();
+    expect(redis.logHealthError).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('reactivates an inactive customer when 6240 collides with a deactivated name', async () => {
+    mockQuickBooks.isConnected.mockResolvedValue(true);
+    mockQuickBooks.createCustomer.mockRejectedValueOnce(qbFault('6240'));
+    mockQuickBooks.searchCustomerByName
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        Id: 'qb-inactive',
+        DisplayName: 'John Doe',
+        Active: false,
+        SyncToken: '3',
+      });
+
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+
+    const redis = await import('../lib/redis.js');
+    expect(mockQuickBooks.updateCustomer).toHaveBeenCalledWith(
+      'qb-inactive',
+      expect.objectContaining({ Active: true, SyncToken: '3' })
+    );
+    expect(redis.storePipedriveToQbMapping).toHaveBeenCalledWith('100', 'qb-inactive');
+    expect(redis.logHealthError).not.toHaveBeenCalled();
+  });
+
+  it('still logs a health error when 6240 recovery search finds nothing', async () => {
+    mockQuickBooks.isConnected.mockResolvedValue(true);
+    mockQuickBooks.createCustomer.mockRejectedValueOnce(qbFault('6240'));
+    mockQuickBooks.searchCustomerByName.mockResolvedValue(null);
+
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+
+    const redis = await import('../lib/redis.js');
+    expect(redis.logHealthError).toHaveBeenCalledWith(
+      'pipedrive',
+      expect.stringContaining('6240'),
+      expect.objectContaining({ pipedriveId: '100' })
+    );
+  });
+
+  it('treats stale-object (5010) update rejection as success', async () => {
+    mockQuickBooks.isConnected.mockResolvedValue(true);
+    const redis = await import('../lib/redis.js');
+    (redis.getQbCustomerIdFromPipedrive as any).mockResolvedValueOnce('qb-1');
+    mockQuickBooks.getCustomer.mockResolvedValueOnce({
+      Id: 'qb-1',
+      DisplayName: 'John Doe',
+      SyncToken: '2',
+    });
+    mockQuickBooks.updateCustomer.mockRejectedValueOnce(qbFault('5010'));
+
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+
+    expect(redis.logHealthError).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('still surfaces non-5010 update failures', async () => {
+    mockQuickBooks.isConnected.mockResolvedValue(true);
+    const redis = await import('../lib/redis.js');
+    (redis.getQbCustomerIdFromPipedrive as any).mockResolvedValueOnce('qb-1');
+    mockQuickBooks.getCustomer.mockResolvedValueOnce({
+      Id: 'qb-1',
+      DisplayName: 'John Doe',
+      SyncToken: '2',
+    });
+    mockQuickBooks.updateCustomer.mockRejectedValueOnce(qbFault('2020'));
+
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+
+    expect(redis.logHealthError).toHaveBeenCalledWith(
+      'pipedrive',
+      expect.stringContaining('QuickBooks sync failed'),
+      expect.objectContaining({ pipedriveId: '100' })
+    );
+  });
+});
+
+describe('isQbErrorCode', () => {
+  it('matches the structured fault code in the message', () => {
+    const err = new Error(
+      'QuickBooks API error: 400 - {"Fault":{"Error":[{"Message":"Duplicate Name Exists Error","code":"6240"}]}}'
+    );
+    expect(isQbErrorCode(err, '6240')).toBe(true);
+    expect(isQbErrorCode(err, '5010')).toBe(false);
+  });
+
+  it('rejects non-Error values and unrelated messages', () => {
+    expect(isQbErrorCode('6240', '6240')).toBe(false);
+    expect(isQbErrorCode(new Error('code 6240 somewhere'), '6240')).toBe(false);
   });
 });
 

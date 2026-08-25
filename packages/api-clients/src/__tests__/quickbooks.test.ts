@@ -66,6 +66,35 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('searchCustomerByName', () => {
+    it('queries active customers only by default', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: {} }));
+
+      await client.searchCustomerByName('John Doe');
+
+      const url = decodeURIComponent(mockFetch.mock.calls[0][0] as string);
+      expect(url).toContain("DisplayName = 'John Doe'");
+      expect(url).not.toContain('Active IN');
+    });
+
+    it('includes inactive customers when includeInactive is set', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: {
+          Customer: [{ Id: 'qb-9', DisplayName: 'John Doe', Active: false }],
+        },
+      }));
+
+      const result = await client.searchCustomerByName('John Doe', { includeInactive: true });
+
+      const url = decodeURIComponent(mockFetch.mock.calls[0][0] as string);
+      expect(url).toContain('Active IN (true, false)');
+      expect(result!.Id).toBe('qb-9');
+      expect(result!.Active).toBe(false);
+    });
+  });
+
   describe('createCustomer', () => {
     it('creates a customer', async () => {
       const client = makeClient();
