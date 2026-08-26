@@ -477,7 +477,7 @@ describe('QuoClient', () => {
     });
 
     describe('listMessages', () => {
-      it('queries /messages with phoneNumberId + participants[] and resolves default phone id', async () => {
+      it('queries /messages with phoneNumberId + plain participants and resolves default phone id', async () => {
         const client = makeClient();
         mockFetch.mockReturnValueOnce(phoneNumbersResponse());
         mockFetch.mockReturnValueOnce(mockResponse({
@@ -498,7 +498,8 @@ describe('QuoClient', () => {
         const url = mockFetch.mock.calls[1][0] as string;
         expect(url).toContain('/messages?');
         expect(url).toContain('phoneNumberId=pn-our');
-        expect(url).toContain('participants%5B%5D=%2B15551234567');
+        expect(url).toContain('participants=%2B15551234567');
+        expect(url).not.toContain('participants%5B%5D');
       });
 
       it('honors caller-supplied phoneNumberId without an extra lookup', async () => {
@@ -525,7 +526,7 @@ describe('QuoClient', () => {
     });
 
     describe('listCalls', () => {
-      it('queries /calls with phoneNumberId + participants[]', async () => {
+      it('queries /calls with phoneNumberId + plain participants', async () => {
         const client = makeClient();
         mockFetch.mockReturnValueOnce(mockResponse({
           data: [{
@@ -542,7 +543,8 @@ describe('QuoClient', () => {
         const url = mockFetch.mock.calls[0][0] as string;
         expect(url).toContain('/calls?');
         expect(url).toContain('phoneNumberId=pn-our');
-        expect(url).toContain('participants%5B%5D=%2B15551234567');
+        expect(url).toContain('participants=%2B15551234567');
+        expect(url).not.toContain('participants%5B%5D');
       });
     });
 

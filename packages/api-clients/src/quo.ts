@@ -552,7 +552,10 @@ export class QuoClient {
       phoneNumberId,
       maxResults: String(opts.maxResults ?? 50),
     });
-    params.append('participants[]', opts.participantE164);
+    // Quo rejects the bracketed form (participants[]) with a 400 on
+    // /messages and /calls — plain repeated `participants` is the accepted
+    // array serialization.
+    params.append('participants', opts.participantE164);
     if (opts.pageToken) params.set('pageToken', opts.pageToken);
 
     return this.request<QuoPaginated<QuoMessage>>(`/messages?${params.toString()}`);
@@ -560,7 +563,7 @@ export class QuoClient {
 
   /**
    * List calls between our line and a specific E.164 participant. Same
-   * shape as listMessages — participants[] + phoneNumberId.
+   * shape as listMessages — participants + phoneNumberId.
    */
   async listCalls(opts: {
     participantE164: string;
@@ -573,7 +576,10 @@ export class QuoClient {
       phoneNumberId,
       maxResults: String(opts.maxResults ?? 50),
     });
-    params.append('participants[]', opts.participantE164);
+    // Quo rejects the bracketed form (participants[]) with a 400 on
+    // /messages and /calls — plain repeated `participants` is the accepted
+    // array serialization.
+    params.append('participants', opts.participantE164);
     if (opts.pageToken) params.set('pageToken', opts.pageToken);
 
     return this.request<QuoPaginated<QuoCall>>(`/calls?${params.toString()}`);
