@@ -8,18 +8,20 @@
  * confidence label, then decides how to use them.
  *
  * Reference dataset is the static JSON shipped at
- * `packages/quoting/data/duration-reference-<DATE>.json`. Regenerated
+ * `packages/quoting/src/data/duration-reference-<DATE>.json`. Regenerated
  * manually via `tools/src/scratch/generate-duration-reference.ts`.
+ *
+ * The dataset is imported statically so webpack-bundled consumers
+ * (apps/field, apps/middleware) pick it up automatically. A previous
+ * implementation used readFileSync(import.meta.url) which Next.js's
+ * static tracer can't see, causing ENOENT crashes in Vercel lambdas.
  */
 
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import type { QBEstimate } from '@aac/api-clients/quickbooks';
 import { classifyScope, type ScopeCategory } from './classify-scope.js';
+import durationReferenceJson from './data/duration-reference-2026-05-29.json' with { type: 'json' };
 
 // ── Reference dataset shape (matches the generator output) ────────
-
-const REFERENCE_FILE = 'duration-reference-2026-05-29.json';
 
 type DollarBandId = '0-1k' | '1-2k' | '2-5k' | '5-10k' | '10k+';
 
@@ -62,9 +64,7 @@ interface ReferenceDataset {
   clusters: ClusterStats[];
 }
 
-const DATASET: ReferenceDataset = JSON.parse(
-  readFileSync(fileURLToPath(new URL(`../data/${REFERENCE_FILE}`, import.meta.url)), 'utf8'),
-);
+const DATASET: ReferenceDataset = durationReferenceJson as unknown as ReferenceDataset;
 
 // ── Public types ──────────────────────────────────────────────────
 
