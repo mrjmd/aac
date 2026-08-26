@@ -1,0 +1,13 @@
+# The Vercel CLI does not reliably honor .gitignore when uploading from the
+# monorepo root (sourceFilesOutsideRootDirectory mode) — without this file a
+# deploy uploads the 4.3GB .turbo cache, .next build dirs, and local env
+# files. Vercel builds run `pnpm install` + the framework build remotely, so
+# none of these are needed in the upload.
+node_modules
+.turbo
+.next
+dist
+analysis
+.env
+.env.*
+*.local
