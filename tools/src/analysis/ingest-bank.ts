@@ -57,31 +57,35 @@ const RULES: Rule[] = [
   // Marketing & lead-gen
   { pattern: /google ads|googleads/i, category: 'Advertising (Google Ads)' },
   { pattern: /yelp|angi|thumbtack|home ?advisor|networx|porch\.com|houzz/i, category: 'Advertising (Lead Marketplaces)' },
-  { pattern: /facebook|meta platforms/i, category: 'Advertising (Meta)' },
-  { pattern: /authority builders|nextdoor/i, category: 'Marketing (Other)' },
-  { pattern: /semrush|ahrefs|moz\.com|zoominfo|propertyradar|batchlead|batch.*lead/i, category: 'Marketing (Data/SEO Tools)' },
+  { pattern: /facebook|meta platforms|facebk \*|meta store/i, category: 'Advertising (Meta)' },
+  { pattern: /authority build|nextdoor/i, category: 'Marketing (Other)' },
+  { pattern: /semrush|ahrefs|moz\.com|zoominfo|propertyradar|batchlead|batch.*lead|rhino rank/i, category: 'Marketing (Data/SEO Tools)' },
   { pattern: /mailchimp|constant contact|sendgrid|klaviyo|alignable/i, category: 'Marketing (Email/Network)' },
-  { pattern: /peoplelinx|linkedin.*sales|sales navigator/i, category: 'Marketing (Sales Tools)' },
-  { pattern: /canva|moo print|moo\.com|vistaprint|printful/i, category: 'Marketing (Design/Print)' },
-  { pattern: /eventbrite|chamber of comm|realtors|networking/i, category: 'Marketing (Events/Networking)' },
+  { pattern: /peoplelinx|linkedin.*sales|sales navigator|linkedin job/i, category: 'Marketing (Sales Tools)' },
+  { pattern: /\bcanva\b|moo print|moo\.com|vistaprint|printful|tablecovers/i, category: 'Marketing (Design/Print)' },
+  { pattern: /eventbrite|chamber of comm|realtors|networking|bni global|bnigloball|\bbni\b|cape cod chamber|greater boston rea|ashi new engla|medchammembership|cape plymouth busi|greater newburypor|rhode island a ssoc/i, category: 'Marketing (Events/Networking)' },
 
   // Materials / COGS
-  { pattern: /home depot|lowes|lowe'?s|menards|ace hardware/i, category: 'Materials (Hardware Store)' },
-  { pattern: /concrete materials|sika|quikrete|sakrete|simpson strong|grainger|smooth.?on|chas e phipps|phipps co|patcz/i, category: 'Materials (Specialty)' },
+  { pattern: /home depot|\blowes\b|lowe'?s|menards|ace hardware/i, category: 'Materials (Hardware Store)' },
+  { pattern: /concrete materials|sika|quikrete|sakrete|simpson strong|grainger|smooth.?on|chas e phipps|phipps co|patcz|emecole|polygem|builder.?s book/i, category: 'Materials (Specialty)' },
   { pattern: /(masonry|polymer|epoxy|polyurethane|injection) supply/i, category: 'Materials (Specialty)' },
+  { pattern: /lamberts plumbing|rooterman/i, category: 'Subcontractor (Trade)' },
 
   // Vehicle / fuel
   // Anchored / specific to avoid matching "Mobile Check Dep", "BP" inside merchant codes, etc.
-  { pattern: /\bshell service|\bsunoco\b|exxonmobil|\bexxon\b|chevron station|cumberland farms|\bcitgo\b|\bvalero\b|7-?eleven|\bspeedway\b|gas station/i, category: 'Vehicle (Fuel)' },
-  { pattern: /jiffy lube|valvoline|monro|firestone|midas|auto.*repair|parts.*auto|napa auto/i, category: 'Vehicle (Maintenance)' },
+  { pattern: /\bshell service|\bsunoco\b|exxonmobil|\bexxon\b|chevron station|cumberland farms|\bcitgo\b|\bvalero\b|7-?eleven|\bspeedway\b|gas station|gulf oil|gulf a\.j|\bbp gas\b|bp#\d|pride station|alltown|hyde park gas|super petro|prestige gas|energy north|us auto gas|auto gas service|quincy smoke shop|zeaiter corp|tft quincy/i, category: 'Vehicle (Fuel)' },
+  { pattern: /jiffy lube|valvoline|monro|firestone|midas|auto.*repair|parts.*auto|napa auto|autozone|quirk ford/i, category: 'Vehicle (Maintenance)' },
   { pattern: /e-?z ?pass|ezpassma|toll/i, category: 'Vehicle (Tolls)' },
-  { pattern: /uhaul|u-haul|enterprise.*rent|hertz|budget rent/i, category: 'Vehicle (Rental)' },
+  { pattern: /uhaul|u-haul|enterprise.*rent|hertz|budget rent|sixt usa/i, category: 'Vehicle (Rental)' },
+  { pattern: /boston parking|laz parking|park.*fee/i, category: 'Vehicle (Parking)' },
 
   // Software / subscriptions
   { pattern: /claude\.ai|anthropic|openai|chatgpt|cursor\.sh|github|notion|figma|vercel|adobe|microsoft 365|m365|office 365|google.*workspace|gsuite|godaddy|namecheap|cloudflare|digitalocean|google cloud/i, category: 'Software (SaaS)' },
   { pattern: /apple\.com\/bill|app store|itunes/i, category: 'Software (Apple)' },
   { pattern: /pipedrive|hubspot|salesforce|zoho|monday\.com/i, category: 'Software (CRM)' },
-  { pattern: /openphone|twilio|ringcentral/i, category: 'Software (Telephony)' },
+  { pattern: /openphone|twilio|ringcentral|wispr|zoom\.com|docusign/i, category: 'Software (Telephony / Meetings)' },
+  { pattern: /squarespace|sqsp\*|wix\.com/i, category: 'Software (Website)' },
+  { pattern: /searchbug|getvived|securitymetrics|prezi|stacksocial|checksforless|tech processing|x corp\. paid|corp paid featu/i, category: 'Software (Other SaaS)' },
 
   // Insurance (incl. premium financing — IPFS — and claim reimbursements)
   { pattern: /hiscox|next insurance|biberk|the hartford|geico.*comm|progressive|workers.*comp|liability insurance|westguard|west.?guard|ipfs corp|safetyins|safety insurance/i, category: 'Insurance' },
@@ -98,8 +102,9 @@ const RULES: Rule[] = [
   { pattern: /quality resource|background check|checkr/i, category: 'Recruiting (Background Check)' },
 
   // Professional services
-  { pattern: /accountant|cpa|bookkeep|legalzoom|attorney|law firm|legal services|asheville leg|asheville legal/i, category: 'Professional Fees' },
-  { pattern: /ncourt|maconsumer|hic|town of|city of|massachusetts.*license|sec of ma|secretary of state|corporate filings|permit/i, category: 'Permits & Licensing' },
+  { pattern: /accountant|cpa|bookkeep|legalzoom|attorney|law firm|legal services|asheville leg|asheville legal|kahan kerensky|kahankerensky/i, category: 'Professional Fees' },
+  { pattern: /ncourt|maconsumer|hic|town of|city of|massachusetts.*license|sec of ma|secretary of state|corporate filings|permit|commonwealth mas|ici\*fee boston|ici fee boston|iymans reg/i, category: 'Permits & Licensing' },
+  { pattern: /real training|sandler training|sales training/i, category: 'Training & Development' },
 
   // Contract labor / 1099
   { pattern: /venmo|cash app|zelle/i, category: 'Possible Contract Labor (P2P)' },
@@ -114,11 +119,18 @@ const RULES: Rule[] = [
   // Cash
   { pattern: /cash withdrawal|^check #|atm withdrawal/i, category: 'Cash / Check (manual review)' },
 
+  // Personal / non-business (flag for review)
+  { pattern: /crown coins|draftkings|fanduel/i, category: 'Personal (non-business)' },
+  { pattern: /stop & shop|wal-?mart|target store|trader joe/i, category: 'Personal / Groceries (review)' },
+
+  // Bank transfers (Goldman Sachs Marcus savings, internal)
+  { pattern: /goldman sachs|marcus by|beacon bank ao|external transfer/i, category: 'Internal Transfer' },
+
   // Travel / meals
-  { pattern: /marriott|hilton|hyatt|airbnb|hotel/i, category: 'Travel (Lodging)' },
-  { pattern: /delta air|american air|united air|jetblue|southwest air/i, category: 'Travel (Air)' },
+  { pattern: /marriott|hilton|hyatt|airbnb|hotel|holiday inn|front desk/i, category: 'Travel (Lodging)' },
+  { pattern: /delta air|american air|united air|jetblue|southwest air|allegiant|^united $|^american $|american fort wort|united houston/i, category: 'Travel (Air)' },
   { pattern: /uber\b|lyft\b/i, category: 'Travel (Rideshare)' },
-  { pattern: /dunkin|starbucks|chipotle|panera|restaurant|grubhub|doordash|ubereats/i, category: 'Meals' },
+  { pattern: /dunkin|starbucks|chipotle|panera|restaurant|grubhub|doordash|ubereats|tst\*|lucys american|peet'?s coffee|george howell|ripple cafe/i, category: 'Meals' },
 
   // Utilities & rent
   { pattern: /national grid|eversource|nstar|verizon|att|t-mobile|tmobile|comcast|xfinity|spectrum/i, category: 'Utilities' },

@@ -1,6 +1,6 @@
 # Project Spec — Middleware Cleanup
 
-**Status:** Deferred — opportunistic
+**Status:** Superseded 2026-07-02 — folded into `audit-2026-07-remediation.md` (Phase 5.5); kept as historical context
 **Owner:** Matt
 **Created:** 2026-05-28
 **Pillar:** 1 (`apps/middleware/`)
@@ -71,6 +71,7 @@ Defined at `lib/templates.ts:36-39`, never rendered anywhere. Either wire it up 
 
 ## Related
 
+- `docs/projects/audit-2026-07-remediation.md` — July 2026 full-audit remediation plan (supersedes this doc for tracking)
 - `docs/projects/apps-agent.md` — Crawl-phase work adds deal-aware webhook handlers to middleware; natural moment to also do this cleanup
 - `apps/middleware/CLAUDE.md` — middleware governance rules
 - `docs/DECISIONS.md` — 2026-05-27 Cron B kill (explains the unwired `invoice-send.ts`)

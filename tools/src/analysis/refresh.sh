@@ -13,6 +13,10 @@ echo "==> Pulling QBO baseline"
 npx tsx tools/src/analysis/pull-qbo-baseline.ts
 
 echo
+echo "==> Ingesting bank transactions (for OpEx detail + marketing breakdown)"
+npx tsx tools/src/analysis/ingest-bank.ts
+
+echo
 echo "==> Building dashboard"
 npx tsx tools/src/analysis/build-dashboard.ts
 
