@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.aac.triage</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/matt/Projects/aac/tools/src/triage/refresh.sh</string>
+  </array>
+  <!-- 8:15 morning briefing: refresh (skips if findings <4h old), then open
+       the dashboard in the default browser (TRIAGE_OPEN). If the Mac is
+       asleep at 8:15, launchd fires the missed event once on wake. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>8</integer>
+    <key>Minute</key>
+    <integer>15</integer>
+  </dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>TRIAGE_SCHEDULED</key>
+    <string>1</string>
+    <key>TRIAGE_OPEN</key>
+    <string>1</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/matt/Projects/aac/analysis/data/triage/refresh.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/matt/Projects/aac/analysis/data/triage/refresh.log</string>
+</dict>
+</plist>
