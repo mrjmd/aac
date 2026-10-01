@@ -462,6 +462,36 @@ export class QuickBooksClient {
     return result.QueryResponse?.Estimate ?? [];
   }
 
+  /**
+   * Set an estimate's TxnStatus (e.g. mark a dead quote 'Closed' so it
+   * stops counting as open pipeline). Sparse update — fetches the estimate
+   * first for a fresh SyncToken.
+   */
+  async updateEstimateStatus(estimateId: string, status: QBEstimateStatus): Promise<QBEstimate> {
+    const estimate = await this.getEstimate(estimateId);
+    if (!estimate) {
+      throw new Error(`QuickBooks estimate ${estimateId} not found`);
+    }
+
+    log.info('Updating QuickBooks estimate status', { estimateId, status });
+
+    const result = await this.request<{ Estimate?: QBEstimate }>('/estimate', {
+      method: 'POST',
+      body: JSON.stringify({
+        Id: estimate.Id,
+        SyncToken: estimate.SyncToken,
+        sparse: true,
+        TxnStatus: status,
+      }),
+    });
+
+    if (!result.Estimate) {
+      throw new Error('QuickBooks did not return estimate after update');
+    }
+
+    return result.Estimate;
+  }
+
   // ── Invoices ────────────────────────────────────────────────────
 
   async getInvoicesByCustomer(

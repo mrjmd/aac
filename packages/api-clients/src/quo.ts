@@ -586,19 +586,27 @@ export class QuoClient {
   }
 
   /**
-   * List conversations on our line, ordered by Quo's own last-activity sort.
-   * Useful for "show me the most recent inbound activity" queries that
-   * don't have a known phone in hand.
+   * List conversations on our line.
+   *
+   * WARNING: despite the docs claiming descending most-recent order, the API
+   * returns rows in NO reliable order by lastActivityAt (measured 2026-09-08:
+   * 214 of 600 rows out of order; a thread active that day sat on page 8).
+   * Callers must NEVER early-break a pagination sweep based on row order —
+   * pass `updatedAfter` to bound the sweep server-side instead, and still
+   * filter client-side.
    */
   async listConversations(opts: {
     phoneNumberIds?: string[];
     maxResults?: number;
     pageToken?: string;
+    /** Server-side bound: only conversations updated after this instant. */
+    updatedAfter?: Date;
   } = {}): Promise<QuoPaginated<QuoConversation>> {
     const phoneNumberIds = opts.phoneNumberIds ?? [await this.getDefaultPhoneNumberId()];
     const params = new URLSearchParams({ maxResults: String(opts.maxResults ?? 50) });
     for (const id of phoneNumberIds) params.append('phoneNumberIds[]', id);
     if (opts.pageToken) params.set('pageToken', opts.pageToken);
+    if (opts.updatedAfter) params.set('updatedAfter', opts.updatedAfter.toISOString());
 
     return this.request<QuoPaginated<QuoConversation>>(`/conversations?${params.toString()}`);
   }

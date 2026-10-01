@@ -572,6 +572,19 @@ describe('QuoClient', () => {
         expect(url).toContain('phoneNumberIds%5B%5D=pn-b');
         expect(url).toContain('maxResults=25');
       });
+
+      it('passes updatedAfter as an ISO timestamp', async () => {
+        const client = makeClient();
+        mockFetch.mockReturnValueOnce(mockResponse({ data: [] }));
+
+        await client.listConversations({
+          phoneNumberIds: ['pn-a'],
+          updatedAfter: new Date('2026-08-18T00:00:00.000Z'),
+        });
+
+        const url = mockFetch.mock.calls[0][0] as string;
+        expect(url).toContain('updatedAfter=2026-08-18T00%3A00%3A00.000Z');
+      });
     });
 
     describe('getRecentActivityForContact', () => {

@@ -415,6 +415,42 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('updateEstimateStatus', () => {
+    it('fetches the estimate then sparse-POSTs the new TxnStatus with its SyncToken', async () => {
+      const client = makeClient();
+      // 1) GET /estimate/<id>
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: 'est-9', SyncToken: '3', TxnStatus: 'Pending', CustomerRef: { value: 'c-1' }, Line: [] },
+      }));
+      // 2) POST /estimate
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: 'est-9', SyncToken: '4', TxnStatus: 'Closed', CustomerRef: { value: 'c-1' }, Line: [] },
+      }));
+
+      const result = await client.updateEstimateStatus('est-9', 'Closed');
+
+      expect(result.TxnStatus).toBe('Closed');
+
+      const getUrl = mockFetch.mock.calls[0][0] as string;
+      expect(getUrl).toContain('/estimate/est-9');
+
+      const postCall = mockFetch.mock.calls[1];
+      const postUrl = postCall[0] as string;
+      const postBody = JSON.parse((postCall[1] as { body: string }).body);
+      expect(postUrl).toContain('/estimate');
+      expect(postBody).toEqual({ Id: 'est-9', SyncToken: '3', sparse: true, TxnStatus: 'Closed' });
+    });
+
+    it('throws when the estimate is not found', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({}));
+
+      await expect(client.updateEstimateStatus('missing', 'Closed')).rejects.toThrow(
+        /estimate missing not found/
+      );
+    });
+  });
+
   describe('sendInvoice', () => {
     it('POSTs to /invoice/{id}/send and passes sendTo when email given', async () => {
       const client = makeClient();
