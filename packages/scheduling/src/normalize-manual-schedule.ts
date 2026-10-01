@@ -29,6 +29,12 @@ export interface ManualScheduleClassification {
   eventClass?: EventClass;
   /** Parsed time if the classifier extracted one. */
   knownSlot?: KnownSlot;
+  /**
+   * Whether Matt stated the slot as decided ('booked') or proposed it
+   * ('offered'). Absent = classifier predates the field; treated as
+   * 'offered' downstream (never auto-executes).
+   */
+  slotCommitment?: 'booked' | 'offered';
   /** LLM scope summary, or '' if the classifier produced none. */
   scopeSummary?: string;
 }
@@ -90,6 +96,7 @@ export function normalizeManualSchedule(
     estimatedDurationHours: null,
     durationPrediction: null,
     ...(classification.knownSlot ? { knownSlot: classification.knownSlot } : {}),
+    ...(classification.slotCommitment ? { slotCommitment: classification.slotCommitment } : {}),
   };
 }
 

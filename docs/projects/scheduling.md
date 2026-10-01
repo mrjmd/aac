@@ -526,6 +526,73 @@ Matt reviews the summary, redirects as needed, signs off. I codify the approved 
 
 ---
 
+## Walk #7-lite: stub calendar events — shipped 2026-09-30
+
+Matt asked for "primitive automatic calendar creation": when he texts a
+booking ("I'm putting you on the calendar Tuesday at 10") or a customer
+confirms a time he offered, create the event automatically. This is the
+reduced-risk first slice of Walk #7 — it executes only directives that
+carry an **agreed slot**, and it creates deliberately incomplete **stubs**
+(one tap to delete) rather than committed bookings, so the four Walk-#7
+dedup prereqs don't block it.
+
+**Trigger rule (Matt-confirmed 2026-09-30)**: a *declarative* statement by
+Matt creates the stub immediately; an *offered* time waits for the
+customer's yes; no concrete time = no stub (directive flows to the shadow
+queue as before).
+
+### What shipped
+
+1. **Classifier surgery** (the deferred A+B spike, now done):
+   - `classifySchedulingIntent` accepts `conversationContext` — the last
+     ≤12 thread messages (fetched via `QuoClient.listMessages` for texts;
+     the interleaved dialogue itself for transcripts). Fixes the Margie
+     bug: "Yes. That will work." now resolves against what was offered.
+   - New customer intent `appointment_confirmed` with `knownSlot` +
+     `eventClass` extracted from the antecedent offer. Explicit prompt
+     rule: agreement right after a slot offer is appointment_confirmed,
+     NOT quote_approved.
+   - Matt-side `manual_schedule` now returns `slotCommitment:
+     'booked' | 'offered'` ("putting you down for" vs "would Tuesday
+     work?"). Parser defaults to 'offered' (conservative) when omitted.
+   - Latent bug fixed: prompt placeholders ({{TODAY_DATE_LOCAL}} etc.)
+     were only replaced on first occurrence; now `replaceAll`.
+2. **`@aac/scheduling`**: `AppointmentConfirmedDirective` (+ normalizer,
+   confidence anchored like manual-schedule: high+PD-match ≈ 0.88 clears
+   the 0.7 gate, classifier-low never does) and `executeStubEvent`:
+   - title `STUB — {Name}`; colorId job=10 / assessment=3 / callback=5
+   - durations: assessment 0.5h; job + callback 3.5h (Matt 2026-09-30);
+     explicit `endIso` from the classifier wins over defaults
+   - PD personal-address custom field → event location; scope summary +
+     directive provenance → description
+   - technician attendee with `sendUpdates: 'none'` (new CreateEventInput
+     option) — Mike gets NO email until Matt reviews
+   - guards: no slot / slot in past / **duplicate** (any event naming the
+     customer within ±24h of the slot — catches re-fired directives and
+     hand-made events)
+3. **Middleware dispatch**: context fetch (soft-fail → context-free
+   classification), appointment_confirmed handling, stub execution gated
+   on `SCHEDULING_STUB_EVENTS=true` env flag AND confidence ≥ 0.7 AND
+   `getActionableSlot()` (booked manual-schedule or confirmed
+   appointment). Stub failures log to /health but never disturb the
+   directive or webhook. Summary gains `stubsCreated`.
+
+**Rollout**: flag is OFF by default — deploy is inert until
+`SCHEDULING_STUB_EVENTS=true` is set on the middleware Vercel project.
+Kill switch = remove the var.
+
+**Test counts post-#7-lite**: api-clients 253, scheduling 130,
+middleware 247, full turbo 13/13 + typecheck 17/17.
+
+**Deferred to the next slice**: photo attachments (Quo media → Drive →
+calendar attachment; needs Drive scope + folder decision), duration from
+`durationPrediction` (quote-aware long/multi-day jobs), offered-slot
+memory (directive linking an offer to its later confirmation), and full
+Walk #7 (suggestSlot-driven autonomous scheduling, still behind the four
+dedup prereqs above).
+
+---
+
 ## Related
 
 - Package CLAUDE: `packages/scheduling/CLAUDE.md`

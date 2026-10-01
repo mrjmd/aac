@@ -132,13 +132,30 @@ export interface ManualScheduleDirective extends BaseDirective {
   eventClass: EventClass;
   /** Present when Matt indicated an explicit time. */
   knownSlot?: KnownSlot;
+  /**
+   * 'booked' = Matt stated the appointment as decided ("putting you down
+   * for Tuesday at 10") — eligible for immediate stub-event creation.
+   * 'offered' = Matt proposed a time and is waiting for the customer's
+   * yes (which later arrives as appointment_confirmed). Absent on
+   * directives created before this field existed — treat as 'offered'.
+   */
+  slotCommitment?: 'booked' | 'offered';
+}
+
+export interface AppointmentConfirmedDirective extends BaseDirective {
+  intent: 'appointment_confirmed';
+  /** Inferred from what kind of visit was offered in the conversation. */
+  eventClass: EventClass;
+  /** Required — the slot the customer just agreed to. */
+  knownSlot: KnownSlot;
 }
 
 export type SchedulingDirective =
   | QuoteApprovedDirective
   | AssessmentRequestedDirective
   | CallbackOpenedDirective
-  | ManualScheduleDirective;
+  | ManualScheduleDirective
+  | AppointmentConfirmedDirective;
 
 export type DirectiveIntent = SchedulingDirective['intent'];
 
@@ -160,6 +177,12 @@ export function isCallbackOpened(d: SchedulingDirective): d is CallbackOpenedDir
 
 export function isManualSchedule(d: SchedulingDirective): d is ManualScheduleDirective {
   return d.intent === 'manual_schedule';
+}
+
+export function isAppointmentConfirmed(
+  d: SchedulingDirective,
+): d is AppointmentConfirmedDirective {
+  return d.intent === 'appointment_confirmed';
 }
 
 // ── Normalizer dependency bundle ───────────────────────────────────

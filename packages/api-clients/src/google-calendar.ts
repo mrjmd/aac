@@ -80,6 +80,13 @@ export interface CreateEventInput {
   end: string;    // ISO datetime
   colorId?: string;
   attendees?: string[];
+  /**
+   * Whether Google emails attendees about the new event. Omitted = API
+   * default ('none' historically, but not contractually guaranteed) —
+   * pass 'none' explicitly when attendees must NOT be notified (e.g.
+   * stub events awaiting Matt's review).
+   */
+  sendUpdates?: 'all' | 'externalOnly' | 'none';
 }
 
 export interface UpdateEventInput {
@@ -266,6 +273,7 @@ export class GoogleCalendarClient {
 
     const response = await client.events.insert({
       calendarId: this.config.calendarId,
+      ...(input.sendUpdates ? { sendUpdates: input.sendUpdates } : {}),
       requestBody: {
         summary: input.summary,
         location: input.location,

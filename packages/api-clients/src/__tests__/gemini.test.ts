@@ -23,6 +23,21 @@ function mockGeminiResponse(entities: Record<string, unknown>) {
   });
 }
 
+function mockTruncatedResponse(text: string) {
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({
+      candidates: [{
+        content: {
+          parts: [{ text }],
+        },
+        finishReason: 'MAX_TOKENS',
+      }],
+    }),
+  });
+}
+
 beforeEach(() => {
   mockFetch.mockReset();
 });
@@ -134,6 +149,39 @@ describe('GeminiClient', () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     }, 10000);
 
+    it('retries without thinkingConfig when a 200 comes back truncated at MAX_TOKENS', async () => {
+      const client = makeClient();
+      // First call: model silently ignored thinkingBudget: 0, thought away the
+      // budget, and returned truncated JSON with finishReason MAX_TOKENS.
+      mockFetch.mockReturnValueOnce(mockTruncatedResponse('{\n  "firstName": null,'));
+      mockFetch.mockReturnValueOnce(mockGeminiResponse({
+        firstName: 'Soo', lastName: 'Kim', fullName: null, email: null,
+        streetAddress: null, city: null, state: null, zipCode: null,
+        confidence: 'high',
+      }));
+
+      const result = await client.extractEntities('Soo Kim, 20 Pine St');
+      expect(result!.firstName).toBe('Soo');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+
+      const firstBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(firstBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+      const retryBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(retryBody.generationConfig.thinkingConfig).toBeUndefined();
+      expect(retryBody.generationConfig.maxOutputTokens).toBe(8192);
+    }, 10000);
+
+    it('throws parse_error if still truncated after the no-thinking retry', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockTruncatedResponse('{\n  "firstName": null,'));
+      mockFetch.mockReturnValueOnce(mockTruncatedResponse('{\n  "firstName": null,'));
+
+      await expect(client.extractEntities('some text')).rejects.toMatchObject({
+        name: 'ExtractionError',
+        reason: 'parse_error',
+      });
+    }, 10000);
+
     it('defaults confidence to low if missing', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(mockGeminiResponse({
@@ -170,7 +218,7 @@ describe('GeminiClient', () => {
       expect(result).toBe('Generated caption about foundation repair');
 
       const url = mockFetch.mock.calls[0][0] as string;
-      expect(url).toContain('gemini-2.5-flash');
+      expect(url).toContain('gemini-flash-latest');
       expect(url).toContain('generateContent');
     });
 
@@ -575,8 +623,15 @@ describe('GeminiClient', () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('throws ExtractionError on permanent API error', async () => {
+    it('throws ExtractionError when 400 persists after the thinking fallback', async () => {
       const client = makeClient();
+      // First 400 triggers the retry-without-thinkingConfig fallback; the
+      // second 400 is a genuine permanent error.
+      mockFetch.mockReturnValueOnce(Promise.resolve({
+        ok: false,
+        status: 400,
+        text: () => Promise.resolve('Bad Request'),
+      }));
       mockFetch.mockReturnValueOnce(Promise.resolve({
         ok: false,
         status: 400,
@@ -585,8 +640,42 @@ describe('GeminiClient', () => {
 
       await expect(
         client.classifySchedulingIntent('text', { speakerRole: 'customer', now: fixedNow }),
-      ).rejects.toThrow(ExtractionError);
-    });
+      ).rejects.toMatchObject({ reason: 'api_error' });
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    }, 10000);
+
+    it('retries without thinkingConfig when the model rejects it with 400', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(Promise.resolve({
+        ok: false,
+        status: 400,
+        text: () => Promise.resolve('thinking_config not supported'),
+      }));
+      mockFetch.mockReturnValueOnce(mockClassifierResponse({
+        intent: 'quote_approved',
+        confidence: 'high',
+        rationale: 'accepted',
+        knownSlot: null,
+        eventClass: null,
+        scopeSummary: '',
+      }));
+
+      const result = await client.classifySchedulingIntent(
+        'Yes, let\'s move forward',
+        { speakerRole: 'customer', now: fixedNow },
+      );
+
+      expect(result!.intent).toBe('quote_approved');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+
+      const firstBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(firstBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+      const secondBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(secondBody.generationConfig.thinkingConfig).toBeUndefined();
+      // Without thinking disabled, reasoning tokens count against the cap —
+      // the fallback must raise it well above the normal 400.
+      expect(secondBody.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(8192);
+    }, 10000);
 
     it('throws ExtractionError on parse failure', async () => {
       const client = makeClient();
@@ -679,6 +768,144 @@ describe('GeminiClient', () => {
       const promptText = body.contents[0].parts[0].text as string;
       expect(promptText).toContain('text below is from a CUSTOMER');
     });
+
+    it('returns appointment_confirmed with slot + class for a customer accepting an offer', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockClassifierResponse({
+        intent: 'appointment_confirmed',
+        confidence: 'high',
+        rationale: 'customer accepted the Monday 11:30 assessment slot',
+        knownSlot: { startIso: '2026-06-08T15:30:00Z' },
+        eventClass: 'assessment',
+        scopeSummary: 'basement crack assessment',
+      }));
+
+      const result = await client.classifySchedulingIntent(
+        'Yes. That will work. Thank you.',
+        {
+          speakerRole: 'customer',
+          now: fixedNow,
+          conversationContext: 'MATT: Happy to do a free assessment first. Mike can be there at 11:30am on Monday June 8th.',
+        },
+      );
+
+      expect(result!.intent).toBe('appointment_confirmed');
+      expect(result!.knownSlot).toEqual({ startIso: '2026-06-08T15:30:00Z' });
+      expect(result!.eventClass).toBe('assessment');
+      expect(result!.slotCommitment).toBeNull();
+    });
+
+    it('includes the conversation context block in the prompt when provided', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockClassifierResponse({
+        intent: null, confidence: 'low', rationale: '', knownSlot: null, eventClass: null, scopeSummary: '',
+      }));
+
+      await client.classifySchedulingIntent('Yes that works', {
+        speakerRole: 'customer',
+        now: fixedNow,
+        conversationContext: 'MATT: How about Tuesday at 10?',
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      const promptText = body.contents[0].parts[0].text as string;
+      expect(promptText).toContain('Recent conversation (oldest first)');
+      expect(promptText).toContain('MATT: How about Tuesday at 10?');
+      expect(promptText).not.toContain('{{CONTEXT_BLOCK}}');
+    });
+
+    it('omits the context block (and its placeholder) when no context is given', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockClassifierResponse({
+        intent: null, confidence: 'low', rationale: '', knownSlot: null, eventClass: null, scopeSummary: '',
+      }));
+
+      await client.classifySchedulingIntent('hello there friend', {
+        speakerRole: 'matt',
+        now: fixedNow,
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      const promptText = body.contents[0].parts[0].text as string;
+      expect(promptText).not.toContain('Recent conversation');
+      expect(promptText).not.toContain('{{CONTEXT_BLOCK}}');
+    });
+
+    it('substitutes every occurrence of the date/timezone placeholders', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockClassifierResponse({
+        intent: null, confidence: 'low', rationale: '', knownSlot: null, eventClass: null, scopeSummary: '',
+      }));
+
+      await client.classifySchedulingIntent('Schedule me Tuesday', {
+        speakerRole: 'matt',
+        now: fixedNow,
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      const promptText = body.contents[0].parts[0].text as string;
+      expect(promptText).not.toContain('{{TODAY_DATE_LOCAL}}');
+      expect(promptText).not.toContain('{{TIMEZONE}}');
+    });
+
+    it('parses slotCommitment=booked on manual_schedule', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockClassifierResponse({
+        intent: 'manual_schedule',
+        confidence: 'high',
+        rationale: 'Matt declared the booking',
+        knownSlot: { startIso: '2026-06-02T14:00:00Z' },
+        eventClass: 'job',
+        slotCommitment: 'booked',
+        scopeSummary: '',
+      }));
+
+      const result = await client.classifySchedulingIntent(
+        "I'm putting you down for Tuesday at 10",
+        { speakerRole: 'matt', now: fixedNow },
+      );
+
+      expect(result!.slotCommitment).toBe('booked');
+    });
+
+    it('defaults slotCommitment to offered when the model omits it on manual_schedule', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockClassifierResponse({
+        intent: 'manual_schedule',
+        confidence: 'high',
+        rationale: 'Matt proposed a time',
+        knownSlot: { startIso: '2026-06-02T14:00:00Z' },
+        eventClass: 'job',
+        scopeSummary: '',
+      }));
+
+      const result = await client.classifySchedulingIntent(
+        'How about Tuesday at 10?',
+        { speakerRole: 'matt', now: fixedNow },
+      );
+
+      expect(result!.slotCommitment).toBe('offered');
+    });
+
+    it('keeps slotCommitment null for customer-side intents', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockClassifierResponse({
+        intent: 'quote_approved',
+        confidence: 'high',
+        rationale: 'accepted',
+        knownSlot: null,
+        eventClass: null,
+        slotCommitment: 'booked', // model misbehaves
+        scopeSummary: '',
+      }));
+
+      const result = await client.classifySchedulingIntent(
+        "Let's do it",
+        { speakerRole: 'customer', now: fixedNow },
+      );
+
+      expect(result!.slotCommitment).toBeNull();
+    });
   });
 
   describe('hasSchedulingIntent', () => {
@@ -691,6 +918,7 @@ describe('GeminiClient', () => {
           rationale: 'x',
           knownSlot: null,
           eventClass: null,
+          slotCommitment: null,
           scopeSummary: '',
         }),
       ).toBe(true);
@@ -705,6 +933,7 @@ describe('GeminiClient', () => {
           rationale: '',
           knownSlot: null,
           eventClass: null,
+          slotCommitment: null,
           scopeSummary: '',
         }),
       ).toBe(false);

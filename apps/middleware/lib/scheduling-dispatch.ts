@@ -23,6 +23,7 @@
 import { randomUUID } from 'crypto';
 import { createLogger } from '@aac/shared-utils/logger';
 import {
+  ExtractionError,
   GeminiClient,
   type ClassifiedSchedulingIntent,
 } from '@aac/api-clients/gemini';
@@ -32,7 +33,11 @@ import {
   type PipedriveClient,
   type PipedrivePerson,
 } from '@aac/api-clients/pipedrive';
+import type { QuoClient } from '@aac/api-clients/quo';
 import {
+  executeStubEvent,
+  getActionableSlot,
+  normalizeAppointmentConfirmed,
   normalizeManualSchedule,
   normalizeQuoCustomerIntent,
   resolveCallbackParent,
@@ -85,6 +90,17 @@ export interface SchedulingDispatchDeps {
   pd: PipedriveClient;
   cal: GoogleCalendarClient;
   gemini: GeminiClient;
+  /** Used to fetch recent conversation history as classifier context. */
+  quo: QuoClient;
+  /**
+   * Stub-event execution config. When absent or disabled, directives only
+   * flow to the shadow queue (pre-stub behavior).
+   */
+  stub?: {
+    enabled: boolean;
+    /** Attendees added to stub events without notification (Mike). */
+    technicianEmails: string[];
+  };
   now?: () => Date;
 }
 
@@ -93,6 +109,7 @@ export interface SchedulingDispatchSummary {
   intentsDetected: number;
   directivesWritten: number;
   callbackParentMisses: number;
+  stubsCreated: number;
   errors: number;
 }
 
@@ -110,6 +127,7 @@ export async function dispatchSchedulingIntent(
     intentsDetected: 0,
     directivesWritten: 0,
     callbackParentMisses: 0,
+    stubsCreated: 0,
     errors: 0,
   };
 
@@ -118,12 +136,18 @@ export async function dispatchSchedulingIntent(
 
   const now = deps.now ?? (() => new Date());
 
+  // Conversation context lets the classifier resolve anaphora ("Yes, that
+  // works" → the slot Matt offered two messages back). Soft dependency:
+  // a failed fetch degrades to context-free classification, never throws.
+  const conversationContext = await fetchConversationContext(deps.quo, context);
+
   const settled = await Promise.allSettled(
     inputs.map(async (input) => {
       const classification = await deps.gemini.classifySchedulingIntent(input.text, {
         speakerRole: input.speakerRole,
         now: now(),
         timezone: DEFAULT_TIMEZONE,
+        ...(conversationContext ? { conversationContext } : {}),
       });
       return { input, classification };
     }),
@@ -139,6 +163,19 @@ export async function dispatchSchedulingIntent(
       log.error('Classifier failed for one input', result.reason as Error, {
         eventId: context.eventId,
       });
+      // Exception: api_error means the request itself is broken (retired
+      // model, invalid config, revoked key) — that IS a system failure, and
+      // it fails every future classification identically. Surface it so a
+      // dead model can't stay silent for weeks (gemini-2.5-flash retirement,
+      // Aug 2026).
+      const reason = result.reason instanceof ExtractionError ? result.reason.reason : null;
+      if (reason === 'api_error') {
+        await logHealthError(
+          'scheduling-dispatch',
+          `Gemini classifier api_error: ${(result.reason as Error).message.substring(0, 200)}`,
+          { eventId: context.eventId },
+        );
+      }
       continue;
     }
 
@@ -179,6 +216,20 @@ export async function dispatchSchedulingIntent(
         confidence: directive.confidence.score,
         queue,
       });
+
+      // Stub execution (Walk #7-lite): a directive carrying an AGREED slot
+      // (Matt declared the booking, or the customer confirmed an offered
+      // time) materializes as a STUB calendar event — title-prefixed, no
+      // attendee email, one tap to delete. Gated on the env flag + the
+      // same confidence threshold as the auto-propose queue.
+      if (
+        deps.stub?.enabled
+        && queue === 'pending'
+        && getActionableSlot(directive) !== null
+      ) {
+        const created = await createStubForDirective(deps, context, directive);
+        if (created) summary.stubsCreated++;
+      }
     } catch (err) {
       summary.errors++;
       log.error('Failed to build/write directive', err as Error, {
@@ -199,6 +250,107 @@ export async function dispatchSchedulingIntent(
 }
 
 // ── helpers ───────────────────────────────────────────────────────
+
+/** Max prior messages / transcript lines fed to the classifier as context. */
+const MAX_CONTEXT_LINES = 12;
+
+/**
+ * Build the classifier's conversation-context block, oldest first, one
+ * line per message ("MATT: …" / "CUSTOMER: …").
+ *
+ * - Transcripts carry their own context: the interleaved dialogue.
+ * - Messages fetch the recent thread from Quo. The triggering message is
+ *   excluded when it's the newest row (it's already the text being
+ *   classified).
+ *
+ * Never throws — context is an accuracy enhancer, not a dependency.
+ */
+export async function fetchConversationContext(
+  quo: QuoClient,
+  context: SchedulingDispatchContext,
+): Promise<string | null> {
+  if (context.eventType === 'call.transcript.completed') {
+    const dialogue = context.dialogue ?? [];
+    if (dialogue.length === 0) return null;
+    return dialogue
+      .slice(-MAX_CONTEXT_LINES)
+      .map((d) => `${d.isMatt ? 'MATT' : 'CUSTOMER'}: ${d.content}`)
+      .join('\n');
+  }
+
+  try {
+    const page = await quo.listMessages({
+      participantE164: context.customerPhone,
+      maxResults: MAX_CONTEXT_LINES + 1,
+    });
+    const ascending = [...page.data].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+    // Drop the triggering message when it's the newest row.
+    const newest = ascending[ascending.length - 1];
+    const trimmed =
+      newest && context.text && newest.text === context.text
+        ? ascending.slice(0, -1)
+        : ascending;
+    if (trimmed.length === 0) return null;
+    return trimmed
+      .slice(-MAX_CONTEXT_LINES)
+      .map((m) => `${m.direction === 'outgoing' ? 'MATT' : 'CUSTOMER'}: ${m.text}`)
+      .join('\n');
+  } catch (err) {
+    log.warn('Conversation-context fetch failed — classifying without context', {
+      customerPhone: context.customerPhone,
+      error: (err as Error).message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Create the STUB calendar event for a directive with an agreed slot.
+ * Self-contained error handling: a stub failure is logged + surfaced to
+ * /health but never disturbs the already-written directive or the webhook.
+ */
+async function createStubForDirective(
+  deps: SchedulingDispatchDeps,
+  context: SchedulingDispatchContext,
+  directive: SchedulingDirective,
+): Promise<boolean> {
+  try {
+    const info = await fetchPdPersonInfo(deps.pd, context.pdPersonId);
+    const result = await executeStubEvent(
+      { cal: deps.cal, now: deps.now ?? (() => new Date()) },
+      {
+        directive,
+        customerName: info.name ?? `PD ${context.pdPersonId}`,
+        customerAddress: info.address,
+        technicianEmails: deps.stub?.technicianEmails ?? [],
+      },
+    );
+    if (result.status === 'created') {
+      log.info('Stub calendar event created from directive', {
+        directiveId: directive.id,
+        eventId: result.eventId,
+        intent: directive.intent,
+        eventClass: directive.eventClass,
+      });
+      return true;
+    }
+    log.info('Stub creation skipped', {
+      directiveId: directive.id,
+      reason: result.reason,
+    });
+    return false;
+  } catch (err) {
+    log.error('Stub creation failed', err as Error, { directiveId: directive.id });
+    await logHealthError(
+      'scheduling-dispatch',
+      `Stub creation failed: ${(err as Error).message.substring(0, 200)}`,
+      { directiveId: directive.id },
+    );
+    return false;
+  }
+}
 
 export function extractClassifierInputs(
   context: SchedulingDispatchContext,
@@ -256,6 +408,9 @@ async function buildDirective(
         score: classification.score,
         ...(classification.eventClass ? { eventClass: classification.eventClass } : {}),
         ...(classification.knownSlot ? { knownSlot: classification.knownSlot } : {}),
+        ...(classification.slotCommitment
+          ? { slotCommitment: classification.slotCommitment }
+          : {}),
         scopeSummary: classification.scopeSummary,
       },
       customer: {
@@ -270,8 +425,36 @@ async function buildDirective(
     classification.intent !== 'quote_approved'
     && classification.intent !== 'assessment_requested'
     && classification.intent !== 'callback_opened'
+    && classification.intent !== 'appointment_confirmed'
   ) {
     return null;
+  }
+
+  if (classification.intent === 'appointment_confirmed') {
+    // A confirmation without a resolvable slot can't drive anything —
+    // treat like no intent (the classifier is told to require one).
+    if (!classification.knownSlot) {
+      log.warn('appointment_confirmed without a resolvable slot — dropped', {
+        eventId: context.eventId,
+        pdPersonId: context.pdPersonId,
+      });
+      return null;
+    }
+    const info = await fetchPdPersonInfo(deps.pd, context.pdPersonId);
+    return normalizeAppointmentConfirmed(normalizerDeps, {
+      classification: {
+        score: classification.score,
+        knownSlot: classification.knownSlot,
+        ...(classification.eventClass ? { eventClass: classification.eventClass } : {}),
+        scopeSummary: classification.scopeSummary,
+      },
+      customer: {
+        customerPhone: context.customerPhone,
+        pdPersonId: context.pdPersonId,
+        ...(info.qbCustomerId ? { qbCustomerId: info.qbCustomerId } : {}),
+      },
+      source: source as 'quo_text' | 'quo_call',
+    });
   }
 
   const personInfo = await fetchPdPersonInfo(deps.pd, context.pdPersonId);
@@ -326,7 +509,7 @@ async function buildDirective(
 async function fetchPdPersonInfo(
   pd: PipedriveClient,
   pdPersonId: number,
-): Promise<{ name: string | null; qbCustomerId: string | null }> {
+): Promise<{ name: string | null; qbCustomerId: string | null; address: string | null }> {
   let person: PipedrivePerson | null = null;
   try {
     person = await pd.getPerson(pdPersonId);
@@ -335,20 +518,22 @@ async function fetchPdPersonInfo(
       pdPersonId,
       error: (err as Error).message,
     });
-    return { name: null, qbCustomerId: null };
+    return { name: null, qbCustomerId: null, address: null };
   }
 
   const name = person?.name ?? null;
+  const rawPerson = person as unknown as Record<string, unknown> | null;
+  const rawAddress = rawPerson?.[PIPEDRIVE_CROSS_SYSTEM_FIELDS.PERSONAL_ADDRESS];
+  const address = typeof rawAddress === 'string' && rawAddress.length > 0 ? rawAddress : null;
 
   const cachedQbId = await getQbCustomerIdFromPipedrive(String(pdPersonId));
-  if (cachedQbId) return { name, qbCustomerId: cachedQbId };
+  if (cachedQbId) return { name, qbCustomerId: cachedQbId, address };
 
-  const rawPerson = person as unknown as Record<string, unknown> | null;
   const rawField = rawPerson?.[PIPEDRIVE_CROSS_SYSTEM_FIELDS.QB_CUSTOMER_ID];
   const qbCustomerId = typeof rawField === 'string' && rawField.length > 0 ? rawField : null;
   if (qbCustomerId) {
     await storePipedriveToQbMapping(String(pdPersonId), qbCustomerId);
   }
-  return { name, qbCustomerId };
+  return { name, qbCustomerId, address };
 }
 

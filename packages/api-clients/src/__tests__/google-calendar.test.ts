@@ -415,6 +415,27 @@ describe('GoogleCalendarClient', () => {
       const call = mocks.mockEventsInsert.mock.calls[0][0];
       expect(call.requestBody.attendees).toBeUndefined();
       expect(call.requestBody.colorId).toBeUndefined();
+      expect(call.sendUpdates).toBeUndefined();
+    });
+
+    it('passes sendUpdates through to the insert call', async () => {
+      const client = makeClient();
+
+      mocks.mockEventsInsert.mockResolvedValueOnce({
+        data: { id: 'stub-evt', summary: 'STUB — Jane', start: { dateTime: '2026-04-05T08:00:00Z' }, end: { dateTime: '2026-04-05T08:30:00Z' }, htmlLink: '' },
+      });
+
+      await client.createEvent({
+        summary: 'STUB — Jane',
+        start: '2026-04-05T08:00:00Z',
+        end: '2026-04-05T08:30:00Z',
+        attendees: ['mike@attackacrack.com'],
+        sendUpdates: 'none',
+      });
+
+      const call = mocks.mockEventsInsert.mock.calls[0][0];
+      expect(call.sendUpdates).toBe('none');
+      expect(call.requestBody.attendees).toEqual([{ email: 'mike@attackacrack.com' }]);
     });
   });
 

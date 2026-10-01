@@ -28,7 +28,7 @@ import {
   logHealthError,
 } from '../../lib/redis.js';
 import { getEnv } from '../../lib/env.js';
-import { getCalendar, getPipedrive, getGemini } from '../../lib/clients.js';
+import { getCalendar, getPipedrive, getGemini, getQuo } from '../../lib/clients.js';
 import { ensureInboundLeadDeal } from '../../lib/inbound-deal.js';
 import {
   dispatchSchedulingIntent,
@@ -569,7 +569,16 @@ export async function POST(request: Request): Promise<Response> {
     if (dispatchCtx) {
       try {
         const summary = await dispatchSchedulingIntent(
-          { pd, cal: getCalendar(), gemini: getGemini() },
+          {
+            pd,
+            cal: getCalendar(),
+            gemini: getGemini(),
+            quo: getQuo(),
+            stub: {
+              enabled: env.scheduling.stubEventsEnabled,
+              technicianEmails: env.google.technicianEmails,
+            },
+          },
           dispatchCtx,
         );
         log.info('Scheduling dispatch complete', {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ClassifiedSchedulingIntent } from '@aac/api-clients/gemini';
+import { ExtractionError, type ClassifiedSchedulingIntent } from '@aac/api-clients/gemini';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import type { PipedrivePerson } from '@aac/api-clients/pipedrive';
 
@@ -44,6 +44,7 @@ function makeClassification(
     rationale: '',
     knownSlot: null,
     eventClass: null,
+    slotCommitment: null,
     scopeSummary: '',
     ...overrides,
   };
@@ -85,6 +86,17 @@ function makePd(name: string | null, qbCustomerId?: string) {
 function makeCal(events: CalendarEvent[]) {
   return {
     listEvents: vi.fn().mockResolvedValue(events),
+    createEvent: vi.fn().mockResolvedValue({
+      id: 'evt-stub-1',
+      htmlLink: 'https://calendar.google.com/event?id=evt-stub-1',
+    }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+}
+
+function makeQuo(messages: Array<{ text: string; direction: string; createdAt: string }> = []) {
+  return {
+    listMessages: vi.fn().mockResolvedValue({ data: messages }),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
 }
@@ -180,7 +192,7 @@ describe('dispatchSchedulingIntent', () => {
     const cal = makeCal([]);
 
     const summary = await dispatchSchedulingIntent(
-      { pd, cal, gemini, now: fixedNow },
+      { pd, cal, gemini, quo: makeQuo(), now: fixedNow },
       ctxMsg(),
     );
 
@@ -202,7 +214,7 @@ describe('dispatchSchedulingIntent', () => {
       }),
     ]);
     const summary = await dispatchSchedulingIntent(
-      { pd: makePd('Jane Smith'), cal: makeCal([]), gemini, now: fixedNow },
+      { pd: makePd('Jane Smith'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
       ctxMsg({ text: 'Can you come look at my basement?' }),
     );
 
@@ -228,7 +240,7 @@ describe('dispatchSchedulingIntent', () => {
     ]);
 
     const summary = await dispatchSchedulingIntent(
-      { pd, cal, gemini, now: fixedNow },
+      { pd, cal, gemini, quo: makeQuo(), now: fixedNow },
       ctxMsg({ text: 'The crack you fixed is leaking again' }),
     );
 
@@ -252,6 +264,7 @@ describe('dispatchSchedulingIntent', () => {
         pd: makePd('Solo Customer'),
         cal: makeCal([]), // no events match
         gemini,
+        quo: makeQuo(),
         now: fixedNow,
       },
       ctxMsg({ text: 'My old crack repair is leaking again' }),
@@ -276,7 +289,7 @@ describe('dispatchSchedulingIntent', () => {
     ]);
 
     const summary = await dispatchSchedulingIntent(
-      { pd: makePd('John Smith'), cal: makeCal([]), gemini, now: fixedNow },
+      { pd: makePd('John Smith'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
       ctxMsg({
         eventType: 'message.delivered',
         text: 'Lock you in for Tuesday at 10',
@@ -292,7 +305,7 @@ describe('dispatchSchedulingIntent', () => {
   it('does nothing when classifier returns null intent', async () => {
     const gemini = makeGemini([makeClassification({ intent: null })]);
     const summary = await dispatchSchedulingIntent(
-      { pd: makePd('X'), cal: makeCal([]), gemini, now: fixedNow },
+      { pd: makePd('X'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
       ctxMsg({ text: 'thanks for the info!' }),
     );
 
@@ -316,7 +329,7 @@ describe('dispatchSchedulingIntent', () => {
     ]);
 
     const summary = await dispatchSchedulingIntent(
-      { pd: makePd('Caller Customer'), cal: makeCal([]), gemini, now: fixedNow },
+      { pd: makePd('Caller Customer'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
       ctxTranscript([
         { content: 'Yes, we want to move forward with the quote', isMatt: false },
         { content: 'Great, locking you in Tuesday at 10', isMatt: true },
@@ -342,7 +355,7 @@ describe('dispatchSchedulingIntent', () => {
     ]);
 
     const summary = await dispatchSchedulingIntent(
-      { pd: makePd('Caller'), cal: makeCal([]), gemini, now: fixedNow },
+      { pd: makePd('Caller'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
       ctxTranscript([
         { content: 'Some longer customer-side dialogue here', isMatt: false },
         { content: 'Some longer matt-side dialogue with a time in it Tuesday 10', isMatt: true },
@@ -357,12 +370,45 @@ describe('dispatchSchedulingIntent', () => {
     expect(mockLogHealthError).not.toHaveBeenCalled();
   });
 
+  it('surfaces classifier api_error to health:errors (dead model / broken config)', async () => {
+    const gemini = makeGemini([
+      new ExtractionError('Gemini API error 404: model retired', 'api_error'),
+    ]);
+
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('Caller'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
+      ctxMsg({ text: 'Can you come out and look at my basement please?' }),
+    );
+
+    expect(summary.errors).toBe(1);
+    expect(mockLogHealthError).toHaveBeenCalledTimes(1);
+    expect(mockLogHealthError).toHaveBeenCalledWith(
+      'scheduling-dispatch',
+      expect.stringContaining('api_error'),
+      expect.any(Object),
+    );
+  });
+
+  it('does NOT surface transient/parse classifier failures to health:errors', async () => {
+    const gemini = makeGemini([
+      new ExtractionError('JSON parse failed: garbage', 'parse_error'),
+    ]);
+
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('Caller'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
+      ctxMsg({ text: 'Can you come out and look at my basement please?' }),
+    );
+
+    expect(summary.errors).toBe(1);
+    expect(mockLogHealthError).not.toHaveBeenCalled();
+  });
+
   it('returns empty summary when no inputs pass the gate', async () => {
     const gemini = { classifySchedulingIntent: vi.fn() };
 
     const summary = await dispatchSchedulingIntent(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { pd: makePd('X'), cal: makeCal([]), gemini: gemini as any, now: fixedNow },
+      { pd: makePd('X'), cal: makeCal([]), gemini: gemini as any, quo: makeQuo(), now: fixedNow },
       ctxMsg({ text: 'ok' }),
     );
 
@@ -377,7 +423,7 @@ describe('dispatchSchedulingIntent', () => {
     ]);
 
     await dispatchSchedulingIntent(
-      { pd: makePd('X'), cal: makeCal([]), gemini, now: fixedNow },
+      { pd: makePd('X'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
       ctxMsg(),
     );
 
@@ -402,7 +448,7 @@ describe('dispatchSchedulingIntent', () => {
     mockGetQbCustomerIdFromPipedrive.mockResolvedValueOnce(null);
 
     await dispatchSchedulingIntent(
-      { pd, cal: makeCal([]), gemini, now: fixedNow },
+      { pd, cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
       ctxMsg({ pdPersonId: 5590 }),
     );
 
@@ -425,7 +471,7 @@ describe('dispatchSchedulingIntent', () => {
     mockGetQbCustomerIdFromPipedrive.mockResolvedValueOnce('qb-cached-7');
 
     await dispatchSchedulingIntent(
-      { pd, cal: makeCal([]), gemini, now: fixedNow },
+      { pd, cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
       ctxMsg({ pdPersonId: 7777 }),
     );
 
@@ -447,12 +493,251 @@ describe('dispatchSchedulingIntent', () => {
     mockGetQbCustomerIdFromPipedrive.mockResolvedValueOnce(null);
 
     await dispatchSchedulingIntent(
-      { pd, cal: makeCal([]), gemini, now: fixedNow },
+      { pd, cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
       ctxMsg({ pdPersonId: 5555 }),
     );
 
     const written = mockWritePendingDirective.mock.calls[0][0];
     expect(written.qbCustomerId).toBeUndefined();
     expect(mockStorePipedriveToQbMapping).not.toHaveBeenCalled();
+  });
+
+  // ── appointment_confirmed + conversation context (Walk #7-lite) ──
+
+  it('writes an AppointmentConfirmedDirective when the customer confirms an offered slot', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'appointment_confirmed',
+        score: 0.9,
+        confidence: 'high',
+        rationale: 'accepted the Monday slot',
+        knownSlot: { startIso: '2026-06-08T15:30:00Z' },
+        eventClass: 'assessment',
+      }),
+    ]);
+
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('Margie Mercadante'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
+      ctxMsg({ text: 'Yes. That will work. Thank you.' }),
+    );
+
+    expect(summary.directivesWritten).toBe(1);
+    const written = mockWritePendingDirective.mock.calls[0][0];
+    expect(written.intent).toBe('appointment_confirmed');
+    expect(written.eventClass).toBe('assessment');
+    expect(written.knownSlot).toEqual({ startIso: '2026-06-08T15:30:00Z' });
+  });
+
+  it('drops appointment_confirmed when no slot could be resolved', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'appointment_confirmed',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: null,
+      }),
+    ]);
+
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('X'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
+      ctxMsg({ text: 'Yes that sounds good to me' }),
+    );
+
+    expect(summary.directivesWritten).toBe(0);
+    expect(mockWritePendingDirective).not.toHaveBeenCalled();
+  });
+
+  it('feeds recent Quo messages to the classifier as conversation context', async () => {
+    const gemini = makeGemini([makeClassification({ intent: null })]);
+    const quo = makeQuo([
+      { text: 'Would Tuesday at 10 work?', direction: 'outgoing', createdAt: '2026-05-30T11:58:00Z' },
+      { text: 'Let\'s do it! Lock it in.', direction: 'incoming', createdAt: '2026-05-30T11:59:00Z' },
+    ]);
+
+    await dispatchSchedulingIntent(
+      { pd: makePd('X'), cal: makeCal([]), gemini, quo, now: fixedNow },
+      ctxMsg(), // text matches the newest row → excluded from context
+    );
+
+    const opts = gemini.classifySchedulingIntent.mock.calls[0][1];
+    expect(opts.conversationContext).toBe('MATT: Would Tuesday at 10 work?');
+  });
+
+  it('classifies without context when the Quo history fetch fails', async () => {
+    const gemini = makeGemini([makeClassification({ intent: null })]);
+    const quo = {
+      listMessages: vi.fn().mockRejectedValue(new Error('quo down')),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('X'), cal: makeCal([]), gemini, quo, now: fixedNow },
+      ctxMsg(),
+    );
+
+    expect(summary.classified).toBe(1);
+    const opts = gemini.classifySchedulingIntent.mock.calls[0][1];
+    expect(opts.conversationContext).toBeUndefined();
+  });
+
+  it('uses the transcript dialogue itself as context without calling Quo', async () => {
+    const gemini = makeGemini([
+      makeClassification({ intent: null }),
+      makeClassification({ intent: null }),
+    ]);
+    const quo = makeQuo();
+
+    await dispatchSchedulingIntent(
+      { pd: makePd('X'), cal: makeCal([]), gemini, quo, now: fixedNow },
+      ctxTranscript([
+        { content: 'I want to move forward with the quote', isMatt: false },
+        { content: 'Sounds good. Tuesday at 10 work for you?', isMatt: true },
+      ]),
+    );
+
+    expect(quo.listMessages).not.toHaveBeenCalled();
+    const opts = gemini.classifySchedulingIntent.mock.calls[0][1];
+    expect(opts.conversationContext).toBe(
+      'CUSTOMER: I want to move forward with the quote\nMATT: Sounds good. Tuesday at 10 work for you?',
+    );
+  });
+
+  // ── stub-event execution ─────────────────────────────────────────
+
+  const stubOn = { enabled: true, technicianEmails: ['mike@attackacrack.com'] };
+
+  it('creates a STUB event for a booked manual schedule above the confidence gate', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'manual_schedule',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: { startIso: '2026-06-02T14:00:00Z' },
+        eventClass: 'job',
+        slotCommitment: 'booked',
+        scopeSummary: 'crack injection',
+      }),
+    ]);
+    const cal = makeCal([]);
+
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('John Smith'), cal, gemini, quo: makeQuo(), stub: stubOn, now: fixedNow },
+      ctxMsg({ eventType: 'message.delivered', text: "I'm putting you down for Tuesday at 10" }),
+    );
+
+    expect(summary.directivesWritten).toBe(1);
+    expect(summary.stubsCreated).toBe(1);
+    expect(cal.createEvent).toHaveBeenCalledTimes(1);
+    const evt = cal.createEvent.mock.calls[0][0];
+    expect(evt.summary).toBe('STUB — John Smith');
+    expect(evt.colorId).toBe('10');
+    expect(evt.sendUpdates).toBe('none');
+    expect(evt.attendees).toEqual(['mike@attackacrack.com']);
+  });
+
+  it('does NOT create a stub for an offered slot (waiting on the customer)', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'manual_schedule',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: { startIso: '2026-06-02T14:00:00Z' },
+        eventClass: 'job',
+        slotCommitment: 'offered',
+      }),
+    ]);
+    const cal = makeCal([]);
+
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('John Smith'), cal, gemini, quo: makeQuo(), stub: stubOn, now: fixedNow },
+      ctxMsg({ eventType: 'message.delivered', text: 'Would Tuesday at 10 work for you?' }),
+    );
+
+    expect(summary.directivesWritten).toBe(1);
+    expect(summary.stubsCreated).toBe(0);
+    expect(cal.createEvent).not.toHaveBeenCalled();
+  });
+
+  it('creates a stub when the customer confirms an offered slot', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'appointment_confirmed',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: { startIso: '2026-06-08T15:30:00Z' },
+        eventClass: 'assessment',
+      }),
+    ]);
+    const cal = makeCal([]);
+
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('Margie Mercadante'), cal, gemini, quo: makeQuo(), stub: stubOn, now: fixedNow },
+      ctxMsg({ text: 'Yes. That will work. Thank you.' }),
+    );
+
+    expect(summary.stubsCreated).toBe(1);
+    const evt = cal.createEvent.mock.calls[0][0];
+    expect(evt.summary).toBe('STUB — Margie Mercadante');
+    expect(evt.colorId).toBe('3');
+    // assessment stub = 30 minutes
+    const durMin = (new Date(evt.end).getTime() - new Date(evt.start).getTime()) / 60000;
+    expect(durMin).toBe(30);
+  });
+
+  it('does not create stubs when the flag is off', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'appointment_confirmed',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: { startIso: '2026-06-08T15:30:00Z' },
+        eventClass: 'assessment',
+      }),
+    ]);
+    const cal = makeCal([]);
+
+    const summary = await dispatchSchedulingIntent(
+      {
+        pd: makePd('Margie Mercadante'),
+        cal,
+        gemini,
+        quo: makeQuo(),
+        stub: { enabled: false, technicianEmails: [] },
+        now: fixedNow,
+      },
+      ctxMsg({ text: 'Yes. That will work. Thank you.' }),
+    );
+
+    expect(summary.directivesWritten).toBe(1); // shadow queue still gets it
+    expect(summary.stubsCreated).toBe(0);
+    expect(cal.createEvent).not.toHaveBeenCalled();
+  });
+
+  it('a stub-creation failure surfaces to health but keeps the directive', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'appointment_confirmed',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: { startIso: '2026-06-08T15:30:00Z' },
+        eventClass: 'assessment',
+      }),
+    ]);
+    const cal = makeCal([]);
+    cal.createEvent.mockRejectedValue(new Error('calendar 500'));
+
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('Margie Mercadante'), cal, gemini, quo: makeQuo(), stub: stubOn, now: fixedNow },
+      ctxMsg({ text: 'Yes. That will work. Thank you.' }),
+    );
+
+    expect(summary.directivesWritten).toBe(1);
+    expect(summary.stubsCreated).toBe(0);
+    expect(summary.errors).toBe(0); // stub failures are soft
+    expect(mockLogHealthError).toHaveBeenCalledWith(
+      'scheduling-dispatch',
+      expect.stringContaining('Stub creation failed'),
+      expect.anything(),
+    );
   });
 });

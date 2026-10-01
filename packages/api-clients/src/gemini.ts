@@ -2,8 +2,8 @@
  * Gemini AI client — Entity extraction, text generation, and image generation.
  *
  * Extracted from aac-slim/src/clients/gemini.ts (entity extraction).
- * Expanded in Phase 4.1B with content generation (gemini-2.0-flash) and
- * image generation (imagen-4.0-generate-001) for the marketing engine.
+ * Expanded in Phase 4.1B with content generation and image generation
+ * (imagen-4.0-generate-001) for the marketing engine.
  *
  * The marketing app owns prompt engineering — this client handles API mechanics.
  */
@@ -16,7 +16,7 @@ const log = createLogger('gemini');
 
 export interface GeminiConfig {
   apiKey: string;
-  /** Text model for generateContent(). Default: gemini-2.5-flash */
+  /** Text model for generateContent(). Default: gemini-flash-latest */
   textModel?: string;
   /** Image model for generateImage(). Default: imagen-4.0-generate-001 */
   imageModel?: string;
@@ -40,7 +40,16 @@ export type SchedulingIntentLabel =
   | 'quote_approved'
   | 'assessment_requested'
   | 'callback_opened'
+  | 'appointment_confirmed'
   | 'manual_schedule';
+
+/**
+ * For manual_schedule: whether Matt stated the slot as decided ("I'm
+ * putting you down for Tuesday at 10") or merely proposed it ("Would
+ * Tuesday at 10 work?"). Offered slots wait for the customer's yes —
+ * which arrives later as an appointment_confirmed classification.
+ */
+export type ClassifiedSlotCommitment = 'booked' | 'offered';
 
 /**
  * Mirrors `EventClass` in `@aac/scheduling`. Duplicated as a string union
@@ -62,10 +71,15 @@ export interface ClassifiedSchedulingIntent {
   confidence: 'high' | 'medium' | 'low';
   /** Brief evidence (< 25 words). Empty string when intent is null. */
   rationale: string;
-  /** Only meaningful for manual_schedule. Null otherwise. */
+  /** Meaningful for manual_schedule and appointment_confirmed. Null otherwise. */
   knownSlot: ClassifiedKnownSlot | null;
-  /** Only meaningful for manual_schedule. Null otherwise. */
+  /** Meaningful for manual_schedule and appointment_confirmed. Null otherwise. */
   eventClass: ClassifiedEventClass | null;
+  /**
+   * Only meaningful for manual_schedule. Defaults to 'offered' when the
+   * model omits it — the conservative reading (waits for customer yes).
+   */
+  slotCommitment: ClassifiedSlotCommitment | null;
   /** Short scope hint extracted from text. Empty when not present. */
   scopeSummary: string;
 }
@@ -77,6 +91,14 @@ export interface ClassifySchedulingIntentOptions {
   now?: Date;
   /** IANA timezone for date interpretation. Defaults to 'America/New_York'. */
   timezone?: string;
+  /**
+   * Recent conversation, oldest-first, pre-formatted one line per message
+   * (e.g. "MATT: …" / "CUSTOMER: …"). When present, the classifier resolves
+   * what the text-to-classify refers to (e.g. "Yes, that works" confirming a
+   * slot Matt offered two messages earlier). Without it, confirmations that
+   * don't restate the time cannot be resolved to appointment_confirmed.
+   */
+  conversationContext?: string;
 }
 
 export interface GenerateContentOptions {
@@ -120,7 +142,18 @@ interface ImagenResponse {
 // ── Constants ────────────────────────────────────────────────────────
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_TEXT_MODEL = 'gemini-2.5-flash';
+// The -latest alias re-points to the newest stable flash model. Google
+// retires pinned model names out from under stable API keys (gemini-2.5-flash
+// started 404ing in Aug 2026 with zero code changes on our side), so pinning
+// a version here is a time bomb. The alias trades version stability for
+// availability — right for extraction/classification, where prompt-level
+// behavior drift is tolerable and a dead model is not. Google emails ~2 weeks
+// before re-pointing the alias.
+const DEFAULT_TEXT_MODEL = 'gemini-flash-latest';
+// Fallback budget when a model rejects thinkingConfig (see requestText):
+// thinking tokens then count against maxOutputTokens, and budgets under
+// ~2k truncate JSON responses mid-string on thinking models.
+const NO_THINKING_DISABLE_MAX_TOKENS = 8192;
 const DEFAULT_IMAGE_MODEL = 'imagen-4.0-generate-001';
 const IMAGE_TIMEOUT_MS = 45_000;
 const TEXT_TIMEOUT_MS = 30_000;
@@ -199,29 +232,48 @@ export class GeminiClient {
   constructor(private config: GeminiConfig) {}
 
   /**
-   * Extract entities from unstructured text using Gemini.
-   * Retries on transient errors (429, 503) with exponential backoff.
-   * Returns null gracefully on permanent errors or missing API key.
+   * POST a small structured-output prompt to the text model and return the
+   * raw response text. Shared by extractEntities and classifySchedulingIntent.
    *
-   * Throws ExtractionError on failure so callers can surface the reason.
+   * Retry ladder (up to 2 retries, 1s/2s backoff):
+   *   - 429/503 and network/timeout errors → retried (transient)
+   *   - 400 while thinkingConfig is attached → retried once WITHOUT
+   *     thinkingConfig at NO_THINKING_DISABLE_MAX_TOKENS. The -latest alias
+   *     re-points across model generations, and some generations reject
+   *     `thinkingBudget: 0` outright (gemini-3.6-flash 400s on it). Without
+   *     this fallback an alias re-point could 400 every call.
+   *   - anything else → ExtractionError with a reason
    */
-  async extractEntities(text: string): Promise<ExtractedEntities | null> {
-    if (!this.config.apiKey) {
-      log.warn('Gemini API key not configured, skipping entity extraction');
-      return null;
-    }
-
+  private async requestText(
+    prompt: string,
+    opts: { maxOutputTokens: number; logContext: string },
+  ): Promise<string> {
     const model = this.config.textModel ?? DEFAULT_TEXT_MODEL;
     const maxRetries = 2;
     let lastError: Error | null = null;
+    // Thinking tokens count against maxOutputTokens and would truncate the
+    // JSON response mid-string — we don't need reasoning for small
+    // extraction/classification tasks, so ask the model to skip it.
+    let disableThinking = true;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         if (attempt > 0) {
           const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s
-          log.info('Retrying entity extraction', { attempt, delayMs });
+          log.info(`Retrying ${opts.logContext}`, { attempt, delayMs });
           await new Promise((r) => setTimeout(r, delayMs));
         }
+
+        const generationConfig: Record<string, unknown> = disableThinking
+          ? {
+              temperature: 0.1,
+              maxOutputTokens: opts.maxOutputTokens,
+              thinkingConfig: { thinkingBudget: 0 },
+            }
+          : {
+              temperature: 0.1,
+              maxOutputTokens: NO_THINKING_DISABLE_MAX_TOKENS,
+            };
 
         const response = await fetch(
           `${API_BASE}/${model}:generateContent?key=${this.config.apiKey}`,
@@ -229,16 +281,8 @@ export class GeminiClient {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              contents: [{ parts: [{ text: EXTRACTION_PROMPT + text }] }],
-              generationConfig: {
-                temperature: 0.1,
-                maxOutputTokens: 500,
-                // Gemini 2.5 enables "thinking" by default; thinking tokens
-                // count against maxOutputTokens, which truncates the actual
-                // JSON response mid-string and triggers parse_error. We don't
-                // need reasoning for a small extraction task — disable it.
-                thinkingConfig: { thinkingBudget: 0 },
-              },
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig,
             }),
             signal: AbortSignal.timeout(15_000),
           }
@@ -253,6 +297,22 @@ export class GeminiClient {
           log.warn('Gemini transient error, will retry', {
             status: response.status,
             attempt,
+            context: opts.logContext,
+          });
+          continue;
+        }
+
+        if (response.status === 400 && disableThinking) {
+          const error = await response.text();
+          lastError = new ExtractionError(
+            `Gemini 400 with thinkingConfig: ${error.substring(0, 200)}`,
+            'api_error'
+          );
+          disableThinking = false;
+          log.warn('Gemini rejected thinkingConfig, retrying without it', {
+            attempt,
+            context: opts.logContext,
+            model,
           });
           continue;
         }
@@ -266,38 +326,39 @@ export class GeminiClient {
         }
 
         const data = (await response.json()) as GeminiResponse;
-        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const candidate = data.candidates?.[0];
+        const rawText = candidate?.content?.parts?.[0]?.text;
+
+        if (candidate?.finishReason === 'MAX_TOKENS' && disableThinking) {
+          // Some -latest alias generations accept thinkingBudget: 0 but
+          // silently ignore it (HTTP 200) — thinking then eats the token
+          // budget and the JSON comes back truncated. Same remedy as the
+          // 400 case: drop thinkingConfig and retry at the raised cap.
+          lastError = new ExtractionError(
+            'Gemini hit MAX_TOKENS despite thinkingBudget: 0 (truncated response)',
+            'parse_error'
+          );
+          disableThinking = false;
+          log.warn('Gemini ignored thinkingBudget: 0 and truncated, retrying without thinkingConfig', {
+            attempt,
+            context: opts.logContext,
+            model,
+          });
+          continue;
+        }
 
         if (!rawText) {
           throw new ExtractionError('No response text from Gemini', 'empty_response');
         }
 
-        // Parse JSON response (handle potential markdown code blocks)
-        const jsonText = rawText.replace(/```json\n?|\n?```/g, '').trim();
-        let entities: ExtractedEntities;
-        try {
-          entities = JSON.parse(jsonText) as ExtractedEntities;
-        } catch {
+        if (candidate?.finishReason === 'MAX_TOKENS') {
           throw new ExtractionError(
-            `JSON parse failed: ${jsonText.substring(0, 100)}`,
+            `Gemini response truncated (MAX_TOKENS): ${rawText.substring(0, 100)}`,
             'parse_error'
           );
         }
 
-        // Validate required fields exist
-        if (typeof entities.confidence !== 'string') {
-          entities.confidence = 'low';
-        }
-
-        log.info('Extracted entities', {
-          hasName: !!(entities.firstName || entities.lastName || entities.fullName),
-          hasEmail: !!entities.email,
-          hasAddress: !!entities.streetAddress,
-          confidence: entities.confidence,
-          attempts: attempt + 1,
-        });
-
-        return entities;
+        return rawText;
       } catch (error) {
         if (error instanceof ExtractionError) {
           lastError = error;
@@ -314,15 +375,60 @@ export class GeminiClient {
           log.warn('Gemini network/timeout error, will retry', {
             error: (error as Error).message,
             attempt,
+            context: opts.logContext,
           });
           continue;
         }
       }
     }
 
-    // All retries exhausted or permanent error
-    log.error('Entity extraction failed after retries', lastError!);
+    log.error(`Gemini ${opts.logContext} failed after retries`, lastError!);
     throw lastError!;
+  }
+
+  /**
+   * Extract entities from unstructured text using Gemini.
+   * Retries on transient errors (429, 503) with exponential backoff.
+   * Returns null gracefully on missing API key.
+   *
+   * Throws ExtractionError on failure so callers can surface the reason.
+   */
+  async extractEntities(text: string): Promise<ExtractedEntities | null> {
+    if (!this.config.apiKey) {
+      log.warn('Gemini API key not configured, skipping entity extraction');
+      return null;
+    }
+
+    const rawText = await this.requestText(EXTRACTION_PROMPT + text, {
+      maxOutputTokens: 500,
+      logContext: 'entity extraction',
+    });
+
+    // Parse JSON response (handle potential markdown code blocks)
+    const jsonText = rawText.replace(/```json\n?|\n?```/g, '').trim();
+    let entities: ExtractedEntities;
+    try {
+      entities = JSON.parse(jsonText) as ExtractedEntities;
+    } catch {
+      throw new ExtractionError(
+        `JSON parse failed: ${jsonText.substring(0, 100)}`,
+        'parse_error'
+      );
+    }
+
+    // Validate required fields exist
+    if (typeof entities.confidence !== 'string') {
+      entities.confidence = 'low';
+    }
+
+    log.info('Extracted entities', {
+      hasName: !!(entities.firstName || entities.lastName || entities.fullName),
+      hasEmail: !!entities.email,
+      hasAddress: !!entities.streetAddress,
+      confidence: entities.confidence,
+    });
+
+    return entities;
   }
 
   // ── Scheduling Intent Classification ────────────────────────────────
@@ -353,97 +459,21 @@ export class GeminiClient {
     }
 
     const prompt = buildIntentPrompt(text, opts);
-    const model = this.config.textModel ?? DEFAULT_TEXT_MODEL;
-    const maxRetries = 2;
-    let lastError: Error | null = null;
+    const rawText = await this.requestText(prompt, {
+      maxOutputTokens: 400,
+      logContext: 'intent classification',
+    });
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        if (attempt > 0) {
-          const delayMs = 1000 * Math.pow(2, attempt - 1);
-          log.info('Retrying intent classification', { attempt, delayMs });
-          await new Promise((r) => setTimeout(r, delayMs));
-        }
+    const jsonText = rawText.replace(/```json\n?|\n?```/g, '').trim();
+    const parsed = parseClassifierResponse(jsonText, opts.speakerRole);
 
-        const response = await fetch(
-          `${API_BASE}/${model}:generateContent?key=${this.config.apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: {
-                temperature: 0.1,
-                maxOutputTokens: 400,
-                // Same reason as extractEntities — see comment there.
-                thinkingConfig: { thinkingBudget: 0 },
-              },
-            }),
-            signal: AbortSignal.timeout(15_000),
-          },
-        );
+    log.info('Classified scheduling intent', {
+      intent: parsed.intent,
+      confidence: parsed.confidence,
+      hasKnownSlot: !!parsed.knownSlot,
+    });
 
-        if (response.status === 429 || response.status === 503) {
-          const error = await response.text();
-          lastError = new ExtractionError(
-            `Gemini ${response.status}: ${error.substring(0, 200)}`,
-            response.status === 429 ? 'rate_limit' : 'server_error',
-          );
-          log.warn('Gemini transient error on intent classify, will retry', {
-            status: response.status,
-            attempt,
-          });
-          continue;
-        }
-
-        if (!response.ok) {
-          const error = await response.text();
-          throw new ExtractionError(
-            `Gemini API error ${response.status}: ${error.substring(0, 200)}`,
-            'api_error',
-          );
-        }
-
-        const data = (await response.json()) as GeminiResponse;
-        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        if (!rawText) {
-          throw new ExtractionError('No response text from Gemini', 'empty_response');
-        }
-
-        const jsonText = rawText.replace(/```json\n?|\n?```/g, '').trim();
-        const parsed = parseClassifierResponse(jsonText, opts.speakerRole);
-
-        log.info('Classified scheduling intent', {
-          intent: parsed.intent,
-          confidence: parsed.confidence,
-          hasKnownSlot: !!parsed.knownSlot,
-          attempts: attempt + 1,
-        });
-
-        return parsed;
-      } catch (error) {
-        if (error instanceof ExtractionError) {
-          lastError = error;
-          if (error.reason !== 'rate_limit' && error.reason !== 'server_error') {
-            break;
-          }
-        } else {
-          lastError = new ExtractionError(
-            (error as Error).message,
-            (error as Error).name === 'TimeoutError' ? 'timeout' : 'network_error',
-          );
-          log.warn('Gemini network/timeout on intent classify, will retry', {
-            error: (error as Error).message,
-            attempt,
-          });
-          continue;
-        }
-      }
-    }
-
-    log.error('Intent classification failed after retries', lastError!);
-    throw lastError!;
+    return parsed;
   }
 
   // ── Content Generation ──────────────────────────────────────────────
@@ -488,7 +518,9 @@ export class GeminiClient {
           contents,
           generationConfig: {
             temperature: options?.temperature ?? 0.7,
-            maxOutputTokens: options?.maxOutputTokens ?? 2048,
+            // Generous default: on thinking models, reasoning tokens count
+            // against this cap, and caps under ~2k truncate output mid-string.
+            maxOutputTokens: options?.maxOutputTokens ?? 8192,
           },
         }),
         signal: AbortSignal.timeout(TEXT_TIMEOUT_MS),
@@ -630,6 +662,7 @@ function emptyIntent(): ClassifiedSchedulingIntent {
     rationale: '',
     knownSlot: null,
     eventClass: null,
+    slotCommitment: null,
     scopeSummary: '',
   };
 }
@@ -647,6 +680,13 @@ const CUSTOMER_INTENTS = new Set<SchedulingIntentLabel>([
   'quote_approved',
   'assessment_requested',
   'callback_opened',
+  'appointment_confirmed',
+]);
+
+/** Intents that may carry a concrete time slot + event class. */
+const SLOT_BEARING_INTENTS = new Set<SchedulingIntentLabel>([
+  'manual_schedule',
+  'appointment_confirmed',
 ]);
 
 const VALID_EVENT_CLASSES = new Set<ClassifiedEventClass>([
@@ -682,8 +722,10 @@ function parseClassifierResponse(
   const { confidence, score } = confidenceToScore(raw.confidence);
   const rationale = typeof raw.rationale === 'string' ? raw.rationale : '';
 
+  const slotBearing = intent !== null && SLOT_BEARING_INTENTS.has(intent);
+
   let knownSlot: ClassifiedKnownSlot | null = null;
-  if (intent === 'manual_schedule' && raw.knownSlot && typeof raw.knownSlot === 'object') {
+  if (slotBearing && raw.knownSlot && typeof raw.knownSlot === 'object') {
     const ks = raw.knownSlot as Record<string, unknown>;
     if (typeof ks.startIso === 'string' && ks.startIso.length > 0) {
       knownSlot = { startIso: ks.startIso };
@@ -694,10 +736,18 @@ function parseClassifierResponse(
   }
 
   let eventClass: ClassifiedEventClass | null = null;
-  if (intent === 'manual_schedule' && typeof raw.eventClass === 'string') {
+  if (slotBearing && typeof raw.eventClass === 'string') {
     if (VALID_EVENT_CLASSES.has(raw.eventClass as ClassifiedEventClass)) {
       eventClass = raw.eventClass as ClassifiedEventClass;
     }
+  }
+
+  let slotCommitment: ClassifiedSlotCommitment | null = null;
+  if (intent === 'manual_schedule') {
+    // Default 'offered' — the conservative reading. A missed 'booked'
+    // costs Matt a manual calendar entry; a false 'booked' creates a
+    // stub event for an appointment that was never agreed.
+    slotCommitment = raw.slotCommitment === 'booked' ? 'booked' : 'offered';
   }
 
   const scopeSummary = typeof raw.scopeSummary === 'string' ? raw.scopeSummary : '';
@@ -709,6 +759,7 @@ function parseClassifierResponse(
     rationale,
     knownSlot,
     eventClass,
+    slotCommitment,
     scopeSummary,
   };
 }
@@ -722,9 +773,14 @@ function buildIntentPrompt(
   const todayLocal = formatDateLocal(now, tz);
   const head =
     opts.speakerRole === 'customer' ? CUSTOMER_INTENT_PROMPT : MATT_INTENT_PROMPT;
+  const context = opts.conversationContext?.trim();
+  const contextBlock = context
+    ? `Recent conversation (oldest first). Use it ONLY to resolve what the text to classify refers to — classify the final text, not the conversation:\n${context}\n\n`
+    : '';
   return head
-    .replace('{{TIMEZONE}}', tz)
-    .replace('{{TODAY_DATE_LOCAL}}', todayLocal)
+    .replaceAll('{{TIMEZONE}}', tz)
+    .replaceAll('{{TODAY_DATE_LOCAL}}', todayLocal)
+    .replace('{{CONTEXT_BLOCK}}', contextBlock)
     .concat('\n', text);
 }
 
@@ -761,29 +817,36 @@ Return exactly one of:
    - "We're getting water in the same spot you sealed last spring"
    - "The injection from last year isn't holding"
 
-4. null — No scheduling intent. The message is conversational, a pricing question without a schedule request, an information request, or an acknowledgement. Examples:
+4. appointment_confirmed — The customer is agreeing to a SPECIFIC date/time that was offered to them (visible in the conversation context, or restated in their message). Examples:
+   - "Yes, Tuesday at 10 works for us"
+   - "That will work, thank you" (when the business offered a concrete slot just before)
+   - "Perfect, see you Friday morning"
+
+5. null — No scheduling intent. The message is conversational, a pricing question without a schedule request, an information request, or an acknowledgement. Examples:
    - "Thanks!"
    - "How much would it cost?"
    - "Can you send me the proposal?"
    - "What does that line item mean?"
 
 Return ONLY a JSON object:
-- intent: "quote_approved" | "assessment_requested" | "callback_opened" | null
+- intent: "quote_approved" | "assessment_requested" | "callback_opened" | "appointment_confirmed" | null
 - confidence: "high" | "medium" | "low"
 - rationale: short evidence, fewer than 25 words
-- knownSlot: null
-- eventClass: null
+- knownSlot: for appointment_confirmed, the confirmed slot as { "startIso": "YYYY-MM-DDTHH:mm:ssZ", "endIso"?: "..." } resolved from the offer being accepted (ISO-8601 UTC, anchored against today {{TODAY_DATE_LOCAL}} in {{TIMEZONE}}); null for every other intent or when no concrete date+time can be resolved
+- eventClass: for appointment_confirmed, "assessment" | "job" | "callback" inferred from what kind of visit was offered (free assessment / site look = "assessment"; performing repair work = "job"; revisit of prior AAC work = "callback"); null for other intents or when unclear
 - scopeSummary: short scope hint if mentioned (e.g. "wet basement"), or ""
 
 Rules:
 - Acknowledgements ("ok", "got it", "sounds good") alone are NOT quote_approved unless the customer is clearly accepting the work.
+- CRITICAL: an agreement ("Yes, that will work") given right after a specific date/time was offered is appointment_confirmed, NOT quote_approved — the customer is accepting the time slot, not necessarily the quote.
+- appointment_confirmed requires a concrete date (and ideally time) resolvable from the conversation context or the message itself. A bare "yes" with no offered slot in sight is NOT appointment_confirmed.
 - A pure pricing/info question with no schedule request is null.
 - Distinguish assessment_requested (new) from callback_opened (rework of prior AAC work).
 - When torn between two intents, lower confidence rather than guess.
 
 Today is {{TODAY_DATE_LOCAL}} ({{TIMEZONE}}).
 
-Text to classify:`;
+{{CONTEXT_BLOCK}}Text to classify:`;
 
 const MATT_INTENT_PROMPT = `You are a scheduling-intent classifier. The speaker is Matt, the business owner of a foundation repair company. The text below is his OUTBOUND text (or his lines in a call). Classify whether Matt is naming an explicit schedule.
 
@@ -800,6 +863,7 @@ Return exactly one of:
 For manual_schedule, also extract:
 - knownSlot.startIso: ISO-8601 UTC. Anchor natural-language dates against today ({{TODAY_DATE_LOCAL}}) and timezone {{TIMEZONE}}.
 - eventClass: "job" (default — work being performed), "assessment" (site visit / inspection), or "callback" (revisit of prior AAC work).
+- slotCommitment: "booked" when Matt states the appointment as decided — he is committing to it, not asking. Examples: "I'm putting you down for Tuesday at 10", "You're on the calendar for Friday", "Mike will be there Monday at 9". "offered" when Matt is proposing a time and waiting for the customer's answer. Examples: "Would Tuesday at 10 work?", "I could do Friday around 2", "How about next Monday at 9?".
 - scopeSummary: short hint if Matt mentions what work it's for, or "".
 
 Return ONLY a JSON object:
@@ -808,6 +872,7 @@ Return ONLY a JSON object:
 - rationale: short evidence, fewer than 25 words
 - knownSlot: { "startIso": "YYYY-MM-DDTHH:mm:ssZ", "endIso"?: "YYYY-MM-DDTHH:mm:ssZ" } or null
 - eventClass: "job" | "assessment" | "callback" or null
+- slotCommitment: "booked" | "offered" | null
 - scopeSummary: short string or ""
 
 Rules:
@@ -816,7 +881,8 @@ Rules:
 - Ambiguous day-name ("Tuesday") → assume the NEXT Tuesday from today {{TODAY_DATE_LOCAL}}.
 - Date-only (no time) → set startIso at 08:00 local.
 - Time-only (no date) → omit knownSlot; date is required.
+- When unsure between "booked" and "offered", choose "offered". A question mark or "does that work" phrasing is ALWAYS "offered".
 
 Today is {{TODAY_DATE_LOCAL}} ({{TIMEZONE}}).
 
-Text to classify:`;
+{{CONTEXT_BLOCK}}Text to classify:`;

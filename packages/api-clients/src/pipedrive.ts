@@ -93,6 +93,8 @@ interface SearchResult {
 export const PIPEDRIVE_CROSS_SYSTEM_FIELDS = {
   QUO_CONTACT_ID: '66f248c11ab22515e0dcd93f0bd9671ba6970fd4',
   QB_CUSTOMER_ID: 'a02e76a3d2d7e38cacd476aaea1c2a8809264025',
+  /** Combined personal-address custom field ("street, city, ST zip"). */
+  PERSONAL_ADDRESS: '5fc7cf5d8c890fe2f7062aaabe1e9b416c851511',
 } as const;
 
 // ── Deal-spine types and constants ───────────────────────────────────
@@ -623,7 +625,7 @@ export class PipedriveClient {
     }
 
     // Personal address field - custom field with hash key
-    const ADDR_KEY = '5fc7cf5d8c890fe2f7062aaabe1e9b416c851511';
+    const ADDR_KEY = PIPEDRIVE_CROSS_SYSTEM_FIELDS.PERSONAL_ADDRESS;
 
     if (updates.address || updates.city || updates.state || updates.zipCode) {
       if (updates.address) {

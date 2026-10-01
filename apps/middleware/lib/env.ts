@@ -65,6 +65,13 @@ export interface EnvConfig {
      * e.g. https://aac-agent.vercel.app
      */
     agentBaseUrl: string | null;
+    /**
+     * Walk #7-lite kill switch: when true, agreed-slot directives (Matt
+     * declared a booking, or the customer confirmed an offered time)
+     * auto-create STUB calendar events. Off by default; flip
+     * SCHEDULING_STUB_EVENTS=true in Vercel to enable, remove to disable.
+     */
+    stubEventsEnabled: boolean;
   };
   redis: {
     url: string;
@@ -132,6 +139,7 @@ export function getEnv(): EnvConfig {
     scheduling: {
       proposalSecret: process.env.SCHEDULING_PROPOSAL_SECRET || null,
       agentBaseUrl: process.env.AGENT_BASE_URL || null,
+      stubEventsEnabled: process.env.SCHEDULING_STUB_EVENTS === 'true',
     },
     redis: {
       url: requireEnv('UPSTASH_REDIS_REST_URL'),

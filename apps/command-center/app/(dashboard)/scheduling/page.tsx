@@ -114,6 +114,7 @@ const intentLabels: Record<SchedulingDirective["intent"], string> = {
   assessment_requested: "Assessment requested",
   callback_opened: "Callback opened",
   manual_schedule: "Manual schedule",
+  appointment_confirmed: "Appointment confirmed",
 };
 
 function DirectiveCard({
