@@ -9,6 +9,7 @@ import {
   deletePhoto,
   submitBeforePhoto,
   submitCompletion,
+  submitDayWrapUp,
   updateNote,
   type ActionState,
 } from './actions';
@@ -24,6 +25,12 @@ interface Props {
   bucket: EventTimeBucket;
   /** Days late if bucket is past_not_completed; 0 otherwise. Used for the "logging late" banner copy. */
   daysLate: number;
+  /**
+   * Display date of the next day of this multi-day job ("Wednesday,
+   * October 1"), or null when this is the final/only day. When set, the
+   * final step becomes "Wrap up for today" — no payment, optional photos.
+   */
+  continuesOn: string | null;
 }
 
 /**
@@ -36,7 +43,7 @@ interface Props {
  *
  * Non-job events (assessments, callbacks) skip the Before-Photo row.
  */
-export default function CompletionChecklist({ eventId, eventType, completion, bucket, daysLate }: Props) {
+export default function CompletionChecklist({ eventId, eventType, completion, bucket, daysLate, continuesOn }: Props) {
   if (bucket === 'cancelled' && completion?.cancelledAt) {
     return <CancelledView completion={completion} />;
   }
@@ -62,13 +69,16 @@ export default function CompletionChecklist({ eventId, eventType, completion, bu
     return 'pending';
   })();
 
+  const isDayWrap = continuesOn !== null && eventType === 'repair' && !completed;
+
   return (
     <div className="space-y-3">
       {isLate && !completed && <LateBanner daysLate={daysLate} />}
+      {isDayWrap && <MultidayBanner continuesOn={continuesOn} />}
 
       {allDone && (
         <div className="bg-emerald-100 border border-emerald-300 rounded-lg px-4 py-3 text-emerald-900 font-semibold text-center">
-          ✓ Complete
+          {completion?.continuedByEventId ? '✓ Day wrapped — job continues' : '✓ Complete'}
           {typeof completion?.loggedLateBy === 'number' && completion.loggedLateBy > 0 && (
             <span className="ml-2 text-xs font-normal text-emerald-800">
               (logged {completion.loggedLateBy} day{completion.loggedLateBy === 1 ? '' : 's'} late)
@@ -106,10 +116,13 @@ export default function CompletionChecklist({ eventId, eventType, completion, bu
       <StepRow
         number={eventType === 'repair' ? 3 : 2}
         state={completeState}
-        title={eventType === 'repair' ? 'Complete repair' : 'Complete'}
+        title={isDayWrap ? 'Wrap up for today' : eventType === 'repair' ? 'Complete repair' : 'Complete'}
         doneSummary={completed ? `at ${formatTime(completion!.completedAt ?? completion!.checkedInAt)}` : undefined}
       >
-        {completeState === 'current' && (
+        {completeState === 'current' && isDayWrap && (
+          <DayWrapUpStep eventId={eventId} continuesOn={continuesOn!} />
+        )}
+        {completeState === 'current' && !isDayWrap && (
           <PhotoUploadStep
             eventId={eventId}
             kind={eventType === 'repair' ? 'after' : 'photo'}
@@ -147,6 +160,60 @@ function LateBanner({ daysLate }: { daysLate: number }) {
         This job was scheduled in the past. We&apos;ll record it as a late completion.
       </p>
     </div>
+  );
+}
+
+function MultidayBanner({ continuesOn }: { continuesOn: string }) {
+  return (
+    <div className="bg-aac-blue/5 border border-aac-blue/30 rounded-lg px-4 py-3">
+      <p className="text-sm font-medium text-aac-blue">
+        Multi-day job — back {continuesOn}
+      </p>
+      <p className="text-xs text-zinc-700 mt-0.5">
+        Wrap up when you&apos;re done for the day. Payment and invoice happen on the final day.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Final step on a NON-final day of a multi-day job: optional photos/videos
+ * and a note, no payment, no required After photo. The server re-verifies
+ * the continuation before accepting.
+ */
+function DayWrapUpStep({ eventId, continuesOn }: { eventId: string; continuesOn: string }) {
+  const [state, formAction] = useActionState<ActionState | null, FormData>(submitDayWrapUp, null);
+  const [isPending, startTransition] = useTransition();
+
+  function handleSubmit(formData: FormData) {
+    formData.set('eventId', eventId);
+    startTransition(() => formAction(formData));
+  }
+
+  return (
+    <form action={handleSubmit} className="space-y-3">
+      <p className="text-sm text-zinc-600">
+        Returning {continuesOn} — no payment today. Add any photos worth keeping.
+      </p>
+      <ExtrasSection eventId={eventId} />
+      <label className="block">
+        <span className="text-sm font-medium text-zinc-800">Notes (optional)</span>
+        <textarea
+          name="note"
+          rows={3}
+          className="mt-1 block w-full rounded-lg border border-zinc-300 p-3 text-base"
+          placeholder="Where did today end up? Anything for next visit?"
+        />
+      </label>
+      <button
+        type="submit"
+        disabled={isPending}
+        className="w-full py-3 rounded-lg bg-aac-blue text-white font-medium active:bg-aac-blue/90 disabled:bg-zinc-300 disabled:text-zinc-600"
+      >
+        {isPending ? 'Wrapping up…' : 'Wrap Up Day'}
+      </button>
+      <ErrorBox error={state?.error} />
+    </form>
   );
 }
 

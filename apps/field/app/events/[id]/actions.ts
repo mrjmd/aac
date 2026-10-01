@@ -20,7 +20,9 @@ import {
   daysLate,
 } from '@/lib/event-time-bucket';
 import { executePaymentBranch } from '@/lib/payment-branches';
+import { findEventContinuation } from '@/lib/multiday';
 import { getCurrentSession } from '@/lib/session';
+import { formatDateDisplay } from '@/lib/dates';
 
 const log = createLogger('field:event-actions');
 
@@ -37,6 +39,12 @@ async function loadEvent(eventId: string) {
   } catch {
     return null;
   }
+}
+
+/** "Wednesday, October 1" for an event-start ISO datetime. */
+function displayDate(iso: string): string {
+  const label = new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  return formatDateDisplay(label);
 }
 
 /** Step 1: Mike arrives — record the check-in. Works for any event type. */
@@ -250,6 +258,26 @@ export async function submitCompletion(_prev: ActionState | null, formData: Form
   }
   const lateDays = daysLate(evt.start);
 
+  // Multi-day guard: a non-final day must never run the payment branch
+  // (Not Yet Paid emails the invoice mid-job — the exact confusion this
+  // exists to stop). The UI offers Wrap Up Day instead; this is the
+  // server-side backstop.
+  if (isRepair) {
+    const continuation = await findEventContinuation(evt);
+    if (continuation) {
+      log.warn('submitCompletion rejected: job continues on a later day', {
+        eventId,
+        email: session.email,
+        continuationEventId: continuation.id,
+        continuationStart: continuation.start,
+      });
+      return {
+        ok: false,
+        error: `This job continues ${displayDate(continuation.start)} — use "Wrap Up Day" today. Payment happens on the final day.`,
+      };
+    }
+  }
+
   // For repairs: run the payment branch BEFORE recording completion. If it
   // fails (no invoice, ambiguity, card-unpaid, QB error), the completion
   // is NOT marked done — the tech sees the error and either retries or
@@ -320,6 +348,91 @@ export async function submitCompletion(_prev: ActionState | null, formData: Form
     linkedPaymentId,
     hasNote: Boolean(note),
     loggedLateBy: updated.loggedLateBy,
+  });
+  return { ok: true };
+}
+
+/**
+ * Wrap up a non-final day of a multi-day job. No payment, no invoice, no
+ * required photo — those all belong to the chain's final day. Records the
+ * day as completed with `continuedByEventId` pointing at the next day's
+ * event, plus any optional photos/videos and a note.
+ *
+ * The server independently verifies the continuation exists — the client
+ * showing the Wrap Up UI is not trusted.
+ */
+export async function submitDayWrapUp(_prev: ActionState | null, formData: FormData): Promise<ActionState> {
+  const session = await getCurrentSession();
+  if (!session) {
+    log.warn('submitDayWrapUp rejected: no session');
+    return { ok: false, error: 'Signed out — please log in again.' };
+  }
+
+  const eventId = String(formData.get('eventId') || '');
+  if (!eventId) {
+    log.warn('submitDayWrapUp rejected: missing eventId', { email: session.email });
+    return { ok: false, error: 'Missing eventId' };
+  }
+  const note = (String(formData.get('note') || '').trim()) || undefined;
+
+  const existing = await getCompletion(eventId);
+  if (!existing) {
+    log.warn('submitDayWrapUp rejected: not checked in', { eventId, email: session.email });
+    return { ok: false, error: 'Not checked in yet.' };
+  }
+  if (existing.phase === 'completed') {
+    log.warn('submitDayWrapUp rejected: already completed', { eventId, email: session.email });
+    return { ok: false, error: 'Already completed.' };
+  }
+  if (existing.phase === 'cancelled') {
+    log.warn('submitDayWrapUp rejected: cancelled', { eventId, email: session.email });
+    return { ok: false, error: 'This job was cancelled.' };
+  }
+
+  const evt = await loadEvent(eventId);
+  if (!evt) {
+    log.error('submitDayWrapUp failed: could not reload event', undefined, {
+      eventId,
+      email: session.email,
+    });
+    return { ok: false, error: `Could not reload calendar event ${eventId}.` };
+  }
+
+  const continuation = await findEventContinuation(evt);
+  if (!continuation) {
+    log.warn('submitDayWrapUp rejected: no continuation found', { eventId, email: session.email });
+    return {
+      ok: false,
+      error: 'No upcoming day found for this job — this looks like the final day. Use Mark Complete instead.',
+    };
+  }
+
+  const extraUrls = formData.getAll('extraUrl').map(String).filter(Boolean);
+  const extraKinds = formData.getAll('extraKind').map(String);
+  const nowIso = new Date().toISOString();
+  const extras: CompletionPhoto[] = extraUrls.map((url, i) => ({
+    url,
+    label: 'extra',
+    takenAt: nowIso,
+    kind: extraKinds[i] === 'video' ? 'video' : 'image',
+  }));
+
+  const updated: CompletionRecord = {
+    ...existing,
+    phase: 'completed',
+    photos: [...existing.photos.filter((p) => p.label !== 'extra'), ...extras],
+    completedAt: nowIso,
+    note,
+    continuedByEventId: continuation.id,
+  };
+  await setCompletion(updated);
+  revalidatePath(`/events/${eventId}`);
+  log.info('submitDayWrapUp ok', {
+    eventId,
+    email: session.email,
+    continuationEventId: continuation.id,
+    extraCount: extras.length,
+    hasNote: Boolean(note),
   });
   return { ok: true };
 }

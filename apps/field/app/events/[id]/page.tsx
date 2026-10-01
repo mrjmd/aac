@@ -10,6 +10,7 @@ import { getEnv } from '@/lib/env';
 import { formatEventTime, formatDateDisplay } from '@/lib/dates';
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
 import { bucketForEvent, daysLate } from '@/lib/event-time-bucket';
+import { findEventContinuation } from '@/lib/multiday';
 import CompletionChecklist from './completion-flow';
 
 export const dynamic = 'force-dynamic';
@@ -69,6 +70,15 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
   const bucket = bucketForEvent(evt.start, completion);
   const lateDays = bucket === 'past_not_completed' ? daysLate(evt.start) : 0;
   const env = getEnv();
+
+  // Multi-day job: a later same-job green event switches the final step to
+  // "Wrap up for today" (no payment). Only worth a lookup for repairs that
+  // are still actionable.
+  const continuation =
+    type === 'repair' && bucket !== 'cancelled' && completion?.phase !== 'completed'
+      ? await findEventContinuation(evt)
+      : null;
+  const continuesOn = continuation ? formatDateDisplay(dateLabelFromISO(continuation.start)) : null;
 
   // Resolve the PD person so we can surface call/text actions on the
   // customer's name. Only attempt for job/inspection-shaped events; skip
@@ -229,6 +239,7 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
             completion={completion}
             bucket={bucket}
             daysLate={lateDays}
+            continuesOn={continuesOn}
           />
         </div>
       </section>

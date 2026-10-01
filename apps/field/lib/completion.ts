@@ -85,6 +85,12 @@ export interface CompletionRecord {
    * completions. Absent for never-completed records.
    */
   loggedLateBy?: number;
+  /**
+   * Multi-day job day-wrap: this event was closed without payment because
+   * the job continues on the referenced calendar event (the next day).
+   * Payment + invoice happen on the chain's final day only.
+   */
+  continuedByEventId?: string;
   /** Set when the event is marked cancelled / not done; phase moves to 'cancelled'. */
   cancelledAt?: string;
   cancelledByEmail?: string;

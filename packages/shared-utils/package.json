@@ -11,7 +11,8 @@
     "./redis": "./dist/redis.js",
     "./logger": "./dist/logger.js",
     "./types": "./dist/types.js",
-    "./webhook-signature": "./dist/webhook-signature.js"
+    "./webhook-signature": "./dist/webhook-signature.js",
+    "./multiday": "./dist/multiday.js"
   },
   "scripts": {
     "build": "tsc",

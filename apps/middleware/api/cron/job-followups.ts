@@ -18,6 +18,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
+import { hasContinuation, CONTINUATION_WINDOW_DAYS } from '@aac/shared-utils/multiday';
 import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { getCalendar, getGemini, getPipedrive, getQuo } from '../../lib/clients.js';
 import { getEnv } from '../../lib/env.js';
@@ -60,7 +61,13 @@ interface FollowUpResult {
   variant: FollowUpVariant | null;
   city: string | null;
   service: string | null;
-  status: 'sent' | 'skipped_dedup' | 'skipped_no_person' | 'skipped_no_phone' | 'error';
+  status:
+    | 'sent'
+    | 'skipped_dedup'
+    | 'skipped_no_person'
+    | 'skipped_no_phone'
+    | 'skipped_multiday_continuation'
+    | 'error';
   error?: string;
 }
 
@@ -100,7 +107,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     log.info('Completed jobs found', { count: events.length });
 
+    // Multi-day guard: a job day with an upcoming continuation (same job,
+    // later green event — see @aac/shared-utils/multiday) gets NO follow-up;
+    // the customer hears from us after the FINAL day only. Lookup failure
+    // degrades to the old behavior (follow-ups send) rather than blocking.
+    let upcomingJobs: CalendarEvent[] = [];
+    if (events.length > 0) {
+      try {
+        upcomingJobs = await calendar.listEvents({
+          timeMin: new Date().toISOString(),
+          timeMax: new Date(Date.now() + CONTINUATION_WINDOW_DAYS * 86_400_000).toISOString(),
+          attendeeEmails: env.google.technicianEmails,
+          colorIds: GREEN_COLOR_IDS,
+        });
+      } catch (err) {
+        log.warn('Continuation lookup failed — multi-day skip disabled this run', {
+          error: (err as Error).message,
+        });
+      }
+    }
+
     for (const event of events) {
+      if (hasContinuation(event, upcomingJobs)) {
+        log.info('Follow-up skipped — job continues on a later day', {
+          eventId: event.id,
+          summary: event.summary,
+        });
+        results.push({
+          eventId: event.id,
+          summary: event.summary,
+          jobDate: event.start.split('T')[0],
+          location: event.location || '',
+          personName: null,
+          phone: null,
+          variant: null,
+          city: null,
+          service: null,
+          status: 'skipped_multiday_continuation',
+        });
+        skipped++;
+        continue;
+      }
       const result = await processFollowUp(event, pipedrive, isDryRun);
       results.push(result);
 
