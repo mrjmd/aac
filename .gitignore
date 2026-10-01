@@ -55,6 +55,11 @@ docs/indeed-candidates-*
 # Anchored to repo root so tools/src/analysis/ (code) isn't matched.
 /analysis/
 
+# Ownership/exit/restructuring strategy — highly sensitive (partnership terms,
+# valuations, legal analysis, primary-source legal PDFs in refs/). Local only;
+# never committed.
+docs/aac-future/
+
 # Claude
 .claude/
 .vercel
