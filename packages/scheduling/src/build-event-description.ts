@@ -3,13 +3,18 @@
  * Quo conversation history into the body text we'll write into the Google
  * Calendar event.
  *
+ * The output is written in Matt's own calendar voice — a short, plain
+ * note to Mike (second person), optionally led by a "NOTE:" line for
+ * access/contact instructions. It deliberately does NOT contain the
+ * address (that goes in the event's location field) and only mentions
+ * photos when the caller is actually attaching some (photoCount).
+ *
  * Pure function: LLM client + clock arrive via `deps`. The caller (the
  * middleware dispatch helper for Walk #6/7) is responsible for gathering
  * the input facts (PD customer, QB line items, recent Quo messages). This
  * function owns: prompt, LLM call, quality gates, retries, fallback.
  *
  * Quality gates per [[ai-quality-gates]]:
- *   - address_present   if customer.address provided, output must reference it
  *   - line_item_referenced  if qbLineItems present, at least one must appear
  *   - no_hallucinated_facts  no phone/email/money strings absent from inputs
  *   - length_ok         ≤ MAX_LENGTH chars
@@ -54,7 +59,8 @@ export interface BuildEventDescriptionInput {
   customer: EventDescriptionCustomer;
   qbLineItems?: EventDescriptionLineItem[];
   conversationHistory?: EventDescriptionMessage[];
-  photosUrl?: string;
+  /** Number of photos being attached to the event (0/absent = none). */
+  photoCount?: number;
   accessNotes?: string;
 }
 
@@ -78,15 +84,16 @@ export async function buildEventDescription(
     const prompt = buildPrompt({
       facts,
       conversation: prunedConversation,
-      input,
       previousAttempt: lastAttempt,
     });
 
     let raw: string;
     try {
+      // gemini-3.6-flash counts internal reasoning against this budget —
+      // 600 truncated bodies mid-sentence (same lesson as triage L1).
       raw = await deps.gemini.generateContent(prompt, {
         temperature: 0.2,
-        maxOutputTokens: 600,
+        maxOutputTokens: 4096,
       });
     } catch (err) {
       log.warn('Gemini call failed, will fall back', {
@@ -139,7 +146,7 @@ interface CollectedFacts {
   intent: SchedulingDirective['intent'];
   eventClass: SchedulingDirective['eventClass'];
   lineItems: string[];
-  photosUrl: string | null;
+  photoCount: number;
   accessNotes: string | null;
   durationLine: string | null;
 }
@@ -161,7 +168,7 @@ function collectFacts(input: BuildEventDescriptionInput): CollectedFacts {
     intent: input.directive.intent,
     eventClass: input.directive.eventClass,
     lineItems,
-    photosUrl: input.photosUrl?.trim() || null,
+    photoCount: input.photoCount ?? 0,
     accessNotes: input.accessNotes?.trim() || null,
     durationLine,
   };
@@ -201,10 +208,6 @@ function runQualityGates(description: string, facts: CollectedFacts): string[] {
     flags.push('length_exceeded');
   }
 
-  if (facts.address && !addressMentioned(description, facts.address)) {
-    flags.push('address_missing');
-  }
-
   if (
     facts.lineItems.length > 0 &&
     !lineItemReferenced(description, facts.lineItems)
@@ -217,20 +220,6 @@ function runQualityGates(description: string, facts: CollectedFacts): string[] {
   }
 
   return flags;
-}
-
-function addressMentioned(description: string, address: string): boolean {
-  const lower = description.toLowerCase();
-  const streetNumber = address.match(/\b\d{1,6}\b/)?.[0];
-  if (streetNumber && lower.includes(streetNumber)) return true;
-  const zip = address.match(/\b\d{5}\b/)?.[0];
-  if (zip && lower.includes(zip)) return true;
-  // Fallback: any 4+ char street-name token
-  const tokens = address
-    .toLowerCase()
-    .split(/[^a-z]+/)
-    .filter((t) => t.length >= 4);
-  return tokens.some((t) => lower.includes(t));
 }
 
 function lineItemReferenced(description: string, lineItems: string[]): boolean {
@@ -264,7 +253,6 @@ function hasUnsourcedFigures(
     facts.scopeSummary,
     facts.address ?? '',
     facts.accessNotes ?? '',
-    facts.photosUrl ?? '',
     facts.durationLine ?? '',
     ...facts.lineItems,
   ]
@@ -285,10 +273,24 @@ function hasUnsourcedFigures(
 
 // ── prompt building ──────────────────────────────────────────────────────
 
+/**
+ * Real bodies Matt has written, verbatim (style reference in the prompt).
+ * Kept short and varied: plain jobs, prior-visit, third-party payer,
+ * NOTE: access lines, assessments, callbacks.
+ */
+const STYLE_EXAMPLES = [
+  'Two cracks, one full length and one window.',
+  'Single window crack, should be straightforward.',
+  'You’ve been here, fieldstone injection and seal around a pipe penetration in a fieldstone foundation.',
+  'Four cracks and some resurfacing at the floor. Christina Wichert is the realtor involved here.',
+  'NOTE: text him when you’re 30 minutes out.\n\nWater coming in at the floor so we’ll assess as best we can, this may end up being a referral for exterior drainage work.',
+  'Re-grind and seal / resurface patio crack, we’ve been out here several times.',
+  'Bunch of tie rod leaks and possibly conduit penetration. We will need to update the quote when you get there so give me a call.',
+];
+
 function buildPrompt(args: {
   facts: CollectedFacts;
   conversation: EventDescriptionMessage[];
-  input: BuildEventDescriptionInput;
   previousAttempt: { description: string; flags: string[] } | null;
 }): string {
   const { facts, conversation, previousAttempt } = args;
@@ -303,47 +305,44 @@ function buildPrompt(args: {
         .join('\n')
     : '(no recent conversation)';
 
+  const exampleBlock = STYLE_EXAMPLES.map((e) => `---\n${e}`).join('\n');
+
+  const photoRule = facts.photoCount > 0
+    ? `Photos from the customer are attached to this event — end the body with "See attached photos."`
+    : 'No photos are attached — do not mention photos.';
+
   const retryNote = previousAttempt
-    ? `\n\nPRIOR ATTEMPT FAILED these checks: ${previousAttempt.flags.join(', ')}. Fix the issues — every fact you state must come from the facts block, and you MUST include the address (street number works) and reference at least one line item.\n\nPRIOR ATTEMPT TEXT (for reference, do not copy):\n${previousAttempt.description}\n`
+    ? `\n\nPRIOR ATTEMPT FAILED these checks: ${previousAttempt.flags.join(', ')}. Fix the issues — every fact you state must come from the facts block, and when line items are provided the work described must clearly reference at least one of them.\n\nPRIOR ATTEMPT TEXT (for reference, do not copy):\n${previousAttempt.description}\n`
     : '';
 
-  return `You write Google Calendar event bodies for a foundation-repair business. Output ONLY the event body text — no markdown headers, no preamble, no code fences. Length under ${MAX_LENGTH} characters.
+  return `You are Matt, owner of Attack A Crack (foundation repair, Quincy MA), writing the body of a Google Calendar event for your technician Mike. "You" in the body means Mike; the customer is third person. Output ONLY the event body text — no markdown, no headers, no code fences, no greeting or sign-off.
 
-FACTS (use ONLY these — do not invent customer names, addresses, prices, phone numbers, or scope details that are not listed):
+REAL EXAMPLES OF MATT'S EVENT BODIES (match this voice exactly; never copy their facts):
+${exampleBlock}
+---
+
+RULES:
+1. One to four short sentences for straightforward work. Add a short extra paragraph only when there is a genuine wrinkle Mike needs to know about.
+2. Lead with what the work is, in plain language (from the scope and line items).
+3. If the conversation or access notes mention access/contact instructions (lockbox, gate code, call ahead, dog, parking, tenant), put them first on their own line starting "NOTE: ".
+4. Do NOT include the address — it goes in the event's location field.
+5. Do NOT include phone numbers, emails, or dollar amounts unless they appear verbatim in the facts below.
+6. Only say "you've been here" / "we've been out here" if the facts or conversation clearly show a prior visit (callbacks qualify).
+7. For an assessment, frame it as what to look at and figure out. For a callback, frame it as rework on something we previously repaired.
+8. If the duration estimate says the job is unusually long (6+ hours or multi-day), mention that naturally; otherwise leave duration out.
+9. ${photoRule}
+
+FACTS (use ONLY these — do not invent scope details, names, or history that are not listed):
 - Customer: ${facts.customerName}
-- Address: ${facts.address ?? '(not on file)'}
 - Event type: ${facts.eventClass} (${facts.intent})
 - Scope summary: ${facts.scopeSummary || '(none)'}
 - Line items:
 ${lineItemBlock}
-- Photos URL: ${facts.photosUrl ?? '(none)'}
 - Access notes (from customer): ${facts.accessNotes ?? '(none)'}
 - Duration estimate: ${facts.durationLine ?? '(not estimated)'}
 
-RECENT CONVERSATION (most recent last; use to extract access details, site quirks, dog/gate/parking notes, customer asks — do NOT fabricate quotes):
-${conversationBlock}
-
-FORMAT (plain text, blank lines between sections, no markdown):
-Scope:
-- <one bullet per line item or scope point>
-
-Address:
-<address verbatim from facts>
-
-Access / site notes:
-- <only items mentioned in the conversation or access notes — omit section if none>
-
-Photos:
-<URL from facts, or omit if none>
-
-Duration estimate:
-<duration line from facts, or omit if none>
-
-REQUIREMENTS:
-1. The address MUST appear in the output.
-2. At least one line item MUST appear in the output.
-3. Do NOT include phone numbers, email addresses, or dollar figures unless they appear verbatim in the facts.
-4. Do NOT add salutations, signatures, "see you then", or any text outside the format above.${retryNote}`;
+RECENT CONVERSATION (most recent last; use for access details, site quirks, and context — do NOT fabricate beyond it):
+${conversationBlock}${retryNote}`;
 }
 
 // ── fallback (deterministic, no LLM) ────────────────────────────────────
@@ -352,33 +351,26 @@ function buildFallbackDescription(input: BuildEventDescriptionInput): string {
   const facts = collectFacts(input);
   const parts: string[] = [];
 
-  parts.push('Scope:');
-  if (facts.lineItems.length > 0) {
-    for (const item of facts.lineItems) parts.push(`- ${item}`);
-  } else {
-    parts.push(`- ${facts.scopeSummary || '(no scope on file)'}`);
-  }
-
-  parts.push('');
-  parts.push('Address:');
-  parts.push(facts.address ?? '(not on file)');
-
   if (facts.accessNotes) {
+    parts.push(`NOTE: ${facts.accessNotes}`);
     parts.push('');
-    parts.push('Access / site notes:');
-    parts.push(`- ${facts.accessNotes}`);
   }
 
-  if (facts.photosUrl) {
+  parts.push(facts.scopeSummary || '(no scope on file)');
+
+  if (facts.lineItems.length > 0) {
     parts.push('');
-    parts.push('Photos:');
-    parts.push(facts.photosUrl);
+    for (const item of facts.lineItems) parts.push(`- ${item}`);
   }
 
   if (facts.durationLine) {
     parts.push('');
-    parts.push('Duration estimate:');
-    parts.push(facts.durationLine);
+    parts.push(`Duration estimate: ${facts.durationLine}`);
+  }
+
+  if (facts.photoCount > 0) {
+    parts.push('');
+    parts.push('See attached photos.');
   }
 
   let out = parts.join('\n');

@@ -90,6 +90,13 @@ export interface QuoPhoneNumber {
   updatedAt: string;
 }
 
+export interface QuoMessageMedia {
+  /** Signed share.quo.com URL — fetchable without auth, may expire. */
+  url: string;
+  /** MIME type (e.g. 'image/jpeg'). */
+  type?: string;
+}
+
 export interface QuoMessage {
   id: string;
   to: string[];
@@ -99,6 +106,8 @@ export interface QuoMessage {
   conversationId?: string;
   direction: 'incoming' | 'outgoing';
   status: 'queued' | 'sent' | 'delivered' | 'undelivered';
+  /** MMS attachments. Absent on plain SMS. */
+  media?: QuoMessageMedia[];
   createdAt: string;
   updatedAt: string;
 }
@@ -117,6 +126,24 @@ export interface QuoCall {
   updatedAt?: string;
   answeredAt?: string;
   completedAt?: string;
+}
+
+export interface QuoTranscriptDialogue {
+  content: string;
+  /** Seconds from call start. */
+  start?: number;
+  end?: number;
+  /** E.164 of the speaker, or Quo user ID for our side. */
+  identifier?: string;
+  userId?: string | null;
+}
+
+export interface QuoCallTranscript {
+  callId: string;
+  createdAt?: string;
+  duration?: number;
+  status: 'completed' | 'in-progress' | 'failed' | 'absent';
+  dialogue: QuoTranscriptDialogue[] | null;
 }
 
 export interface QuoConversation {
@@ -562,6 +589,32 @@ export class QuoClient {
   }
 
   /**
+   * Download one MMS attachment by its signed media URL (QuoMessage.media).
+   * Only Quo/OpenPhone media hosts are allowed — this is a content fetch,
+   * not a general proxy. Returns null on a non-OK response (signed URLs
+   * expire) so callers can degrade gracefully.
+   */
+  async downloadMessageMedia(
+    url: string,
+  ): Promise<{ data: ArrayBuffer; contentType: string } | null> {
+    const host = new URL(url).hostname;
+    const allowed =
+      host === 'share.quo.com' ||
+      host.endsWith('.quo.com') ||
+      host === 'm.openphone.com' ||
+      host.endsWith('.openphone.com');
+    if (!allowed) {
+      throw new Error(`Refusing to download media from non-Quo host: ${host}`);
+    }
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return {
+      data: await res.arrayBuffer(),
+      contentType: res.headers.get('content-type') ?? 'application/octet-stream',
+    };
+  }
+
+  /**
    * List calls between our line and a specific E.164 participant. Same
    * shape as listMessages — participants + phoneNumberId.
    */
@@ -583,6 +636,23 @@ export class QuoClient {
     if (opts.pageToken) params.set('pageToken', opts.pageToken);
 
     return this.request<QuoPaginated<QuoCall>>(`/calls?${params.toString()}`);
+  }
+
+  /**
+   * Fetch the transcript for a completed call. Returns null when Quo has
+   * no transcript for the call (404 — e.g. transcription disabled at the
+   * time, or the call had no audio).
+   */
+  async getCallTranscript(callId: string): Promise<QuoCallTranscript | null> {
+    try {
+      const result = await this.request<{ data: QuoCallTranscript }>(
+        `/call-transcripts/${callId}`,
+      );
+      return result.data ?? null;
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('Quo API error: 404')) return null;
+      throw err;
+    }
   }
 
   /**

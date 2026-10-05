@@ -15,6 +15,7 @@ import { QuoClient } from '@aac/api-clients/quo';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { GeminiClient } from '@aac/api-clients/gemini';
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import { GoogleMapsClient } from '@aac/api-clients/google-maps';
 import { getEnv } from './env.js';
 import { getQBTokens, storeQBTokens } from './redis.js';
@@ -24,6 +25,7 @@ let _quo: QuoClient | null = null;
 let _quickbooks: QuickBooksClient | null = null;
 let _gemini: GeminiClient | null = null;
 let _calendar: GoogleCalendarClient | null = null;
+let _drive: GoogleDriveClient | null = null;
 let _maps: GoogleMapsClient | null = null;
 
 export function getPipedrive(): PipedriveClient {
@@ -87,6 +89,28 @@ export function getMaps(): GoogleMapsClient | null {
     _maps = new GoogleMapsClient({ apiKey: env.googleMaps.apiKey });
   }
   return _maps;
+}
+
+/**
+ * Drive client on the same OAuth token as Calendar. Returns null when the
+ * Google creds are absent OR the token lacks Drive scope at runtime —
+ * callers treat null/failed Drive as "skip photo attachments", never fatal.
+ */
+export function getDrive(): GoogleDriveClient | null {
+  if (!_drive) {
+    const env = getEnv();
+    if (!env.google.clientId || !env.google.clientSecret || !env.google.refreshToken) {
+      return null;
+    }
+    _drive = new GoogleDriveClient({
+      oauth: {
+        clientId: env.google.clientId,
+        clientSecret: env.google.clientSecret,
+        refreshToken: env.google.refreshToken,
+      },
+    });
+  }
+  return _drive;
 }
 
 export function getCalendar(): GoogleCalendarClient {

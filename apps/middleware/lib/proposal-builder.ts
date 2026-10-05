@@ -117,7 +117,6 @@ export async function buildProposalForDirective(
       customer: { name: customerName, address: customerAddress },
       qbLineItems,
       conversationHistory,
-      photosUrl: undefined,
       accessNotes: undefined,
     },
   );

@@ -28,6 +28,7 @@ import {
   type ClassifiedSchedulingIntent,
 } from '@aac/api-clients/gemini';
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import type { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import {
   PIPEDRIVE_CROSS_SYSTEM_FIELDS,
   type PipedriveClient,
@@ -35,15 +36,19 @@ import {
 } from '@aac/api-clients/pipedrive';
 import type { QuoClient } from '@aac/api-clients/quo';
 import {
+  buildEventDescription,
+  collectStubPhotoAttachments,
   executeStubEvent,
   getActionableSlot,
   normalizeAppointmentConfirmed,
   normalizeManualSchedule,
   normalizeQuoCustomerIntent,
   resolveCallbackParent,
+  type EventDescriptionMessage,
   type QuoCallbackParent,
   type QuoCustomerIntentLabel,
   type SchedulingDirective,
+  type StubPhotoAttachment,
 } from '@aac/scheduling';
 import {
   getQbCustomerIdFromPipedrive,
@@ -100,6 +105,12 @@ export interface SchedulingDispatchDeps {
     enabled: boolean;
     /** Attendees added to stub events without notification (Mike). */
     technicianEmails: string[];
+    /**
+     * Drive client for uploading customer MMS photos as event
+     * attachments. Absent (e.g. missing Google creds) = stubs are
+     * created without photos.
+     */
+    drive?: GoogleDriveClient | null;
   };
   now?: () => Date;
 }
@@ -307,9 +318,40 @@ export async function fetchConversationContext(
 }
 
 /**
+ * Recent thread messages in the shape buildEventDescription wants,
+ * oldest first. Never throws — description context is a nice-to-have.
+ */
+async function fetchStubConversationHistory(
+  quo: QuoClient,
+  customerPhone: string,
+): Promise<EventDescriptionMessage[]> {
+  try {
+    const page = await quo.listMessages({
+      participantE164: customerPhone,
+      maxResults: 20,
+    });
+    return [...(page.data ?? [])]
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((m) => ({ direction: m.direction, text: m.text ?? '', at: m.createdAt }));
+  } catch (err) {
+    log.warn('Stub conversation-history fetch failed — building description without it', {
+      customerPhone,
+      error: (err as Error).message,
+    });
+    return [];
+  }
+}
+
+/**
  * Create the STUB calendar event for a directive with an agreed slot.
  * Self-contained error handling: a stub failure is logged + surfaced to
  * /health but never disturbs the already-written directive or the webhook.
+ *
+ * The event body is written in Matt's calendar voice (buildEventDescription,
+ * which falls back to the raw scopeSummary template internally), and the
+ * customer's recent MMS photos are attached via Drive when a drive client
+ * is configured. Both are nice-to-haves: any enrichment failure still
+ * produces the plain stub.
  */
 async function createStubForDirective(
   deps: SchedulingDispatchDeps,
@@ -317,14 +359,59 @@ async function createStubForDirective(
   directive: SchedulingDirective,
 ): Promise<boolean> {
   try {
+    const now = deps.now ?? (() => new Date());
     const info = await fetchPdPersonInfo(deps.pd, context.pdPersonId);
+    const customerName = info.name ?? `PD ${context.pdPersonId}`;
+    const technicianEmails = deps.stub?.technicianEmails ?? [];
+
+    let attachments: StubPhotoAttachment[] = [];
+    if (deps.stub?.drive) {
+      attachments = await collectStubPhotoAttachments(
+        { quo: deps.quo, drive: deps.stub.drive, now },
+        {
+          customerPhone: context.customerPhone,
+          shareWithEmails: technicianEmails,
+        },
+      );
+    }
+
+    let description: string | undefined;
+    try {
+      const built = await buildEventDescription(
+        { gemini: deps.gemini, now },
+        {
+          directive,
+          customer: { name: customerName, address: info.address ?? null },
+          conversationHistory: await fetchStubConversationHistory(
+            deps.quo,
+            context.customerPhone,
+          ),
+          photoCount: attachments.length,
+        },
+      );
+      description = built.description;
+      if (built.usedFallback) {
+        log.warn('Stub description used template fallback', {
+          directiveId: directive.id,
+          qualityFlags: built.qualityFlags,
+        });
+      }
+    } catch (err) {
+      log.warn('Stub description build threw — falling back to scopeSummary', {
+        directiveId: directive.id,
+        error: (err as Error).message,
+      });
+    }
+
     const result = await executeStubEvent(
-      { cal: deps.cal, now: deps.now ?? (() => new Date()) },
+      { cal: deps.cal, now },
       {
         directive,
-        customerName: info.name ?? `PD ${context.pdPersonId}`,
+        customerName,
         customerAddress: info.address,
-        technicianEmails: deps.stub?.technicianEmails ?? [],
+        technicianEmails,
+        ...(description ? { description } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
       },
     );
     if (result.status === 'created') {

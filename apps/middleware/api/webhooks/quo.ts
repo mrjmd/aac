@@ -28,7 +28,7 @@ import {
   logHealthError,
 } from '../../lib/redis.js';
 import { getEnv } from '../../lib/env.js';
-import { getCalendar, getPipedrive, getGemini, getQuo } from '../../lib/clients.js';
+import { getCalendar, getDrive, getPipedrive, getGemini, getQuo } from '../../lib/clients.js';
 import { ensureInboundLeadDeal } from '../../lib/inbound-deal.js';
 import {
   dispatchSchedulingIntent,
@@ -576,7 +576,8 @@ export async function POST(request: Request): Promise<Response> {
             quo: getQuo(),
             stub: {
               enabled: env.scheduling.stubEventsEnabled,
-              technicianEmails: env.google.technicianEmails,
+              technicianEmails: env.scheduling.stubAttendeeEmails,
+              drive: getDrive(),
             },
           },
           dispatchCtx,

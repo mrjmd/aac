@@ -437,6 +437,43 @@ describe('GoogleCalendarClient', () => {
       expect(call.sendUpdates).toBe('none');
       expect(call.requestBody.attendees).toEqual([{ email: 'mike@attackacrack.com' }]);
     });
+
+    it('passes Drive attachments with supportsAttachments', async () => {
+      const client = makeClient();
+
+      mocks.mockEventsInsert.mockResolvedValueOnce({
+        data: { id: 'att-evt', summary: 'STUB — Jane', start: { dateTime: '2026-04-05T08:00:00Z' }, end: { dateTime: '2026-04-05T08:30:00Z' }, htmlLink: '' },
+      });
+
+      await client.createEvent({
+        summary: 'STUB — Jane',
+        start: '2026-04-05T08:00:00Z',
+        end: '2026-04-05T08:30:00Z',
+        attachments: [
+          { fileUrl: 'https://drive.google.com/open?id=F1', title: 'crack.jpg', mimeType: 'image/jpeg' },
+        ],
+      });
+
+      const call = mocks.mockEventsInsert.mock.calls[0][0];
+      expect(call.supportsAttachments).toBe(true);
+      expect(call.requestBody.attachments).toEqual([
+        { fileUrl: 'https://drive.google.com/open?id=F1', title: 'crack.jpg', mimeType: 'image/jpeg' },
+      ]);
+    });
+
+    it('omits supportsAttachments when no attachments given', async () => {
+      const client = makeClient();
+
+      mocks.mockEventsInsert.mockResolvedValueOnce({
+        data: { id: 'no-att', summary: 'T', start: { dateTime: '2026-04-05T08:00:00Z' }, end: { dateTime: '2026-04-05T09:00:00Z' }, htmlLink: '' },
+      });
+
+      await client.createEvent({ summary: 'T', start: '2026-04-05T08:00:00Z', end: '2026-04-05T09:00:00Z' });
+
+      const call = mocks.mockEventsInsert.mock.calls[0][0];
+      expect(call.supportsAttachments).toBeUndefined();
+      expect(call.requestBody.attachments).toBeUndefined();
+    });
   });
 
   describe('updateEvent', () => {
@@ -471,6 +508,33 @@ describe('GoogleCalendarClient', () => {
       await expect(
         client.updateEvent('evt-1', { summary: 'test' })
       ).rejects.toThrow('Forbidden');
+    });
+
+    it('patches attachments with supportsAttachments', async () => {
+      const client = makeClient();
+      mocks.mockEventsPatch.mockResolvedValueOnce({ data: { ...sampleEvent } });
+
+      await client.updateEvent('evt-1', {
+        description: 'new body',
+        attachments: [{ fileUrl: 'https://drive.google.com/open?id=F1', title: 'a.jpg', mimeType: 'image/jpeg' }],
+      });
+
+      const call = mocks.mockEventsPatch.mock.calls[0][0];
+      expect(call.supportsAttachments).toBe(true);
+      expect(call.requestBody.attachments).toEqual([
+        { fileUrl: 'https://drive.google.com/open?id=F1', title: 'a.jpg', mimeType: 'image/jpeg' },
+      ]);
+    });
+
+    it('omits supportsAttachments when attachments are not touched', async () => {
+      const client = makeClient();
+      mocks.mockEventsPatch.mockResolvedValueOnce({ data: { ...sampleEvent } });
+
+      await client.updateEvent('evt-1', { description: 'new body' });
+
+      const call = mocks.mockEventsPatch.mock.calls[0][0];
+      expect(call.supportsAttachments).toBeUndefined();
+      expect(call.requestBody.attachments).toBeUndefined();
     });
   });
 });

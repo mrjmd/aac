@@ -62,6 +62,14 @@ export interface ExecuteStubInput {
   customerAddress?: string | null;
   /** Attendees added WITHOUT notification (e.g. Mike). */
   technicianEmails: string[];
+  /**
+   * Pre-built event body (buildEventDescription, Matt's voice). Falls
+   * back to the raw directive scopeSummary. The provenance footer is
+   * appended either way.
+   */
+  description?: string;
+  /** Drive photo attachments (collectStubPhotoAttachments). */
+  attachments?: Array<{ fileUrl: string; title: string; mimeType: string }>;
 }
 
 export type ExecuteStubResult =
@@ -122,7 +130,7 @@ export async function executeStubEvent(
   }
 
   const description = [
-    directive.scopeSummary,
+    input.description?.trim() || directive.scopeSummary,
     '',
     `Auto-created stub from ${directive.source} directive ${directive.id}`
       + ` (${directive.intent}, confidence ${directive.confidence.score}).`,
@@ -138,6 +146,7 @@ export async function executeStubEvent(
     description,
     attendees: technicianEmails,
     sendUpdates: 'none',
+    ...(input.attachments?.length ? { attachments: input.attachments } : {}),
   });
 
   log.info('Stub event created', {

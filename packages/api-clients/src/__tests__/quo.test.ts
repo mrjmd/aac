@@ -677,4 +677,71 @@ describe('QuoClient', () => {
       expect(QuoClient.getPrimaryPhone(contact)).toBe('+15551234567');
     });
   });
+
+  describe('getCallTranscript', () => {
+    it('fetches and unwraps a transcript', async () => {
+      mockFetch.mockReturnValueOnce(mockResponse({
+        data: {
+          callId: 'call-1',
+          status: 'completed',
+          dialogue: [{ content: 'Hello', identifier: '+15551234567', start: 0 }],
+        },
+      }));
+
+      const transcript = await makeClient().getCallTranscript('call-1');
+
+      expect(mockFetch.mock.calls[0][0]).toContain('/call-transcripts/call-1');
+      expect(transcript?.dialogue?.[0].content).toBe('Hello');
+    });
+
+    it('returns null on 404 (no transcript for call)', async () => {
+      mockFetch.mockReturnValueOnce(mockResponse({ message: 'not found' }, 404));
+
+      await expect(makeClient().getCallTranscript('call-x')).resolves.toBeNull();
+    });
+
+    it('rethrows non-404 errors', async () => {
+      mockFetch.mockReturnValueOnce(mockResponse({ message: 'boom' }, 500));
+
+      await expect(makeClient().getCallTranscript('call-x')).rejects.toThrow('500');
+    });
+  });
+
+  describe('downloadMessageMedia', () => {
+    const mediaUrl = 'https://share.quo.com/v1/resource/message-media/abc123.jpg?sig=xyz';
+
+    it('downloads media bytes from an allowed host', async () => {
+      const bytes = new Uint8Array([1, 2, 3]).buffer;
+      mockFetch.mockReturnValueOnce(Promise.resolve({
+        ok: true,
+        status: 200,
+        arrayBuffer: () => Promise.resolve(bytes),
+        headers: { get: (h: string) => (h === 'content-type' ? 'image/jpeg' : null) },
+      }));
+
+      const result = await makeClient().downloadMessageMedia(mediaUrl);
+
+      expect(mockFetch.mock.calls[0][0]).toBe(mediaUrl);
+      expect(result?.contentType).toBe('image/jpeg');
+      expect(result?.data.byteLength).toBe(3);
+    });
+
+    it('returns null on a non-OK response (expired signed URL)', async () => {
+      mockFetch.mockReturnValueOnce(Promise.resolve({
+        ok: false,
+        status: 403,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+        headers: { get: () => null },
+      }));
+
+      await expect(makeClient().downloadMessageMedia(mediaUrl)).resolves.toBeNull();
+    });
+
+    it('refuses non-Quo hosts without fetching', async () => {
+      await expect(
+        makeClient().downloadMessageMedia('https://evil.example.com/x.jpg'),
+      ).rejects.toThrow('non-Quo host');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
 });

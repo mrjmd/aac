@@ -64,7 +64,7 @@ function makeInput(
         at: '2026-05-29T14:05:00.000Z',
       },
     ],
-    photosUrl: 'https://photos.aac.example/job-1',
+    photoCount: 3,
     accessNotes: 'Side entrance, friendly dog, gate code 1234.',
     ...overrides,
   };
@@ -91,20 +91,11 @@ describe('buildEventDescription', () => {
 
   it('returns Gemini output unchanged when all gates pass', async () => {
     const good = [
-      'Scope:',
-      '- Urethane crack injection on 8ft vertical crack rear wall',
+      'NOTE: side entrance, friendly dog, gate code 1234.',
       '',
-      'Address:',
-      '42 Beacon St, Boston MA 02108',
+      'Urethane crack injection on the 8ft vertical crack on the rear wall, plus a couple of carbon fiber staples.',
       '',
-      'Access / site notes:',
-      '- Side entrance, friendly dog, gate code 1234',
-      '',
-      'Photos:',
-      'https://photos.aac.example/job-1',
-      '',
-      'Duration estimate:',
-      '~4h (p25–p75: 3h–5h, high confidence)',
+      'See attached photos.',
     ].join('\n');
 
     const gemini = makeGemini(async () => good);
@@ -113,22 +104,21 @@ describe('buildEventDescription', () => {
     expect(result.usedFallback).toBe(false);
     expect(result.qualityFlags).toEqual([]);
     expect(result.attempts).toBe(1);
-    expect(result.description).toContain('42 Beacon');
     expect(result.description).toContain('Urethane');
     expect(gemini.generateContent).toHaveBeenCalledTimes(1);
   });
 
   it('strips markdown fences from Gemini output', async () => {
-    const fenced = '```\nScope:\n- Urethane crack injection rear wall\n\nAddress:\n42 Beacon St\n```';
+    const fenced = '```\nUrethane crack injection on the rear wall.\n```';
     const gemini = makeGemini(async () => fenced);
     const result = await buildEventDescription(makeDeps(gemini), makeInput());
     expect(result.description.startsWith('```')).toBe(false);
     expect(result.description.endsWith('```')).toBe(false);
   });
 
-  it('retries when address is missing then succeeds', async () => {
-    const bad = 'Scope:\n- Urethane crack injection rear wall\n\nPhotos:\nhttps://photos.aac.example/job-1';
-    const good = 'Scope:\n- Urethane crack injection rear wall\n\nAddress:\n42 Beacon St, Boston MA 02108';
+  it('retries when the line items are ignored then succeeds', async () => {
+    const bad = 'Generic foundation work, should be easy.';
+    const good = 'Urethane crack injection on the rear wall, plus carbon fiber staples.';
     const fn = vi.fn().mockResolvedValueOnce(bad).mockResolvedValueOnce(good);
     const gemini = { generateContent: fn } as unknown as GeminiClient;
 
@@ -140,11 +130,11 @@ describe('buildEventDescription', () => {
     expect(fn).toHaveBeenCalledTimes(2);
     // second call carries the retry note
     expect(fn.mock.calls[1][0]).toContain('PRIOR ATTEMPT FAILED');
-    expect(fn.mock.calls[1][0]).toContain('address_missing');
+    expect(fn.mock.calls[1][0]).toContain('line_item_missing');
   });
 
   it('flags line_item_missing when output ignores QB scope', async () => {
-    const noLineItem = 'Scope:\n- Generic foundation work\n\nAddress:\n42 Beacon St';
+    const noLineItem = 'Generic foundation work, should be easy.';
     const gemini = makeGemini(async () => noLineItem);
     const result = await buildEventDescription(makeDeps(gemini), makeInput());
     expect(result.usedFallback).toBe(true);
@@ -153,32 +143,29 @@ describe('buildEventDescription', () => {
   });
 
   it('flags hallucinated facts when output invents a dollar figure', async () => {
-    const haunted = 'Scope:\n- Urethane crack injection rear wall ($1,250 due on completion)\n\nAddress:\n42 Beacon St, Boston MA';
+    const haunted = 'Urethane crack injection on the rear wall ($1,250 due on completion).';
     const gemini = makeGemini(async () => haunted);
     const result = await buildEventDescription(makeDeps(gemini), makeInput());
     expect(result.qualityFlags).toContain('hallucinated_facts_suspected');
   });
 
   it('flags hallucinated facts when output invents a phone number', async () => {
-    const haunted = 'Scope:\n- Urethane crack injection rear wall\n\nAddress:\n42 Beacon St\n\nContact: 617-555-9999';
+    const haunted = 'Urethane crack injection on the rear wall. Contact: 617-555-9999';
     const gemini = makeGemini(async () => haunted);
     const result = await buildEventDescription(makeDeps(gemini), makeInput());
     expect(result.qualityFlags).toContain('hallucinated_facts_suspected');
   });
 
-  it('skips address gate when no address on file', async () => {
-    const noAddr = 'Scope:\n- Urethane crack injection rear wall\n\n(address not on file)';
+  it('does not require the address in the body (it lives in the location field)', async () => {
+    const noAddr = 'Urethane crack injection on the rear wall, plus carbon fiber staples.';
     const gemini = makeGemini(async () => noAddr);
-    const result = await buildEventDescription(
-      makeDeps(gemini),
-      makeInput({ customer: { name: 'John Smith', address: null } }),
-    );
+    const result = await buildEventDescription(makeDeps(gemini), makeInput());
     expect(result.qualityFlags).toEqual([]);
     expect(result.usedFallback).toBe(false);
   });
 
   it('skips line-item gate when QB line items are absent', async () => {
-    const generic = 'Scope:\n- Customer reported water intrusion\n\nAddress:\n42 Beacon St';
+    const generic = 'Customer reported water intrusion, go have a look.';
     const gemini = makeGemini(async () => generic);
     const result = await buildEventDescription(
       makeDeps(gemini),
@@ -194,10 +181,9 @@ describe('buildEventDescription', () => {
     const result = await buildEventDescription(makeDeps(gemini), makeInput());
     expect(result.usedFallback).toBe(true);
     expect(result.attempts).toBe(3); // 1 + 2 retries
-    expect(result.description).toContain('42 Beacon');
     expect(result.description).toContain('Urethane');
-    expect(result.description).toContain('Side entrance');
-    expect(result.description).toContain('https://photos.aac.example/job-1');
+    expect(result.description).toContain('NOTE: Side entrance');
+    expect(result.description).toContain('See attached photos.');
     expect(result.qualityFlags).toContain('fallback_used');
     expect(gemini.generateContent).toHaveBeenCalledTimes(3);
   });
@@ -228,13 +214,13 @@ describe('buildEventDescription', () => {
       makeInput({
         qbLineItems: [],
         accessNotes: undefined,
-        photosUrl: undefined,
+        photoCount: 0,
         conversationHistory: [],
       }),
     );
     expect(result.usedFallback).toBe(true);
     expect(result.description).toContain('John Smith — crack injection on rear wall');
-    expect(result.description).toContain('42 Beacon');
+    expect(result.description).not.toContain('See attached photos');
   });
 
   it('handles assessment intent without QB line items', async () => {

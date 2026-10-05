@@ -1,14 +1,21 @@
 /**
- * Google Drive client — read-only access to file metadata and thumbnails.
+ * Google Drive client — file metadata, thumbnails, uploads, and sharing.
  *
  * Used by apps/field to enrich calendar-attached photos: filter out photos
  * a given technician uploaded themselves (we only want context photos Matt
  * pre-attached), and obtain Drive's signed `thumbnailLink` URLs that work
  * on any device without the viewer being authenticated to Google.
  *
- * Same OAuth modes as GoogleCalendarClient.
+ * Also used by the scheduling stub pipeline to upload customer MMS photos
+ * so they can be attached to calendar events (the Calendar API only
+ * accepts Drive files as attachments).
+ *
+ * Same OAuth modes as GoogleCalendarClient. Uploads require a token with
+ * full `drive` scope — in credentials (service-account) mode the default
+ * scope is read-only, so pass `scopes` explicitly if uploading.
  */
 
+import { Readable } from 'node:stream';
 import { google, type drive_v3 } from 'googleapis';
 
 import { createLogger } from '@aac/shared-utils/logger';
@@ -22,6 +29,8 @@ export interface GoogleDriveConfig {
     clientSecret: string;
     refreshToken: string;
   };
+  /** Scopes for credentials mode only (oauth refresh tokens carry their own). */
+  scopes?: string[];
 }
 
 export interface DriveFileInfo {
@@ -54,7 +63,7 @@ export class GoogleDriveClient {
     } else if (this.config.credentials) {
       auth = new google.auth.GoogleAuth({
         credentials: this.config.credentials,
-        scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+        scopes: this.config.scopes ?? ['https://www.googleapis.com/auth/drive.readonly'],
       });
     } else {
       throw new Error('GoogleDriveClient requires either credentials or oauth config');
@@ -97,5 +106,75 @@ export class GoogleDriveClient {
    */
   static resizeThumbnail(thumbnailLink: string, sizePx: number): string {
     return thumbnailLink.replace(/=s\d+(-[a-z]+)?$/i, `=s${sizePx}`);
+  }
+
+  /**
+   * Find a folder by exact name (not trashed), creating it if absent.
+   * Returns the folder ID. Name is escaped for the Drive query language.
+   */
+  async ensureFolder(name: string): Promise<string> {
+    const client = await this.getClient();
+    const escaped = name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const found = await client.files.list({
+      q: `name = '${escaped}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: 'files(id)',
+      pageSize: 1,
+    });
+    const existing = found.data.files?.[0]?.id;
+    if (existing) return existing;
+
+    const created = await client.files.create({
+      requestBody: { name, mimeType: 'application/vnd.google-apps.folder' },
+      fields: 'id',
+    });
+    const id = created.data.id;
+    if (!id) throw new Error('Drive folder creation returned no id');
+    log.info('Drive folder created', { name, folderId: id });
+    return id;
+  }
+
+  /**
+   * Upload a file. Returns the file ID plus the `drive.google.com/open`
+   * URL — the form the Calendar API expects in attachment fileUrl (and
+   * the form Calendar's own UI writes).
+   */
+  async uploadFile(input: {
+    name: string;
+    mimeType: string;
+    data: ArrayBuffer | Buffer;
+    folderId?: string;
+  }): Promise<{ id: string; fileUrl: string }> {
+    const client = await this.getClient();
+    const body = Readable.from(
+      Buffer.isBuffer(input.data) ? input.data : Buffer.from(input.data),
+    );
+    const res = await client.files.create({
+      requestBody: {
+        name: input.name,
+        ...(input.folderId ? { parents: [input.folderId] } : {}),
+      },
+      media: { mimeType: input.mimeType, body },
+      fields: 'id',
+    });
+    const id = res.data.id;
+    if (!id) throw new Error('Drive upload returned no file id');
+    log.info('Drive file uploaded', { name: input.name, fileId: id });
+    return { id, fileUrl: `https://drive.google.com/open?id=${id}` };
+  }
+
+  /**
+   * Grant read access to specific users, without notification emails.
+   * Calendar attachments do NOT inherit event sharing — attendees need
+   * Drive permission on the file to open it.
+   */
+  async shareWithUsers(fileId: string, emails: string[]): Promise<void> {
+    const client = await this.getClient();
+    for (const email of emails) {
+      await client.permissions.create({
+        fileId,
+        sendNotificationEmail: false,
+        requestBody: { type: 'user', role: 'reader', emailAddress: email },
+      });
+    }
   }
 }

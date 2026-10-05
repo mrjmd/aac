@@ -72,6 +72,13 @@ export interface EnvConfig {
      * SCHEDULING_STUB_EVENTS=true in Vercel to enable, remove to disable.
      */
     stubEventsEnabled: boolean;
+    /**
+     * Attendees added to auto-created STUB events. Deliberately separate
+     * from TECHNICIAN_EMAILS, which is a broad READ filter (reminder /
+     * follow-up / invoice crons match events where Mike attends under any
+     * of his addresses) — stubs must only invite the work address.
+     */
+    stubAttendeeEmails: string[];
   };
   redis: {
     url: string;
@@ -140,6 +147,10 @@ export function getEnv(): EnvConfig {
       proposalSecret: process.env.SCHEDULING_PROPOSAL_SECRET || null,
       agentBaseUrl: process.env.AGENT_BASE_URL || null,
       stubEventsEnabled: process.env.SCHEDULING_STUB_EVENTS === 'true',
+      stubAttendeeEmails: (process.env.STUB_ATTENDEE_EMAILS || 'mike@attackacrack.com')
+        .split(',')
+        .map((e) => e.trim())
+        .filter(Boolean),
     },
     redis: {
       url: requireEnv('UPSTASH_REDIS_REST_URL'),

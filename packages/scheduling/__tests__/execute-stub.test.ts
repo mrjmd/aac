@@ -237,4 +237,45 @@ describe('executeStubEvent', () => {
     const call = createEvent.mock.calls[0][0];
     expect(call.location).toBeUndefined();
   });
+
+  it('uses a pre-built description and keeps the provenance footer', async () => {
+    const { deps, createEvent } = makeDeps();
+
+    await executeStubEvent(deps, {
+      directive: makeConfirmed(),
+      ...baseInput,
+      description: 'NOTE: gate code 1234.\n\nWet basement NE corner, go have a look.',
+    });
+
+    const call = createEvent.mock.calls[0][0];
+    expect(call.description).toContain('NOTE: gate code 1234.');
+    expect(call.description).toContain('Wet basement NE corner');
+    expect(call.description).toContain('Auto-created stub from quo_text directive dir-conf-1');
+    // the raw scopeSummary is replaced, not duplicated
+    expect(call.description).not.toMatch(/^basement assessment/);
+  });
+
+  it('passes photo attachments through to the calendar event', async () => {
+    const { deps, createEvent } = makeDeps();
+    const attachments = [
+      { fileUrl: 'https://drive.google.com/open?id=F1', title: 'a.jpg', mimeType: 'image/jpeg' },
+      { fileUrl: 'https://drive.google.com/open?id=F2', title: 'b.jpg', mimeType: 'image/jpeg' },
+    ];
+
+    await executeStubEvent(deps, {
+      directive: makeConfirmed(),
+      ...baseInput,
+      attachments,
+    });
+
+    expect(createEvent.mock.calls[0][0].attachments).toEqual(attachments);
+  });
+
+  it('omits attachments entirely when none are provided', async () => {
+    const { deps, createEvent } = makeDeps();
+
+    await executeStubEvent(deps, { directive: makeConfirmed(), ...baseInput, attachments: [] });
+
+    expect(createEvent.mock.calls[0][0].attachments).toBeUndefined();
+  });
 });

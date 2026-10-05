@@ -87,6 +87,17 @@ export interface CreateEventInput {
    * stub events awaiting Matt's review).
    */
   sendUpdates?: 'all' | 'externalOnly' | 'none';
+  /**
+   * Drive file attachments. fileUrl must be a Drive link (the Calendar
+   * API only supports Drive attachments); upload via GoogleDriveClient
+   * first. Attendees need Drive permission on the file separately —
+   * attaching does not share it.
+   */
+  attachments?: Array<{
+    fileUrl: string;
+    title?: string;
+    mimeType?: string;
+  }>;
 }
 
 export interface UpdateEventInput {
@@ -97,6 +108,12 @@ export interface UpdateEventInput {
   end?: string;
   colorId?: string;
   attendees?: string[];
+  /** Drive file attachments — REPLACES the event's attachment list. */
+  attachments?: Array<{
+    fileUrl: string;
+    title?: string;
+    mimeType?: string;
+  }>;
 }
 
 // ── Client ───────────────────────────────────────────────────────────
@@ -274,6 +291,7 @@ export class GoogleCalendarClient {
     const response = await client.events.insert({
       calendarId: this.config.calendarId,
       ...(input.sendUpdates ? { sendUpdates: input.sendUpdates } : {}),
+      ...(input.attachments?.length ? { supportsAttachments: true } : {}),
       requestBody: {
         summary: input.summary,
         location: input.location,
@@ -282,6 +300,7 @@ export class GoogleCalendarClient {
         end: { dateTime: input.end },
         colorId: input.colorId,
         attendees: input.attendees?.map((email) => ({ email })),
+        ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       },
     });
 
@@ -308,10 +327,14 @@ export class GoogleCalendarClient {
     if (input.attendees !== undefined) {
       requestBody.attendees = input.attendees.map((email) => ({ email }));
     }
+    if (input.attachments !== undefined) {
+      requestBody.attachments = input.attachments;
+    }
 
     const response = await client.events.patch({
       calendarId: this.config.calendarId,
       eventId,
+      ...(input.attachments !== undefined ? { supportsAttachments: true } : {}),
       requestBody,
     });
 

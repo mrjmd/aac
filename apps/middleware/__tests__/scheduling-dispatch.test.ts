@@ -713,6 +713,106 @@ describe('dispatchSchedulingIntent', () => {
     expect(cal.createEvent).not.toHaveBeenCalled();
   });
 
+  it('writes a Matt-voice description and attaches customer photos when drive is configured', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'appointment_confirmed',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: { startIso: '2026-06-08T15:30:00Z' },
+        eventClass: 'assessment',
+        scopeSummary: 'wet basement NE corner',
+      }),
+    ]);
+    gemini.generateContent = vi
+      .fn()
+      .mockResolvedValue('NOTE: call ahead.\n\nWet basement in the NE corner, go have a look.\n\nSee attached photos.');
+    const quo = makeQuo([
+      {
+        text: 'Here are the photos',
+        direction: 'incoming',
+        createdAt: '2026-05-29T12:00:00Z',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        media: [{ url: 'https://share.quo.com/v1/resource/message-media/abc.jpg?sig=x', type: 'image/jpeg' }],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any,
+    ]);
+    quo.downloadMessageMedia = vi
+      .fn()
+      .mockResolvedValue({ data: new ArrayBuffer(1), contentType: 'image/jpeg' });
+    const drive = {
+      ensureFolder: vi.fn().mockResolvedValue('FOLD'),
+      uploadFile: vi.fn().mockResolvedValue({ id: 'f1', fileUrl: 'https://drive.google.com/open?id=f1' }),
+      shareWithUsers: vi.fn().mockResolvedValue(undefined),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const cal = makeCal([]);
+
+    const summary = await dispatchSchedulingIntent(
+      {
+        pd: makePd('Margie Mercadante'),
+        cal,
+        gemini,
+        quo,
+        stub: { ...stubOn, drive },
+        now: fixedNow,
+      },
+      ctxMsg({ text: 'Yes. That will work. Thank you.' }),
+    );
+
+    expect(summary.stubsCreated).toBe(1);
+    const evt = cal.createEvent.mock.calls[0][0];
+    expect(evt.description).toContain('NOTE: call ahead.');
+    expect(evt.description).toContain('go have a look');
+    // provenance footer survives the rich description
+    expect(evt.description).toContain('Auto-created stub');
+    expect(evt.attachments).toEqual([
+      { fileUrl: 'https://drive.google.com/open?id=f1', title: 'abc.jpg', mimeType: 'image/jpeg' },
+    ]);
+    expect(drive.shareWithUsers).toHaveBeenCalledWith('f1', ['mike@attackacrack.com']);
+  });
+
+  it('a photo-pipeline failure still creates the stub without attachments', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'appointment_confirmed',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: { startIso: '2026-06-08T15:30:00Z' },
+        eventClass: 'assessment',
+        scopeSummary: 'wet basement NE corner',
+      }),
+    ]);
+    gemini.generateContent = vi.fn().mockResolvedValue('Wet basement in the NE corner, go have a look.');
+    const quo = makeQuo([
+      {
+        text: 'Here are the photos',
+        direction: 'incoming',
+        createdAt: '2026-05-29T12:00:00Z',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        media: [{ url: 'https://share.quo.com/v1/resource/message-media/abc.jpg?sig=x', type: 'image/jpeg' }],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any,
+    ]);
+    const drive = {
+      ensureFolder: vi.fn().mockRejectedValue(new Error('insufficient scopes')),
+      uploadFile: vi.fn(),
+      shareWithUsers: vi.fn(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const cal = makeCal([]);
+
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('Margie Mercadante'), cal, gemini, quo, stub: { ...stubOn, drive }, now: fixedNow },
+      ctxMsg({ text: 'Yes. That will work. Thank you.' }),
+    );
+
+    expect(summary.stubsCreated).toBe(1);
+    const evt = cal.createEvent.mock.calls[0][0];
+    expect(evt.attachments).toBeUndefined();
+    expect(evt.description).toContain('go have a look');
+  });
+
   it('a stub-creation failure surfaces to health but keeps the directive', async () => {
     const gemini = makeGemini([
       makeClassification({

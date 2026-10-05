@@ -585,11 +585,65 @@ Kill switch = remove the var.
 middleware 247, full turbo 13/13 + typecheck 17/17.
 
 **Deferred to the next slice**: photo attachments (Quo media → Drive →
-calendar attachment; needs Drive scope + folder decision), duration from
-`durationPrediction` (quote-aware long/multi-day jobs), offered-slot
-memory (directive linking an offer to its later confirmation), and full
-Walk #7 (suggestSlot-driven autonomous scheduling, still behind the four
-dedup prereqs above).
+calendar attachment; needs Drive scope + folder decision) — ✅ shipped
+2026-10-03, see below — duration from `durationPrediction` (quote-aware
+long/multi-day jobs), offered-slot memory (directive linking an offer to
+its later confirmation), and full Walk #7 (suggestSlot-driven autonomous
+scheduling, still behind the four dedup prereqs above).
+
+## Stub enrichment: Matt-voice descriptions + photo attachments — built 2026-10-03
+
+Stubs previously carried the raw classifier `scopeSummary` + provenance.
+Matt asked for descriptions in his own calendar format and, where
+possible, the customer's photos attached — replicating his manual flow
+(his hand-made events carry Drive attachments whose filenames are Quo
+media IDs: he downloads MMS photos and attaches them in the Calendar UI).
+
+1. **`buildEventDescription` rewritten to Matt's voice** (affects both
+   stubs and the Walk-#6 proposal SMS body): few-shot prompt built from
+   seven verbatim real event bodies — short second-person notes to Mike,
+   "NOTE:" first line for access/contact instructions, no address in the
+   body (it lives in the event location field; the `address_missing`
+   quality gate was removed accordingly). `photosUrl` input became
+   `photoCount` ("See attached photos." only when photos really attach).
+   Prior-visit claims ("you've been here") are prompt-gated to evidence
+   in the conversation. `maxOutputTokens` 600 → 4096 (gemini-3.6-flash
+   counts reasoning against the budget; 600 truncated mid-sentence —
+   same lesson as triage L1).
+2. **Photo pipeline** (`@aac/scheduling/stub-photos`,
+   `collectStubPhotoAttachments`): customer-sent images from the last
+   60d of the thread (cap 6, most recent kept) → `QuoClient.
+   downloadMessageMedia` (signed share.quo.com URLs; host-allowlisted;
+   null on expiry) → `GoogleDriveClient.uploadFile` into the
+   "AAC Job Photos (auto)" folder (`ensureFolder`) → `shareWithUsers`
+   (reader, no email) with the technician emails → Calendar
+   `attachments` (new `CreateEventInput.attachments` +
+   `supportsAttachments`). Every stage fail-soft: worst case the stub is
+   created with fewer/zero photos. Calendar attachments do NOT inherit
+   event sharing, hence the explicit Drive share with Mike.
+3. **Dispatch wiring**: `createStubForDirective` collects photos first,
+   then builds the description with the true `photoCount`, passes both
+   to `executeStubEvent` (which keeps the provenance footer either way).
+   New lazy `getDrive()` factory (same OAuth token as Calendar; returns
+   null without Google creds → photos skipped). `deps.stub.drive` is
+   optional, so existing tests and creds-less environments degrade
+   cleanly.
+
+**Scope prereq verified 2026-10-03**: the current refresh token (minted
+10/01 via `tools/src/scratch/reauth-google.ts`) carries
+`auth/drive` — confirmed live via tokeninfo. If the prod middleware var
+ever gets re-minted without Drive, the pipeline degrades to no-photo
+stubs and logs a warning (watch for "Stub photo collection failed").
+
+Live prompt check: `tools/src/scratch/try-stub-description.mts`
+(Mal-Assadourian-shaped directive) produced:
+> NOTE: Bulkhead is the easiest way into the basement, side door sticks.
+>
+> One basement crack injection, plus a possible second crack near the
+> water heater. Check if there's enough clearance around the water
+> heater to do that second one while you're there.
+>
+> See attached photos.
 
 ---
 
