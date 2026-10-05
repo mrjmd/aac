@@ -88,6 +88,21 @@ const SECTIONS: SectionDef[] = [
     blurb: 'Promised or approved work that is NOT on the calendar. Close these first.',
   },
   {
+    key: ['incomplete_event'],
+    title: 'Incomplete upcoming events',
+    blurb: 'Work events in the next 7 days missing an address, a description, or Mike as attendee. Fix these before the morning Mike rolls out (the Shivani-address incident).',
+  },
+  {
+    key: ['stub_review'],
+    title: 'Stubs awaiting review',
+    blurb: 'Auto-created STUB events from chat bookings. Confirm time, scope, and duration, then rename the event to drop the STUB prefix.',
+  },
+  {
+    key: ['quote_promised'],
+    title: 'Quotes promised, not sent',
+    blurb: 'Matt told someone a quote was coming and no QBO estimate followed. This is deal flow — get these out.',
+  },
+  {
     key: ['quote_gap'],
     title: 'Assessments without quotes',
     blurb: 'Assessment happened, but no matching estimate (or invoice, or booked job) exists in QBO. Quote them or dismiss.',
@@ -136,7 +151,10 @@ function main(): void {
     { label: 'Done, not invoiced', value: String(pulse.notInvoicedCount), bad: pulse.notInvoicedCount > 0 },
     { label: 'Approved, unscheduled', value: String(pulse.approvedUnscheduledCount), bad: pulse.approvedUnscheduledCount > 0 },
     { label: 'Stale quotes', value: `${usd(pulse.staleEstimateTotal)} · ${pulse.staleEstimateCount}`, bad: false },
+    { label: 'Quotes promised', value: String(pulse.quotePromisedCount ?? 0), bad: (pulse.quotePromisedCount ?? 0) > 0 },
     { label: 'Assessed, unquoted', value: String(pulse.assessedUnquotedCount), bad: pulse.assessedUnquotedCount > 0 },
+    { label: 'Stubs to review', value: String(pulse.stubAwaitingReviewCount ?? 0), bad: (pulse.stubAwaitingReviewCount ?? 0) > 0 },
+    { label: 'Incomplete next 7d', value: String(pulse.incompleteUpcomingCount ?? 0), bad: (pulse.incompleteUpcomingCount ?? 0) > 0 },
     { label: 'Jobs next 7 / 30d', value: `${pulse.jobsNext7} / ${pulse.jobsNext30}`, bad: pulse.jobsNext7 === 0 },
   ]
     .map(

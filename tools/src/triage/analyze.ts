@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { GeminiClient } from '@aac/api-clients/gemini';
+import { STUB_TITLE_PREFIX } from '@aac/scheduling';
 import { hasContinuation } from '@aac/shared-utils/multiday';
 import type { Snapshot, ThreadSnapshot } from './collect.ts';
 
@@ -25,6 +26,11 @@ const STALE_ESTIMATE_MIN_DAYS = 3; // pending this long → appears in the list
 const NUDGE_QUIET_DAYS = 3; // no Quo text/call this long → ready for a nudge
 const APPROVED_UNSCHEDULED_GRACE_DAYS = 2; // spec: yellow at >48h
 const ASSESSED_UNQUOTED_GRACE_DAYS = 2; // assessment done, no quote yet → D9
+const STUB_IMMINENT_HOURS = 48; // stub event this close (or past) → red, D10
+const UPCOMING_COMPLETE_DAYS = 7; // work events this far out must be complete → D11
+// Both addresses count as "Mike is assigned" (attackacrack = new events,
+// gmail = legacy; see project_mike_email_addresses).
+const TECHNICIAN_EMAILS = ['mike@attackacrack.com', 'harrringtonm@gmail.com'];
 const LLM_CONCURRENCY = 4;
 
 // ── env (same pattern as collect.ts) ─────────────────────────────────
@@ -51,6 +57,9 @@ function loadEnv(): void {
 export type Section =
   | 'system'
   | 'booked_gap'
+  | 'stub_review'
+  | 'incomplete_event'
+  | 'quote_promised'
   | 'quote_gap'
   | 'deal_closer'
   | 'cash_not_invoiced'
@@ -89,7 +98,10 @@ export interface FindingsFile {
     approvedUnscheduledCount: number;
     staleEstimateTotal: number;
     staleEstimateCount: number;
+    quotePromisedCount: number;
     assessedUnquotedCount: number;
+    stubAwaitingReviewCount: number;
+    incompleteUpcomingCount: number;
     jobsNext7: number;
     jobsNext30: number;
   };
@@ -116,6 +128,8 @@ interface CalEvent {
   id: string;
   summary: string;
   location?: string;
+  description?: string;
+  attendees?: string[];
   start: string;
   end: string;
   colorId?: string;
@@ -237,7 +251,7 @@ const daysAgo = (iso: string | undefined, now: number): number =>
 
 interface LlmVerdict {
   needs_action: boolean;
-  category: 'booked_gap' | 'deal_closer' | 'unresolved' | 'none';
+  category: 'booked_gap' | 'quote_promised' | 'deal_closer' | 'unresolved' | 'solicitation' | 'none';
   customer_name: string | null;
   title: string;
   summary: string;
@@ -599,9 +613,16 @@ async function main(): Promise<void> {
     const last = tokens[tokens.length - 1];
 
     // 7-day pre-window: occasionally the quote is drafted from photos
-    // before the on-site visit confirms it.
+    // before the on-site visit confirms it. Judge by the LATEST touch
+    // (TxnDate vs LastUpdatedTime): a photo-based quote drafted weeks
+    // early and revised after the visit is still the quote for this
+    // assessment (Lisa Martin #1501, 2026-10-03).
     const txnMatch = (txn: QboTxn): boolean => {
-      if (txn.TxnDate && new Date(txn.TxnDate).getTime() < endMs - 7 * DAY) return false;
+      const touchedMs = Math.max(
+        txn.TxnDate ? new Date(txn.TxnDate).getTime() : 0,
+        txn.MetaData?.LastUpdatedTime ? new Date(txn.MetaData.LastUpdatedTime).getTime() : 0,
+      );
+      if (touchedMs > 0 && touchedMs < endMs - 7 * DAY) return false;
       const custTokens = nameTokens(txn.CustomerRef?.name ?? '');
       if (custTokens.some((t) => tokensAlike(t, last))) return true;
       return addrKeys(txn).some((k) => addrsAlike(k, evAddr));
@@ -641,6 +662,97 @@ async function main(): Promise<void> {
     });
   }
   stats.assessedUnquoted = assessedUnquoted;
+
+  // ── D10: STUB events never fleshed out ────────────────────────────
+  // Walk #7-lite auto-creates "STUB — {Customer}" events from chat
+  // bookings (packages/scheduling/execute-stub.ts). The prefix is the
+  // review marker: Matt confirms time/scope/duration and renames the
+  // event; one still carrying it has not been reviewed. Red once the
+  // slot is imminent (< STUB_IMMINENT_HOURS) or already past — Mike may
+  // walk into an unvetted appointment, and a past stub also hides from
+  // name-matching detectors (D1/D4 won't see "STUB — Jones" as "Jones").
+  // Word-boundary match so surnames like "Stubbs" don't trip it.
+  let stubAwaitingReview = 0;
+  for (const ev of events) {
+    const summary = ev.summary ?? '';
+    if (!summary.startsWith(STUB_TITLE_PREFIX) && !/^stub\b/i.test(summary.trim())) continue;
+    const startMs = new Date(ev.start).getTime();
+    const hoursUntil = Math.round((startMs - now) / 3_600_000);
+    const customer = summary.startsWith(STUB_TITLE_PREFIX)
+      ? summary.slice(STUB_TITLE_PREFIX.length).trim()
+      : summary.replace(/^stub\b[\s—:-]*/i, '').trim();
+    const kind =
+      ev.colorId === '10' ? 'job' : ev.colorId === '3' ? 'assessment' : ev.colorId === '5' ? 'callback' : 'event';
+    const past = startMs <= now;
+    stubAwaitingReview++;
+    findings.push({
+      id: `d10:${ev.id}`,
+      section: 'stub_review',
+      severity: past || hoursUntil < STUB_IMMINENT_HOURS ? 'red' : 'yellow',
+      title: past
+        ? `Stub ${kind} already happened, never fleshed out — ${customer || summary}`
+        : `Stub ${kind} needs review — ${customer || summary}`,
+      ...(customer ? { customer } : {}),
+      ...(past ? { ageDays: Math.floor((now - startMs) / DAY) } : {}),
+      detail: `${past ? 'Was' : 'Starts'} ${ev.start.slice(0, 16).replace('T', ' ')}${
+        ev.location ? ` at ${ev.location}` : ''
+      }. Auto-created from a chat booking; time, scope, and duration are unconfirmed${
+        past ? ', and the STUB title hides it from the invoice/booking detectors' : ''
+      }.`,
+      action: past
+        ? 'Confirm what actually happened, rename the event, and check it got invoiced'
+        : `Confirm time/scope/duration, then rename to drop "${STUB_TITLE_PREFIX.trim()}"`,
+      source: 'D10',
+    });
+  }
+  stats.stubAwaitingReview = stubAwaitingReview;
+
+  // ── D11: incomplete upcoming events ───────────────────────────────
+  // Shivani incident 2026-10-02: Mike drove to an assessment whose event
+  // had no address — he reconstructed it from the attachment, but if Matt
+  // had been unreachable the visit was dead. Every work event in the next
+  // week must be complete BEFORE the morning it happens: address in
+  // location, a description, and (jobs/callbacks) Mike as attendee.
+  // Assessments skip the attendee check — Matt runs some himself. Stubs
+  // are D10's problem; [cont] days inherit day 1 by design.
+  let incompleteUpcoming = 0;
+  for (const ev of events) {
+    const kind =
+      ev.colorId === '10' ? 'Job' : ev.colorId === '3' ? 'Assessment' : ev.colorId === '5' ? 'Callback' : null;
+    if (!kind) continue;
+    const startMs = new Date(ev.start).getTime();
+    if (startMs < now || startMs > now + UPCOMING_COMPLETE_DAYS * DAY) continue;
+    const summary = (ev.summary ?? '').trim();
+    if (/^stub\b/i.test(summary)) continue;
+    if (/\[cont/i.test(summary)) continue;
+
+    const problems: string[] = [];
+    if (!ev.location?.trim()) problems.push('no address');
+    if (!ev.description?.trim()) problems.push('no description');
+    const attendees = (ev.attendees ?? []).map((a) => a.toLowerCase());
+    if (
+      (ev.colorId === '10' || ev.colorId === '5') &&
+      !TECHNICIAN_EMAILS.some((t) => attendees.includes(t))
+    ) {
+      problems.push('Mike not assigned');
+    }
+    if (problems.length === 0) continue;
+
+    const daysOut = Math.max(0, Math.ceil((startMs - now) / DAY));
+    incompleteUpcoming++;
+    findings.push({
+      id: `d11:${ev.id}`,
+      section: 'incomplete_event',
+      severity: 'red',
+      title: `${kind} ${daysOut === 0 ? 'TODAY' : `in ${daysOut}d`} — ${problems.join(', ')}: ${summary || '(untitled)'}`,
+      detail: `${ev.start.slice(0, 16).replace('T', ' ')}${ev.location ? ` at ${ev.location}` : ''}. Attendees: ${
+        (ev.attendees ?? []).join(', ') || 'none'
+      }. Mike needs the full picture before he rolls — fix this in the calendar now.`,
+      action: `Fix in calendar: add ${problems.join(' + ')}`,
+      source: 'D11',
+    });
+  }
+  stats.incompleteUpcoming = incompleteUpcoming;
 
   // ── D6/D7 deterministic thread flags (LLM refines below) ─────────
   const detFlags = new Map<
@@ -699,6 +811,25 @@ async function main(): Promise<void> {
     })
     .join('\n');
 
+  // Recent estimates let the LLM tell "promised a quote and sent it" from
+  // "promised a quote and dropped it" — same pattern as the calendar
+  // context for booked_gap.
+  const estimateContext = estimates
+    .filter((e) => {
+      const touched = Math.max(
+        e.TxnDate ? new Date(e.TxnDate).getTime() : 0,
+        e.MetaData?.LastUpdatedTime ? new Date(e.MetaData.LastUpdatedTime).getTime() : 0,
+      );
+      return touched > now - 60 * DAY;
+    })
+    .map(
+      (e) =>
+        `${e.TxnDate} ${e.CustomerRef?.name ?? '?'} $${money(e.TotalAmt)} ${e.TxnStatus ?? '?'}${
+          e.MetaData?.LastUpdatedTime ? ` (updated ${e.MetaData.LastUpdatedTime.slice(0, 10)})` : ''
+        }`,
+    )
+    .join('\n');
+
   const systemPrompt = `You triage SMS/call threads for Attack A Crack, a foundation-repair company in Quincy MA. Matt is the owner. In threads, OUT messages and transcript lines starting "M:" are Matt; IN and "C:" are the other party. Today is ${nowIso.slice(0, 10)}.
 
 Below is the company Google Calendar (past 14 days + next 60 days). Event kinds: JOB = booked paid work, ASSESS = assessment visit, CALLBACK = warranty rework.
@@ -706,14 +837,21 @@ Below is the company Google Calendar (past 14 days + next 60 days). Event kinds:
 CALENDAR:
 ${calendarContext}
 
+Below are the QBO estimates (quotes) created or updated in the last 60 days — this is the record of quotes actually sent.
+
+ESTIMATES:
+${estimateContext}
+
 For the thread you are given, decide if it contains a genuinely actionable gap:
 - "booked_gap": Matt told this person a visit/job is (or will be) scheduled, and NO calendar event above plausibly matches them (check names, addresses, dates carefully). This is the worst miss — a customer who thinks they're booked.
+- "quote_promised": Matt told this person he would send a quote/estimate/price, and NO estimate above plausibly matches them dated or updated on-or-after the promise. This is lost deal flow — flag it even if the customer hasn't nudged. If a matching estimate exists, it is NOT quote_promised.
 - "deal_closer": the customer approved a quote, asked to schedule, or asked a question that blocks a sale — and the ball is in Matt's court.
-- "unresolved": the customer awaits a reply, or Matt promised a follow-up that hasn't visibly happened.
-- "none": nothing pending on our side (also for vendors, spam, personal, or threads where Matt's last message settles everything).
+- "unresolved": the customer awaits a reply, or Matt promised a non-quote follow-up that hasn't visibly happened.
+- "solicitation": the OTHER party is selling TO Matt — lead-gen or marketing services, "do you need more work / more jobs / more customers?", SEO, advertising, recruiting, bulk or robo texts. A real customer talks about THEIR property or problem; a solicitor talks about Matt's business volume. Set needs_action false.
+- "none": nothing pending on our side (vendors we already work with, personal threads, or threads where Matt's last message settles everything).
 
 Be conservative: a real gap only. If a matching calendar event exists, it is NOT a booked_gap. Respond with ONLY a JSON object:
-{"needs_action": boolean, "category": "booked_gap"|"deal_closer"|"unresolved"|"none", "customer_name": string|null, "title": "short label", "summary": "1-2 sentences", "evidence": "short verbatim quote from the thread", "suggested_action": "imperative, short", "urgency": "red"|"yellow"|"info", "confidence": "high"|"medium"|"low"}`;
+{"needs_action": boolean, "category": "booked_gap"|"quote_promised"|"deal_closer"|"unresolved"|"solicitation"|"none", "customer_name": string|null, "title": "short label", "summary": "1-2 sentences", "evidence": "short verbatim quote from the thread", "suggested_action": "imperative, short", "urgency": "red"|"yellow"|"info", "confidence": "high"|"medium"|"low"}`;
 
   const candidates = snapshot.threads.filter((t) => t.messages.length > 0 || t.calls.length > 0);
   stats.llmThreads = candidates.length;
@@ -763,9 +901,32 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
   for (const t of snapshot.threads) {
     const v = verdicts.get(t.phone);
     const det = detFlags.get(t.phone);
-    if (v?.needs_action && v.category !== 'none') {
+    if (v?.category === 'solicitation') {
+      // Someone selling TO Matt ("need more jobs?"). Never a priority, but
+      // stays visible as info with its evidence per [[ai-quality-gates]] —
+      // a misread real customer should be spottable at a glance.
+      findings.push({
+        id: `l1:${t.phone}`,
+        section: 'conversation',
+        severity: 'info',
+        title: `Likely solicitation — ${v.title || t.phone}`,
+        customer: v.customer_name ?? undefined,
+        phone: t.phone,
+        evidence: v.evidence,
+        detail: v.summary,
+        action: 'Ignore (vendor/marketing). Dismiss by phone if they persist.',
+        source: 'L1',
+        confidence: v.confidence,
+      });
+    } else if (v?.needs_action && v.category !== 'none') {
       const section: Section =
-        v.category === 'booked_gap' ? 'booked_gap' : v.category === 'deal_closer' ? 'deal_closer' : 'conversation';
+        v.category === 'booked_gap'
+          ? 'booked_gap'
+          : v.category === 'quote_promised'
+            ? 'quote_promised'
+            : v.category === 'deal_closer'
+              ? 'deal_closer'
+              : 'conversation';
       findings.push({
         id: `l1:${t.phone}`,
         section,
@@ -858,7 +1019,10 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
         findings.filter((f) => f.source === 'D5').reduce((a, f) => a + (f.amount ?? 0), 0)
       ),
       staleEstimateCount: findings.filter((f) => f.source === 'D5').length,
+      quotePromisedCount: findings.filter((f) => f.section === 'quote_promised').length,
       assessedUnquotedCount: findings.filter((f) => f.source === 'D9').length,
+      stubAwaitingReviewCount: findings.filter((f) => f.source === 'D10').length,
+      incompleteUpcomingCount: findings.filter((f) => f.source === 'D11').length,
       jobsNext7: jobsBetween(now, now + 7 * DAY),
       jobsNext30: jobsBetween(now, now + 30 * DAY),
     },
