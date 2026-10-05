@@ -591,7 +591,15 @@ long/multi-day jobs), offered-slot memory (directive linking an offer to
 its later confirmation), and full Walk #7 (suggestSlot-driven autonomous
 scheduling, still behind the four dedup prereqs above).
 
-## Stub enrichment: Matt-voice descriptions + photo attachments — built 2026-10-03
+## Stub enrichment: Matt-voice descriptions + photo attachments — built 2026-10-03, deployed 2026-10-05
+
+**LIVE since 2026-10-05** (commit `959e3e2`, deploy `bfs6bubix`): every new
+stub gets the Matt-voice description and, when the customer sent MMS photos,
+Drive-backed photo attachments shared with Mike. Known gap: photos a customer
+*emails* (the MMS-bounce fallback, e.g. Jason McCurry 2026-10-03) are
+invisible to the pipeline — no Gmail scope on the middleware token; those
+need manual attachment. Manual re-enrichment of an existing stub:
+`tools/src/scratch/enrich-stub-event.ts "<name>" --apply` (gitignored scratch).
 
 Stubs previously carried the raw classifier `scopeSummary` + provenance.
 Matt asked for descriptions in his own calendar format and, where
