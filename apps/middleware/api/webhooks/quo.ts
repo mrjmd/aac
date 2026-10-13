@@ -579,6 +579,9 @@ export async function POST(request: Request): Promise<Response> {
               technicianEmails: env.scheduling.stubAttendeeEmails,
               drive: getDrive(),
             },
+            holds: {
+              enabled: env.scheduling.holdEventsEnabled,
+            },
           },
           dispatchCtx,
         );

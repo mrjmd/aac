@@ -19,6 +19,7 @@ export * from './types.js';
 export * from './normalize-qb-approval.js';
 export * from './normalize-manual-schedule.js';
 export * from './normalize-appointment-confirmed.js';
+export * from './execute-hold.js';
 export * from './execute-stub.js';
 export * from './stub-photos.js';
 export * from './normalize-quo-customer.js';

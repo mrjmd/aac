@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { GoogleCalendarClient, CalendarEvent } from '@aac/api-clients/google-calendar';
 import {
+  enrichStubEvent,
   executeStubEvent,
   getActionableSlot,
   EVENT_CLASS_COLOR_IDS,
@@ -78,11 +79,13 @@ function makeDeps(existingEvents: Partial<CalendarEvent>[] = []) {
     htmlLink: 'https://calendar.google.com/event?id=evt-new',
     summary: 'STUB — Test',
   } as CalendarEvent);
+  const deleteEvent = vi.fn().mockResolvedValue(undefined);
+  const updateEvent = vi.fn().mockResolvedValue({ id: 'evt-new' } as CalendarEvent);
   const deps: ExecuteStubDeps = {
-    cal: { listEvents, createEvent } as unknown as GoogleCalendarClient,
+    cal: { listEvents, createEvent, deleteEvent, updateEvent } as unknown as GoogleCalendarClient,
     now: () => NOW,
   };
-  return { deps, listEvents, createEvent };
+  return { deps, listEvents, createEvent, deleteEvent, updateEvent };
 }
 
 beforeEach(() => {
@@ -217,6 +220,37 @@ describe('executeStubEvent', () => {
     expect(createEvent).not.toHaveBeenCalled();
   });
 
+  it('releases a HOLD placeholder for the same customer and creates the stub', async () => {
+    const { deps, createEvent, deleteEvent } = makeDeps([
+      { id: 'evt-hold', summary: 'HOLD — Jane Smith' },
+    ]);
+    const result = await executeStubEvent(deps, { directive: makeConfirmed(), ...baseInput });
+    expect(result.status).toBe('created');
+    expect(deleteEvent).toHaveBeenCalledWith('evt-hold');
+    expect(createEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('still creates the stub when releasing the hold fails', async () => {
+    const { deps, createEvent, deleteEvent } = makeDeps([
+      { id: 'evt-hold', summary: 'HOLD — Jane Smith' },
+    ]);
+    deleteEvent.mockRejectedValueOnce(new Error('410 Gone'));
+    const result = await executeStubEvent(deps, { directive: makeConfirmed(), ...baseInput });
+    expect(result.status).toBe('created');
+    expect(createEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('a real (non-hold) duplicate still wins over hold cleanup', async () => {
+    const { deps, createEvent, deleteEvent } = makeDeps([
+      { id: 'evt-hold', summary: 'HOLD — Jane Smith' },
+      { id: 'evt-real', summary: 'Jane Smith — crack injection' },
+    ]);
+    const result = await executeStubEvent(deps, { directive: makeConfirmed(), ...baseInput });
+    expect(result).toEqual({ status: 'skipped', reason: 'duplicate_event' });
+    expect(createEvent).not.toHaveBeenCalled();
+    expect(deleteEvent).not.toHaveBeenCalled();
+  });
+
   it('creates when nearby events are for other customers', async () => {
     const { deps, createEvent } = makeDeps([
       { id: 'evt-other', summary: 'Bob Jones — resurfacing' },
@@ -277,5 +311,61 @@ describe('executeStubEvent', () => {
     await executeStubEvent(deps, { directive: makeConfirmed(), ...baseInput, attachments: [] });
 
     expect(createEvent.mock.calls[0][0].attachments).toBeUndefined();
+  });
+});
+
+describe('enrichStubEvent', () => {
+  it('patches description (with provenance footer) and attachments', async () => {
+    const { deps, updateEvent } = makeDeps();
+    const attachments = [
+      { fileUrl: 'https://drive.google.com/open?id=F1', title: 'a.jpg', mimeType: 'image/jpeg' },
+    ];
+
+    const patched = await enrichStubEvent(deps, {
+      directive: makeConfirmed(),
+      eventId: 'evt-new',
+      description: 'Wet basement NE corner, go have a look.',
+      attachments,
+    });
+
+    expect(patched).toBe(true);
+    expect(updateEvent).toHaveBeenCalledTimes(1);
+    const [eventId, patch] = updateEvent.mock.calls[0];
+    expect(eventId).toBe('evt-new');
+    expect(patch.description).toContain('go have a look');
+    expect(patch.description).toContain('Auto-created stub from quo_text directive dir-conf-1');
+    expect(patch.attachments).toEqual(attachments);
+  });
+
+  it('patches attachments alone, leaving the description untouched', async () => {
+    const { deps, updateEvent } = makeDeps();
+    const attachments = [
+      { fileUrl: 'https://drive.google.com/open?id=F1', title: 'a.jpg', mimeType: 'image/jpeg' },
+    ];
+
+    const patched = await enrichStubEvent(deps, {
+      directive: makeConfirmed(),
+      eventId: 'evt-new',
+      attachments,
+    });
+
+    expect(patched).toBe(true);
+    const [, patch] = updateEvent.mock.calls[0];
+    expect(patch.description).toBeUndefined();
+    expect(patch.attachments).toEqual(attachments);
+  });
+
+  it('is a no-op when there is nothing to patch', async () => {
+    const { deps, updateEvent } = makeDeps();
+
+    const patched = await enrichStubEvent(deps, {
+      directive: makeConfirmed(),
+      eventId: 'evt-new',
+      description: '   ',
+      attachments: [],
+    });
+
+    expect(patched).toBe(false);
+    expect(updateEvent).not.toHaveBeenCalled();
   });
 });

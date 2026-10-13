@@ -6,6 +6,10 @@
       "maxDuration": 300,
       "memory": 256
     },
+    "api/webhooks/*.ts": {
+      "maxDuration": 300,
+      "memory": 256
+    },
     "api/**/*.ts": {
       "maxDuration": 30,
       "memory": 256

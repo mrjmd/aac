@@ -90,6 +90,7 @@ function makeCal(events: CalendarEvent[]) {
       id: 'evt-stub-1',
       htmlLink: 'https://calendar.google.com/event?id=evt-stub-1',
     }),
+    updateEvent: vi.fn().mockResolvedValue({ id: 'evt-stub-1' }),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
 }
@@ -761,12 +762,21 @@ describe('dispatchSchedulingIntent', () => {
     );
 
     expect(summary.stubsCreated).toBe(1);
+    // Bare stub first: the booking is on the calendar before any
+    // enrichment work (which can outlive a webhook timeout) begins.
     const evt = cal.createEvent.mock.calls[0][0];
-    expect(evt.description).toContain('NOTE: call ahead.');
-    expect(evt.description).toContain('go have a look');
-    // provenance footer survives the rich description
+    expect(evt.description).toContain('wet basement NE corner');
     expect(evt.description).toContain('Auto-created stub');
-    expect(evt.attachments).toEqual([
+    expect(evt.attachments).toBeUndefined();
+    // Enrichment lands as a patch on the created event.
+    expect(cal.updateEvent).toHaveBeenCalledTimes(1);
+    const [patchedId, patch] = cal.updateEvent.mock.calls[0];
+    expect(patchedId).toBe('evt-stub-1');
+    expect(patch.description).toContain('NOTE: call ahead.');
+    expect(patch.description).toContain('go have a look');
+    // provenance footer survives the rich description
+    expect(patch.description).toContain('Auto-created stub');
+    expect(patch.attachments).toEqual([
       { fileUrl: 'https://drive.google.com/open?id=f1', title: 'abc.jpg', mimeType: 'image/jpeg' },
     ]);
     expect(drive.shareWithUsers).toHaveBeenCalledWith('f1', ['mike@attackacrack.com']);
@@ -810,7 +820,37 @@ describe('dispatchSchedulingIntent', () => {
     expect(summary.stubsCreated).toBe(1);
     const evt = cal.createEvent.mock.calls[0][0];
     expect(evt.attachments).toBeUndefined();
-    expect(evt.description).toContain('go have a look');
+    // Description enrichment still lands via patch, just without photos.
+    expect(cal.updateEvent).toHaveBeenCalledTimes(1);
+    const [, patch] = cal.updateEvent.mock.calls[0];
+    expect(patch.description).toContain('go have a look');
+    expect(patch.attachments).toBeUndefined();
+  });
+
+  it('an enrichment failure leaves the bare stub standing', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'appointment_confirmed',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: { startIso: '2026-06-08T15:30:00Z' },
+        eventClass: 'assessment',
+        scopeSummary: 'wet basement NE corner',
+      }),
+    ]);
+    gemini.generateContent = vi.fn().mockResolvedValue('Wet basement, go have a look.');
+    const cal = makeCal([]);
+    cal.updateEvent.mockRejectedValue(new Error('calendar 500 on patch'));
+
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('Margie Mercadante'), cal, gemini, quo: makeQuo(), stub: stubOn, now: fixedNow },
+      ctxMsg({ text: 'Yes. That will work. Thank you.' }),
+    );
+
+    expect(summary.stubsCreated).toBe(1);
+    expect(summary.errors).toBe(0);
+    expect(cal.createEvent).toHaveBeenCalledTimes(1);
+    expect(mockLogHealthError).not.toHaveBeenCalled();
   });
 
   it('a stub-creation failure surfaces to health but keeps the directive', async () => {
@@ -837,6 +877,133 @@ describe('dispatchSchedulingIntent', () => {
     expect(mockLogHealthError).toHaveBeenCalledWith(
       'scheduling-dispatch',
       expect.stringContaining('Stub creation failed'),
+      expect.anything(),
+    );
+  });
+
+  // ── hold-event execution (offered slots) ─────────────────────────
+
+  const holdsOn = { enabled: true };
+
+  function offeredClassification() {
+    return makeClassification({
+      intent: 'manual_schedule',
+      score: 0.9,
+      confidence: 'high',
+      knownSlot: { startIso: '2026-06-02T14:00:00Z' },
+      eventClass: 'job',
+      slotCommitment: 'offered',
+      scopeSummary: 'crack injection',
+    });
+  }
+
+  it('creates a HOLD placeholder for an offered slot when holds are enabled', async () => {
+    const gemini = makeGemini([offeredClassification()]);
+    const cal = makeCal([]);
+
+    const summary = await dispatchSchedulingIntent(
+      {
+        pd: makePd('John Smith'),
+        cal,
+        gemini,
+        quo: makeQuo(),
+        stub: stubOn,
+        holds: holdsOn,
+        now: fixedNow,
+      },
+      ctxMsg({ eventType: 'message.delivered', text: 'Would Tuesday at 10 work for you?' }),
+    );
+
+    expect(summary.directivesWritten).toBe(1);
+    expect(summary.stubsCreated).toBe(0);
+    expect(summary.holdsCreated).toBe(1);
+    expect(cal.createEvent).toHaveBeenCalledTimes(1);
+    const evt = cal.createEvent.mock.calls[0][0];
+    expect(evt.summary).toBe('HOLD — John Smith');
+    expect(evt.colorId).toBe('8');
+    expect(evt.attendees).toBeUndefined();
+    expect(evt.description).toContain('Offered-At:');
+    expect(evt.description).toContain('Customer-Phone:');
+  });
+
+  it('does not create holds when the flag is off or absent', async () => {
+    const gemini = makeGemini([offeredClassification()]);
+    const cal = makeCal([]);
+
+    const summary = await dispatchSchedulingIntent(
+      {
+        pd: makePd('John Smith'),
+        cal,
+        gemini,
+        quo: makeQuo(),
+        stub: stubOn,
+        holds: { enabled: false },
+        now: fixedNow,
+      },
+      ctxMsg({ eventType: 'message.delivered', text: 'Would Tuesday at 10 work for you?' }),
+    );
+
+    expect(summary.holdsCreated).toBe(0);
+    expect(cal.createEvent).not.toHaveBeenCalled();
+  });
+
+  it('a booked slot makes a STUB, never a hold, with both flags on', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'manual_schedule',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: { startIso: '2026-06-02T14:00:00Z' },
+        eventClass: 'job',
+        slotCommitment: 'booked',
+        scopeSummary: 'crack injection',
+      }),
+    ]);
+    const cal = makeCal([]);
+
+    const summary = await dispatchSchedulingIntent(
+      {
+        pd: makePd('John Smith'),
+        cal,
+        gemini,
+        quo: makeQuo(),
+        stub: stubOn,
+        holds: holdsOn,
+        now: fixedNow,
+      },
+      ctxMsg({ eventType: 'message.delivered', text: "I'm putting you down for Tuesday at 10" }),
+    );
+
+    expect(summary.stubsCreated).toBe(1);
+    expect(summary.holdsCreated).toBe(0);
+    expect(cal.createEvent).toHaveBeenCalledTimes(1);
+    expect(cal.createEvent.mock.calls[0][0].summary).toBe('STUB — John Smith');
+  });
+
+  it('a hold-creation failure surfaces to health but keeps the directive', async () => {
+    const gemini = makeGemini([offeredClassification()]);
+    const cal = makeCal([]);
+    cal.createEvent.mockRejectedValue(new Error('calendar 500'));
+
+    const summary = await dispatchSchedulingIntent(
+      {
+        pd: makePd('John Smith'),
+        cal,
+        gemini,
+        quo: makeQuo(),
+        stub: stubOn,
+        holds: holdsOn,
+        now: fixedNow,
+      },
+      ctxMsg({ eventType: 'message.delivered', text: 'Would Tuesday at 10 work for you?' }),
+    );
+
+    expect(summary.directivesWritten).toBe(1);
+    expect(summary.holdsCreated).toBe(0);
+    expect(summary.errors).toBe(0); // hold failures are soft
+    expect(mockLogHealthError).toHaveBeenCalledWith(
+      'scheduling-dispatch',
+      expect.stringContaining('Hold creation failed'),
       expect.anything(),
     );
   });

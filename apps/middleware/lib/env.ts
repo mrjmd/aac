@@ -73,6 +73,14 @@ export interface EnvConfig {
      */
     stubEventsEnabled: boolean;
     /**
+     * Offered-slot placeholders: when true, Matt's outbound "we could do
+     * Tuesday at 10" (manual_schedule with slotCommitment='offered')
+     * auto-creates a HOLD calendar event — graphite, no attendees — so
+     * the same time is never offered twice. Off by default; flip
+     * SCHEDULING_HOLD_EVENTS=true in Vercel to enable, remove to disable.
+     */
+    holdEventsEnabled: boolean;
+    /**
      * Attendees added to auto-created STUB events. Deliberately separate
      * from TECHNICIAN_EMAILS, which is a broad READ filter (reminder /
      * follow-up / invoice crons match events where Mike attends under any
@@ -147,6 +155,7 @@ export function getEnv(): EnvConfig {
       proposalSecret: process.env.SCHEDULING_PROPOSAL_SECRET || null,
       agentBaseUrl: process.env.AGENT_BASE_URL || null,
       stubEventsEnabled: process.env.SCHEDULING_STUB_EVENTS === 'true',
+      holdEventsEnabled: process.env.SCHEDULING_HOLD_EVENTS === 'true',
       stubAttendeeEmails: (process.env.STUB_ATTENDEE_EMAILS || 'mike@attackacrack.com')
         .split(',')
         .map((e) => e.trim())

@@ -38,8 +38,11 @@ import type { QuoClient } from '@aac/api-clients/quo';
 import {
   buildEventDescription,
   collectStubPhotoAttachments,
+  enrichStubEvent,
+  executeHoldEvent,
   executeStubEvent,
   getActionableSlot,
+  getOfferedSlot,
   normalizeAppointmentConfirmed,
   normalizeManualSchedule,
   normalizeQuoCustomerIntent,
@@ -112,6 +115,14 @@ export interface SchedulingDispatchDeps {
      */
     drive?: GoogleDriveClient | null;
   };
+  /**
+   * HOLD-placeholder execution config. When absent or disabled, offered
+   * slots live only in the conversation (pre-hold behavior) — nothing
+   * stops the same time being offered twice.
+   */
+  holds?: {
+    enabled: boolean;
+  };
   now?: () => Date;
 }
 
@@ -121,6 +132,7 @@ export interface SchedulingDispatchSummary {
   directivesWritten: number;
   callbackParentMisses: number;
   stubsCreated: number;
+  holdsCreated: number;
   errors: number;
 }
 
@@ -139,6 +151,7 @@ export async function dispatchSchedulingIntent(
     directivesWritten: 0,
     callbackParentMisses: 0,
     stubsCreated: 0,
+    holdsCreated: 0,
     errors: 0,
   };
 
@@ -240,6 +253,20 @@ export async function dispatchSchedulingIntent(
       ) {
         const created = await createStubForDirective(deps, context, directive);
         if (created) summary.stubsCreated++;
+      }
+
+      // Hold execution: Matt OFFERED a slot that the customer hasn't
+      // accepted yet — place a HOLD placeholder (graphite, no attendees)
+      // so the time can't be offered to anyone else. Same confidence gate
+      // as stubs; the stub flow releases the hold when the customer says
+      // yes, triage flags it when they go quiet (D13).
+      if (
+        deps.holds?.enabled
+        && queue === 'pending'
+        && getOfferedSlot(directive) !== null
+      ) {
+        const created = await createHoldForDirective(deps, context, directive);
+        if (created) summary.holdsCreated++;
       }
     } catch (err) {
       summary.errors++;
@@ -347,11 +374,11 @@ async function fetchStubConversationHistory(
  * Self-contained error handling: a stub failure is logged + surfaced to
  * /health but never disturbs the already-written directive or the webhook.
  *
- * The event body is written in Matt's calendar voice (buildEventDescription,
- * which falls back to the raw scopeSummary template internally), and the
- * customer's recent MMS photos are attached via Drive when a drive client
- * is configured. Both are nice-to-haves: any enrichment failure still
- * produces the plain stub.
+ * Ordering is deliberate: the bare stub (scopeSummary body) is created
+ * FIRST, then enrichment — Matt-voice description + MMS photo attachments
+ * — is patched on. Enrichment can take 20s+ on photo-heavy threads, and
+ * inside a webhook invocation a maxDuration kill mid-enrichment must only
+ * ever cost decoration, never the booking.
  */
 async function createStubForDirective(
   deps: SchedulingDispatchDeps,
@@ -364,13 +391,73 @@ async function createStubForDirective(
     const customerName = info.name ?? `PD ${context.pdPersonId}`;
     const technicianEmails = deps.stub?.technicianEmails ?? [];
 
+    const result = await executeStubEvent(
+      { cal: deps.cal, now },
+      {
+        directive,
+        customerName,
+        customerAddress: info.address,
+        technicianEmails,
+      },
+    );
+    if (result.status !== 'created') {
+      log.info('Stub creation skipped', {
+        directiveId: directive.id,
+        reason: result.reason,
+      });
+      return false;
+    }
+    log.info('Stub calendar event created from directive', {
+      directiveId: directive.id,
+      eventId: result.eventId,
+      intent: directive.intent,
+      eventClass: directive.eventClass,
+    });
+
+    await enrichCreatedStub(deps, context, directive, {
+      eventId: result.eventId,
+      customerName,
+      customerAddress: info.address,
+      technicianEmails,
+    });
+    return true;
+  } catch (err) {
+    log.error('Stub creation failed', err as Error, { directiveId: directive.id });
+    await logHealthError(
+      'scheduling-dispatch',
+      `Stub creation failed: ${(err as Error).message.substring(0, 200)}`,
+      { directiveId: directive.id },
+    );
+    return false;
+  }
+}
+
+/**
+ * Best-effort enrichment pass over an already-created stub: collect MMS
+ * photos into Drive, write the Matt-voice description, and patch both
+ * onto the event. Every failure is soft — the bare stub already holds
+ * the booking, so enrichment never throws past this function.
+ */
+async function enrichCreatedStub(
+  deps: SchedulingDispatchDeps,
+  context: SchedulingDispatchContext,
+  directive: SchedulingDirective,
+  stub: {
+    eventId: string;
+    customerName: string;
+    customerAddress: string | null;
+    technicianEmails: string[];
+  },
+): Promise<void> {
+  const now = deps.now ?? (() => new Date());
+  try {
     let attachments: StubPhotoAttachment[] = [];
     if (deps.stub?.drive) {
       attachments = await collectStubPhotoAttachments(
         { quo: deps.quo, drive: deps.stub.drive, now },
         {
           customerPhone: context.customerPhone,
-          shareWithEmails: technicianEmails,
+          shareWithEmails: stub.technicianEmails,
         },
       );
     }
@@ -381,7 +468,7 @@ async function createStubForDirective(
         { gemini: deps.gemini, now },
         {
           directive,
-          customer: { name: customerName, address: info.address ?? null },
+          customer: { name: stub.customerName, address: stub.customerAddress },
           conversationHistory: await fetchStubConversationHistory(
             deps.quo,
             context.customerPhone,
@@ -397,42 +484,73 @@ async function createStubForDirective(
         });
       }
     } catch (err) {
-      log.warn('Stub description build threw — falling back to scopeSummary', {
+      log.warn('Stub description build threw — keeping scopeSummary body', {
         directiveId: directive.id,
         error: (err as Error).message,
       });
     }
 
-    const result = await executeStubEvent(
+    await enrichStubEvent(
+      { cal: deps.cal, now },
+      {
+        directive,
+        eventId: stub.eventId,
+        ...(description ? { description } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      },
+    );
+  } catch (err) {
+    log.warn('Stub enrichment failed — bare stub stands', {
+      directiveId: directive.id,
+      eventId: stub.eventId,
+      error: (err as Error).message,
+    });
+  }
+}
+
+/**
+ * Create the HOLD placeholder for a directive whose slot was offered but
+ * not yet confirmed. Deliberately lighter than the stub path: no Matt-voice
+ * description, no photo attachments, no attendees — a hold only exists to
+ * block the time and age gracefully in triage. Self-contained error
+ * handling, same contract as createStubForDirective.
+ */
+async function createHoldForDirective(
+  deps: SchedulingDispatchDeps,
+  context: SchedulingDispatchContext,
+  directive: SchedulingDirective,
+): Promise<boolean> {
+  try {
+    const now = deps.now ?? (() => new Date());
+    const info = await fetchPdPersonInfo(deps.pd, context.pdPersonId);
+    const customerName = info.name ?? `PD ${context.pdPersonId}`;
+
+    const result = await executeHoldEvent(
       { cal: deps.cal, now },
       {
         directive,
         customerName,
         customerAddress: info.address,
-        technicianEmails,
-        ...(description ? { description } : {}),
-        ...(attachments.length > 0 ? { attachments } : {}),
       },
     );
     if (result.status === 'created') {
-      log.info('Stub calendar event created from directive', {
+      log.info('Hold calendar event created from offered slot', {
         directiveId: directive.id,
         eventId: result.eventId,
-        intent: directive.intent,
         eventClass: directive.eventClass,
       });
       return true;
     }
-    log.info('Stub creation skipped', {
+    log.info('Hold creation skipped', {
       directiveId: directive.id,
       reason: result.reason,
     });
     return false;
   } catch (err) {
-    log.error('Stub creation failed', err as Error, { directiveId: directive.id });
+    log.error('Hold creation failed', err as Error, { directiveId: directive.id });
     await logHealthError(
       'scheduling-dispatch',
-      `Stub creation failed: ${(err as Error).message.substring(0, 200)}`,
+      `Hold creation failed: ${(err as Error).message.substring(0, 200)}`,
       { directiveId: directive.id },
     );
     return false;

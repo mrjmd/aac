@@ -17,7 +17,7 @@ import { randomUUID } from 'crypto';
 import type { Redis } from '@upstash/redis';
 import { createLogger } from '@aac/shared-utils/logger';
 import type { GeminiClient } from '@aac/api-clients';
-import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import type { GoogleMapsClient } from '@aac/api-clients/google-maps';
 import type { PipedriveClient } from '@aac/api-clients/pipedrive';
 import type { QuickBooksClient } from '@aac/api-clients/quickbooks';
@@ -26,6 +26,7 @@ import {
   buildEventDescription,
   DEFAULT_HOME_ADDRESS,
   getTravelLeg,
+  HOLD_TITLE_PREFIX,
   suggestSlot,
   type EventDescriptionLineItem,
   type EventDescriptionMessage,
@@ -270,6 +271,30 @@ async function fetchConversation(
   }
 }
 
+/**
+ * Which calendar events block scheduling. Two kinds:
+ *   1. Events Mike attends (jobs, assessments, callbacks, stubs) — the
+ *      attendee test is what keeps Matt's Zoom calls, BNI mornings, and
+ *      private events from blocking customer slots.
+ *   2. HOLD placeholders (execute-hold) — deliberately attendee-less so
+ *      Mike never sees unconfirmed offers, but their whole purpose is to
+ *      stop the offered time being suggested to anyone else.
+ * With no technicianEmails configured we keep the historical degraded
+ * behavior (everything blocks) — the caller already warns about it.
+ */
+export function selectBusyEvents(
+  events: CalendarEvent[],
+  technicianEmails: readonly string[],
+): CalendarEvent[] {
+  if (technicianEmails.length === 0) return events;
+  const emails = technicianEmails.map((e) => e.toLowerCase());
+  return events.filter(
+    (e) =>
+      e.summary.startsWith(HOLD_TITLE_PREFIX)
+      || e.attendees.some((a) => emails.includes(a.toLowerCase())),
+  );
+}
+
 async function runSuggestSlot(
   deps: ProposalBuilderDeps,
   directive: SchedulingDirective,
@@ -292,13 +317,15 @@ async function runSuggestSlot(
         directiveId: directive.id,
       });
     }
-    const events = await deps.calendar.listEvents({
+    const all = await deps.calendar.listEvents({
       timeMin,
       timeMax,
       maxResults: 500,
-      ...(techEmails.length > 0 ? { attendeeEmails: [...techEmails] } : {}),
     });
-    return await suggestSlot({ ...baseInput, existingEvents: events });
+    return await suggestSlot({
+      ...baseInput,
+      existingEvents: selectBusyEvents(all, techEmails),
+    });
   } catch (err) {
     await logHealthError(
       'proposal-builder',

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { QuoteApprovedDirective } from '@aac/scheduling';
+import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const { mockGetPendingDirective, mockLogHealthError } = vi.hoisted(() => ({
   mockGetPendingDirective: vi.fn(),
@@ -11,7 +12,7 @@ vi.mock('../lib/redis.js', () => ({
   logHealthError: mockLogHealthError,
 }));
 
-import { buildProposalForDirective, type ProposalBuilderDeps } from '../lib/proposal-builder.js';
+import { buildProposalForDirective, selectBusyEvents, type ProposalBuilderDeps } from '../lib/proposal-builder.js';
 
 function makeDirective(over: Partial<QuoteApprovedDirective> = {}): QuoteApprovedDirective {
   return {
@@ -190,26 +191,49 @@ describe('buildProposalForDirective', () => {
     expect(result!.payload.directive.customerName).toBe('John Smith');
   });
 
-  it('passes technicianEmails through to calendar.listEvents so non-tech events do not block scheduling', async () => {
+  it('fetches the calendar unfiltered and selects busy events locally (Mike events + holds)', async () => {
     const deps = makeDeps({
       technicianEmails: ['mike@attackacrack.com', 'harrringtonm@gmail.com'],
     });
     mockGetPendingDirective.mockResolvedValueOnce(makeDirective());
     await buildProposalForDirective(deps, 'dir_1');
-    expect(deps.calendar.listEvents).toHaveBeenCalledWith(
-      expect.objectContaining({
-        attendeeEmails: ['mike@attackacrack.com', 'harrringtonm@gmail.com'],
-      }),
-    );
-  });
-
-  it('omits attendeeEmails filter (and warns) when technicianEmails is not configured', async () => {
-    const deps = makeDeps(); // no technicianEmails
-    mockGetPendingDirective.mockResolvedValueOnce(makeDirective());
-    await buildProposalForDirective(deps, 'dir_1');
     const callArg = (deps.calendar.listEvents as unknown as {
       mock: { calls: Array<[Record<string, unknown>]> };
     }).mock.calls[0][0];
+    // The attendee cut moved client-side (selectBusyEvents) so HOLD
+    // placeholders — attendee-less by design — can still block slots.
     expect(callArg).not.toHaveProperty('attendeeEmails');
+  });
+
+  describe('selectBusyEvents', () => {
+    const TECH = ['mike@attackacrack.com', 'harrringtonm@gmail.com'];
+    const ev = (summary: string, attendees: string[]) =>
+      ({ summary, attendees } as unknown as CalendarEvent);
+
+    it('keeps Mike-attended events and drops Zoom/private/non-tech events', () => {
+      const kept = selectBusyEvents(
+        [
+          ev('Jane Smith — crack injection', ['Mike@AttackACrack.com']),
+          ev('Ed / Matt 121', ['ed@example.com']),
+          ev('BNI Plus', []),
+          ev('Dentist', []),
+        ],
+        TECH,
+      );
+      expect(kept.map((e) => e.summary)).toEqual(['Jane Smith — crack injection']);
+    });
+
+    it('keeps attendee-less HOLD placeholders', () => {
+      const kept = selectBusyEvents(
+        [ev('HOLD — John Smith', []), ev('Holiday party', [])],
+        TECH,
+      );
+      expect(kept.map((e) => e.summary)).toEqual(['HOLD — John Smith']);
+    });
+
+    it('keeps everything when no technicianEmails are configured (degraded mode)', () => {
+      const events = [ev('Ed / Matt 121', ['ed@example.com']), ev('BNI Plus', [])];
+      expect(selectBusyEvents(events, [])).toEqual(events);
+    });
   });
 });

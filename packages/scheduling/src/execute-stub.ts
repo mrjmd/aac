@@ -25,6 +25,7 @@
 
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { createLogger } from '@aac/shared-utils/logger';
+import { HOLD_TITLE_PREFIX } from './execute-hold.js';
 import type { EventClass, KnownSlot, SchedulingDirective } from './types.js';
 import { isAppointmentConfirmed, isManualSchedule } from './types.js';
 
@@ -76,6 +77,27 @@ export type ExecuteStubResult =
   | { status: 'created'; eventId: string; htmlLink: string }
   | { status: 'skipped'; reason: 'no_slot' | 'slot_in_past' | 'duplicate_event' };
 
+export interface EnrichStubInput {
+  directive: SchedulingDirective;
+  /** Event to patch — from ExecuteStubResult.eventId. */
+  eventId: string;
+  /** Matt-voice body (buildEventDescription); omit to keep the scopeSummary body. */
+  description?: string;
+  /** Drive photo attachments (collectStubPhotoAttachments). */
+  attachments?: Array<{ fileUrl: string; title: string; mimeType: string }>;
+}
+
+/** Stub event body: enriched or scopeSummary content + provenance footer. */
+function buildStubDescription(directive: SchedulingDirective, body?: string): string {
+  return [
+    body?.trim() || directive.scopeSummary,
+    '',
+    `Auto-created stub from ${directive.source} directive ${directive.id}`
+      + ` (${directive.intent}, confidence ${directive.confidence.score}).`,
+    'Review time, scope, and duration before confirming with the customer.',
+  ].join('\n');
+}
+
 /**
  * Extract the agreed slot from a directive, if it carries one. Only
  * booked manual-schedules and customer confirmations qualify — an
@@ -114,13 +136,20 @@ export async function executeStubEvent(
 
   // Duplicate guard: any event mentioning this customer within a day of
   // the slot means either a previous stub or Matt's own hand-made event.
+  // Exception: HOLD placeholders (execute-hold) represent the OFFER this
+  // confirmation is answering — they are deleted and replaced by the
+  // stub, never treated as duplicates.
   const nearby = await deps.cal.listEvents({
     timeMin: new Date(start.getTime() - DUPLICATE_WINDOW_MS).toISOString(),
     timeMax: new Date(end.getTime() + DUPLICATE_WINDOW_MS).toISOString(),
   });
   const nameLc = customerName.trim().toLowerCase();
-  const existing = nearby.find((e) => e.summary?.toLowerCase().includes(nameLc));
-  if (nameLc.length > 0 && existing) {
+  const matches = nameLc.length > 0
+    ? nearby.filter((e) => e.summary?.toLowerCase().includes(nameLc))
+    : [];
+  const holds = matches.filter((e) => e.summary?.startsWith(HOLD_TITLE_PREFIX));
+  const existing = matches.find((e) => !e.summary?.startsWith(HOLD_TITLE_PREFIX));
+  if (existing) {
     log.info('Stub skipped — event already exists for customer near slot', {
       directiveId: directive.id,
       existingEventId: existing.id,
@@ -128,14 +157,26 @@ export async function executeStubEvent(
     });
     return { status: 'skipped', reason: 'duplicate_event' };
   }
+  for (const hold of holds) {
+    try {
+      await deps.cal.deleteEvent(hold.id);
+      log.info('Hold placeholder released — customer confirmed', {
+        directiveId: directive.id,
+        holdEventId: hold.id,
+        holdSummary: hold.summary,
+      });
+    } catch (err) {
+      // A lingering hold is cosmetic (triage D13 will surface it); the
+      // confirmed stub matters more — never fail creation over cleanup.
+      log.warn('Failed to delete hold placeholder — continuing with stub', {
+        directiveId: directive.id,
+        holdEventId: hold.id,
+        error: (err as Error).message,
+      });
+    }
+  }
 
-  const description = [
-    input.description?.trim() || directive.scopeSummary,
-    '',
-    `Auto-created stub from ${directive.source} directive ${directive.id}`
-      + ` (${directive.intent}, confidence ${directive.confidence.score}).`,
-    'Review time, scope, and duration before confirming with the customer.',
-  ].join('\n');
+  const description = buildStubDescription(directive, input.description);
 
   const event = await deps.cal.createEvent({
     summary: `${STUB_TITLE_PREFIX}${customerName}`,
@@ -157,4 +198,35 @@ export async function executeStubEvent(
   });
 
   return { status: 'created', eventId: event.id, htmlLink: event.htmlLink };
+}
+
+/**
+ * Patch an already-created stub with enrichment that arrived after the
+ * fact (Matt-voice description, MMS photo attachments). Split from
+ * creation so the booking itself never waits on slow enrichment — a
+ * webhook timeout mid-enrichment costs decoration, not the event.
+ * Returns false when there is nothing to patch.
+ */
+export async function enrichStubEvent(
+  deps: ExecuteStubDeps,
+  input: EnrichStubInput,
+): Promise<boolean> {
+  const patch: {
+    description?: string;
+    attachments?: Array<{ fileUrl: string; title: string; mimeType: string }>;
+  } = {};
+  if (input.description?.trim()) {
+    patch.description = buildStubDescription(input.directive, input.description);
+  }
+  if (input.attachments?.length) patch.attachments = input.attachments;
+  if (!patch.description && !patch.attachments) return false;
+
+  await deps.cal.updateEvent(input.eventId, patch);
+  log.info('Stub event enriched', {
+    directiveId: input.directive.id,
+    eventId: input.eventId,
+    hasDescription: Boolean(patch.description),
+    attachmentCount: input.attachments?.length ?? 0,
+  });
+  return true;
 }
