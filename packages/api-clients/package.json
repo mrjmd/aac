@@ -13,6 +13,7 @@
     "./searchbug": "./dist/searchbug.js",
     "./gemini": "./dist/gemini.js",
     "./google-calendar": "./dist/google-calendar.js",
+    "./gmail": "./dist/gmail.js",
     "./google-ads": "./dist/google-ads.js",
     "./google-drive": "./dist/google-drive.js",
     "./google-analytics": "./dist/google-analytics.js",

@@ -342,4 +342,20 @@ export class GoogleCalendarClient {
     log.info('Calendar event updated', { eventId: event.id });
     return event;
   }
+
+  /**
+   * Delete an event. No attendee notifications are sent (sendUpdates
+   * defaults to none for API deletes; we pass it explicitly because the
+   * first consumer — HOLD-placeholder upgrade on customer confirmation —
+   * must never email anyone about a placeholder vanishing).
+   */
+  async deleteEvent(eventId: string): Promise<void> {
+    const client = await this.getClient();
+    log.info('Deleting calendar event', { eventId });
+    await client.events.delete({
+      calendarId: this.config.calendarId,
+      eventId,
+      sendUpdates: 'none',
+    });
+  }
 }

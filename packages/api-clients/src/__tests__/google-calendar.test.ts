@@ -5,6 +5,7 @@ vi.mock('googleapis', () => {
   const mockEventsGet = vi.fn();
   const mockEventsInsert = vi.fn();
   const mockEventsPatch = vi.fn();
+  const mockEventsDelete = vi.fn();
   const MockGoogleAuth = vi.fn();
   const MockOAuth2 = vi.fn(() => ({
     setCredentials: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock('googleapis', () => {
       get: mockEventsGet,
       insert: mockEventsInsert,
       patch: mockEventsPatch,
+      delete: mockEventsDelete,
     },
   }));
 
@@ -28,6 +30,7 @@ vi.mock('googleapis', () => {
       mockEventsGet,
       mockEventsInsert,
       mockEventsPatch,
+      mockEventsDelete,
       MockGoogleAuth,
       MockOAuth2,
       mockCalendar,
@@ -48,6 +51,7 @@ beforeEach(async () => {
   mocks.mockEventsGet.mockReset();
   mocks.mockEventsInsert.mockReset();
   mocks.mockEventsPatch.mockReset();
+  mocks.mockEventsDelete.mockReset();
   mocks.MockGoogleAuth.mockReset();
   mocks.MockOAuth2.mockClear();
 });
@@ -535,6 +539,28 @@ describe('GoogleCalendarClient', () => {
       const call = mocks.mockEventsPatch.mock.calls[0][0];
       expect(call.supportsAttachments).toBeUndefined();
       expect(call.requestBody.attachments).toBeUndefined();
+    });
+  });
+
+  describe('deleteEvent', () => {
+    it('deletes by id without notifying attendees', async () => {
+      const client = makeClient();
+      mocks.mockEventsDelete.mockResolvedValueOnce({});
+
+      await client.deleteEvent('evt-9');
+
+      expect(mocks.mockEventsDelete).toHaveBeenCalledWith({
+        calendarId: 'matt@attackacrack.com',
+        eventId: 'evt-9',
+        sendUpdates: 'none',
+      });
+    });
+
+    it('propagates API errors', async () => {
+      const client = makeClient();
+      mocks.mockEventsDelete.mockRejectedValueOnce(new Error('Not Found'));
+
+      await expect(client.deleteEvent('missing')).rejects.toThrow('Not Found');
     });
   });
 });

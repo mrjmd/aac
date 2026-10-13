@@ -39,6 +39,9 @@ export type {
   UpdateEventInput,
 } from './google-calendar.js';
 
+export { GmailClient } from './gmail.js';
+export type { GmailConfig, GmailMessage, ListMessagesOptions } from './gmail.js';
+
 export { GoogleAdsClient } from './google-ads.js';
 export type { GoogleAdsConfig } from './google-ads.js';
 
