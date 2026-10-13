@@ -75,6 +75,7 @@ under gitignored `analysis/`.
 | QuickBooks | Estimates + Invoices updated in last 180d (status filtered client-side — TxnStatus not queryable); all Customers, slimmed to id/name/normalized phones (joins QBO txns → Quo threads) | `QuickBooksClient` |
 | Redis | `field:completion:{eventId}` for every calendar job; `scheduling:pending*` lists; `todo:list` | Upstash REST |
 | Quo | Conversations active in last 21d → per-thread messages + calls; transcripts for completed calls ≥ 45s | `QuoClient` + direct REST for `/call-transcripts/{id}` (no client method yet — promote to `QuoClient` before any app uses it) |
+| Gmail | Messages from last 21d (spam/trash/promotions/social/forums excluded), grouped into threads, machine senders (noreply/receipts/QBO/etc.) dropped; bodies get quoted-reply tails stripped and are capped at 1500 chars | `GmailClient` (same OAuth refresh token; needs `gmail.readonly` scope — degrades to a System card + `emailSweepError` in the snapshot when missing) |
 
 Transcripts are cached in `analysis/data/triage/transcripts/` (immutable per
 call id) so the nightly run only fetches new calls.
@@ -96,7 +97,11 @@ Deterministic first, LLM second; every finding carries evidence.
 | D9 | Assessment done, no quote | Calendar colorId 3 ended ≥ 2d ago; no QBO estimate **or invoice** within (visit − 7d)→now matching by name or street tokens, and no green job event followed (same-day conversions). The window test uses the *latest* of TxnDate / LastUpdatedTime — a photo-based quote drafted weeks before the visit and revised after it counts (Lisa Martin #1501, 2026-10-03). Top-of-funnel gap D4/D5 can't see — they start from estimates that already exist. Red at 7d. Declined-on-site visits are dismissed by hand. |
 | D10 | Stub never fleshed out | Any calendar event still titled `STUB — …` (Walk #7-lite auto-creation, `packages/scheduling/execute-stub.ts`). The prefix is the review marker — Matt confirms time/scope/duration and renames. Red when the slot is < 48h away or already past (a past stub also hides from D1/D4 name matching). Word-boundary match so surnames like "Stubbs" don't trip it. |
 | D11 | Incomplete upcoming event | Work events (colorId 10/3/5) starting in the next 7 days missing an address (location), a description, or — jobs/callbacks only — Mike as attendee (`mike@attackacrack.com` or legacy gmail). Always red: Mike must have the full picture before rolling out (Shivani address incident, 2026-10-02). Assessments skip the attendee check (Matt runs some himself); STUB events are D10's; `[cont]` days inherit day 1. |
+| D13 | Offered time on hold | `HOLD — {Name}` placeholders (execute-hold, see docs/projects/scheduling.md) parsed for `Offered-At:` + `Customer-Phone:`. Flags: customer replied but hold still standing (convert or release); slot passed unanswered (red — wasted inventory); unanswered ≥ 24h (yellow, red when the slot is < 48h out); hand-made hold without metadata (review). Case-sensitive `HOLD` match so "Hold in case …" soft blocks don't trip. Own section ("Offered times on hold") + pulse tile. |
+| D14 | Agreed slot, no calendar event | Pending directives with an actionable slot (appointment_confirmed, or manual_schedule + booked, confidence ≥ 0.7) and no name-matched calendar event within ±1 day of the slot. Backstop for silent webhook kills mid-stub-creation (Vetrano incident 2026-10-12, see docs/projects/scheduling.md). Customer resolved via QBO id or phone; red when named, yellow when unresolved. Section `booked_gap`. |
+| D12 | Email awaiting reply | Email thread's last message is inbound and > 12h old, surfaced only when L2 returned nothing for the thread (LLM failure fallback, mirrors D6). Info severity, evidence = last message excerpt, deep-links to the Gmail thread. |
 | L1 | Commitment gap | Gemini (2.5-flash) reads each active thread digest (messages + call transcript excerpts) and flags: scheduling commitments by Matt, approval signals from customer, unanswered questions, promised follow-ups. Each claimed commitment is then checked against the calendar by name-token match; "no matching event" ⇒ P0. Two refinements (2026-10-03): **quote_promised** — Matt said a quote was coming and no QBO estimate followed (the prompt carries the last-60d estimate list, mirroring the calendar context) ⇒ own section high in the ladder ("that's deal flow" — Matt); **solicitation** — the other party is selling *to* Matt ("need more jobs?" lead-gen, SEO, robo-texts) ⇒ info card at the bottom with evidence shown, never a yellow "awaiting reply". |
+| L2 | Email commitment gap | Same Gemini prompt (it carries the calendar + estimate context) over each email thread digest (subject, sender, last 12 messages, attachment names). Same categories/sections as L1; findings get an `✉` title prefix and a `link` to the Gmail thread. |
 
 LLM output is JSON-schema'd, temperature 0; threads with zero activity and no
 deterministic flag are skipped to keep the nightly Gemini bill trivial
@@ -130,11 +135,13 @@ middleware-side follow-up.
 
 ## Known gaps in iteration 1
 
-- **Email is not swept.** No Gmail client exists in `@aac/api-clients` and the
-  diagnostic Google refresh token is calendar-scoped. Iteration 2: mint a
-  gmail.readonly-scoped token, add a `GmailClient`, extend D6/L1 to email
-  threads. (Quote approvals arriving by email are partially covered today via
-  QBO estimate status, which flips regardless of channel.)
+- ~~**Email is not swept.**~~ Closed 2026-10-07: `GmailClient` added to
+  `@aac/api-clients`, collect.ts sweeps the mailbox, L2/D12 triage email
+  threads (quote requests were arriving by email and getting lost). One
+  manual step remains: the diagnostic refresh token predates the
+  `gmail.readonly` scope — run `npx tsx tools/src/scratch/reauth-google.ts`
+  (scope added there) and paste the new `GOOGLE_REFRESH_TOKEN` into
+  `.env.diagnostic`. Until then the sweep degrades to a yellow System card.
 - **Name matching is fuzzy.** QBO customer ↔ calendar summary ↔ Quo thread
   joins are token-based; expect some manual dismissals at first. The Redis
   linkage (`field:completion` keyed by calendar event id, scheduling

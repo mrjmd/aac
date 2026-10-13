@@ -45,6 +45,7 @@ function card(f: Finding): string {
   const bits: string[] = [];
   if (f.customer && !f.title.includes(f.customer)) bits.push(`<span class="meta">${esc(f.customer)}</span>`);
   if (f.phone) bits.push(telLink(f.phone));
+  if (f.link) bits.push(`<a class="tel" href="${esc(f.link)}" target="_blank" rel="noopener">open ✉</a>`);
   if (f.amount) bits.push(`<span class="amt">${usd(f.amount)}</span>`);
   if (f.ageDays !== undefined && f.ageDays > 0) bits.push(`<span class="meta">${f.ageDays}d</span>`);
   bits.push(`<span class="src">${esc(f.source)}${f.confidence ? ` · ${esc(f.confidence)}` : ''}</span>`);
@@ -98,6 +99,11 @@ const SECTIONS: SectionDef[] = [
     blurb: 'Auto-created STUB events from chat bookings. Confirm time, scope, and duration, then rename the event to drop the STUB prefix.',
   },
   {
+    key: ['offer_hold'],
+    title: 'Offered times on hold',
+    blurb: 'Slots offered to customers who have not answered. Nudge them or delete the HOLD event to release the time — every one of these is calendar inventory someone else could book.',
+  },
+  {
     key: ['quote_promised'],
     title: 'Quotes promised, not sent',
     blurb: 'Matt told someone a quote was coming and no QBO estimate followed. This is deal flow — get these out.',
@@ -126,7 +132,7 @@ const SECTIONS: SectionDef[] = [
   {
     key: ['conversation'],
     title: 'Unresolved conversations',
-    blurb: 'Threads that look like they are waiting on us.',
+    blurb: 'SMS and email threads that look like they are waiting on us.',
   },
 ];
 
@@ -154,6 +160,7 @@ function main(): void {
     { label: 'Quotes promised', value: String(pulse.quotePromisedCount ?? 0), bad: (pulse.quotePromisedCount ?? 0) > 0 },
     { label: 'Assessed, unquoted', value: String(pulse.assessedUnquotedCount), bad: pulse.assessedUnquotedCount > 0 },
     { label: 'Stubs to review', value: String(pulse.stubAwaitingReviewCount ?? 0), bad: (pulse.stubAwaitingReviewCount ?? 0) > 0 },
+    { label: 'Offers on hold', value: String(pulse.offeredHoldCount ?? 0), bad: (pulse.offeredHoldCount ?? 0) > 0 },
     { label: 'Incomplete next 7d', value: String(pulse.incompleteUpcomingCount ?? 0), bad: (pulse.incompleteUpcomingCount ?? 0) > 0 },
     { label: 'Jobs next 7 / 30d', value: `${pulse.jobsNext7} / ${pulse.jobsNext30}`, bad: pulse.jobsNext7 === 0 },
   ]
@@ -242,7 +249,7 @@ ${pulseTiles}
 </div>
 ${sectionsHtml}
 <footer>
-  Snapshot ${esc(data.snapshotAt)} · ${esc(String(data.stats.threads ?? 0))} threads swept, ${esc(String(data.stats.llmThreads ?? 0))} LLM-triaged (${esc(String(data.stats.llmErrors ?? 0))} errors) ·
+  Snapshot ${esc(data.snapshotAt)} · ${esc(String(data.stats.threads ?? 0))} threads + ${esc(String(data.stats.emailThreads ?? 0))} email threads swept, ${esc(String(data.stats.llmThreads ?? 0))} LLM-triaged (${esc(String(data.stats.llmErrors ?? 0))} errors) ·
   regen: <code>./tools/src/triage/refresh.sh</code> · doc: docs/projects/triage-dashboard.md
 </footer>
 </main>

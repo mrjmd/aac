@@ -13,9 +13,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { GeminiClient } from '@aac/api-clients/gemini';
-import { STUB_TITLE_PREFIX } from '@aac/scheduling';
+import { HOLD_TITLE_PREFIX, STUB_TITLE_PREFIX } from '@aac/scheduling';
 import { hasContinuation } from '@aac/shared-utils/multiday';
-import type { Snapshot, ThreadSnapshot } from './collect.ts';
+import type { EmailThreadSnapshot, Snapshot, ThreadSnapshot } from './collect.ts';
 
 // ── thresholds ───────────────────────────────────────────────────────
 
@@ -27,6 +27,7 @@ const NUDGE_QUIET_DAYS = 3; // no Quo text/call this long → ready for a nudge
 const APPROVED_UNSCHEDULED_GRACE_DAYS = 2; // spec: yellow at >48h
 const ASSESSED_UNQUOTED_GRACE_DAYS = 2; // assessment done, no quote yet → D9
 const STUB_IMMINENT_HOURS = 48; // stub event this close (or past) → red, D10
+const OFFER_UNANSWERED_HOURS = 24; // offered slot quiet this long → D13
 const UPCOMING_COMPLETE_DAYS = 7; // work events this far out must be complete → D11
 // Both addresses count as "Mike is assigned" (attackacrack = new events,
 // gmail = legacy; see project_mike_email_addresses).
@@ -58,6 +59,7 @@ export type Section =
   | 'system'
   | 'booked_gap'
   | 'stub_review'
+  | 'offer_hold'
   | 'incomplete_event'
   | 'quote_promised'
   | 'quote_gap'
@@ -84,6 +86,8 @@ export interface Finding {
   confidence?: 'high' | 'medium' | 'low';
   /** D5: display text for the last Quo touch ("2d ago" / "none in 21d+"). */
   lastContact?: string;
+  /** Deep link to the source (Gmail thread for email findings). */
+  link?: string;
 }
 
 export interface FindingsFile {
@@ -101,6 +105,7 @@ export interface FindingsFile {
     quotePromisedCount: number;
     assessedUnquotedCount: number;
     stubAwaitingReviewCount: number;
+    offeredHoldCount: number;
     incompleteUpcomingCount: number;
     jobsNext7: number;
     jobsNext30: number;
@@ -295,6 +300,27 @@ function threadDigest(t: ThreadSnapshot, transcriptDir: string, ourDigits: strin
   }
   return parts.join('\n');
 }
+
+function sectionForCategory(cat: LlmVerdict['category']): Section {
+  return cat === 'booked_gap'
+    ? 'booked_gap'
+    : cat === 'quote_promised'
+      ? 'quote_promised'
+      : cat === 'deal_closer'
+        ? 'deal_closer'
+        : 'conversation';
+}
+
+function emailDigest(t: EmailThreadSnapshot): string {
+  const parts = [`SUBJECT: ${t.subject}`, `FROM: ${t.counterparty}`];
+  for (const m of t.messages.slice(-12)) {
+    const att = m.attachmentNames.length > 0 ? ` [attachments: ${m.attachmentNames.join(', ')}]` : '';
+    parts.push(`${m.direction === 'outgoing' ? 'OUT' : 'IN '} ${m.at.slice(0, 16)}: ${m.text.slice(0, 600)}${att}`);
+  }
+  return parts.join('\n');
+}
+
+const gmailThreadLink = (threadId: string): string => `https://mail.google.com/mail/#all/${threadId}`;
 
 function parseVerdict(raw: string): LlmVerdict | null {
   const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim();
@@ -707,6 +733,192 @@ async function main(): Promise<void> {
   }
   stats.stubAwaitingReview = stubAwaitingReview;
 
+  // ── D13: offered-time holds ───────────────────────────────────────
+  // execute-hold places "HOLD — {Customer}" placeholders when Matt offers
+  // a time by text (so the slot can't be double-offered). A hold resolves
+  // one of three ways: customer confirms (stub flow deletes it), customer
+  // declines (Matt deletes it), or silence — which is this detector's job:
+  // >24h with no inbound reply means the customer is sitting on YOUR
+  // calendar inventory. Matching is case-SENSITIVE on "HOLD" so Matt's own
+  // hand-made soft blocks ("Hold in case additional ... work") don't trip it;
+  // an all-caps hand-made "HOLD — Jones" is intentionally included.
+  let offeredHolds = 0;
+  for (const ev of events) {
+    const summary = (ev.summary ?? '').trim();
+    if (!summary.startsWith(HOLD_TITLE_PREFIX) && !/^HOLD\b/.test(summary)) continue;
+    const customer = summary.startsWith(HOLD_TITLE_PREFIX)
+      ? summary.slice(HOLD_TITLE_PREFIX.length).trim()
+      : summary.replace(/^HOLD\b[\s—:-]*/, '').trim();
+    const desc = ev.description ?? '';
+    const offeredAtIso = /Offered-At:\s*(\S+)/.exec(desc)?.[1];
+    const holdPhone = /Customer-Phone:\s*(\+?\d[\d\s().-]*)/.exec(desc)?.[1]?.trim();
+    const offeredAtMs = offeredAtIso ? new Date(offeredAtIso).getTime() : NaN;
+    const startMs = new Date(ev.start).getTime();
+    const past = startMs <= now;
+
+    let replied = false;
+    if (holdPhone && Number.isFinite(offeredAtMs)) {
+      const digits = holdPhone.replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+      const thread = snapshot.threads.find(
+        (t) => t.phone.replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '') === digits,
+      );
+      replied =
+        thread?.messages.some(
+          (m) => m.direction === 'incoming' && new Date(m.at).getTime() > offeredAtMs,
+        ) ?? false;
+    }
+
+    const ageH = Number.isFinite(offeredAtMs) ? Math.round((now - offeredAtMs) / 3_600_000) : null;
+    const when = `${ev.start.slice(0, 16).replace('T', ' ')}${ev.location ? ` at ${ev.location}` : ''}`;
+
+    let finding: Finding;
+    if (replied) {
+      finding = {
+        id: `d13:${ev.id}`,
+        section: 'offer_hold',
+        severity: 'yellow',
+        title: `Customer replied but hold still standing — ${customer || summary}`,
+        detail: `${when}. They answered after the offer; if they confirmed, the stub flow should have replaced this hold — check the thread, then book it properly or delete the hold.`,
+        action: 'Read the reply; convert to a real booking or release the slot',
+        source: 'D13',
+      };
+    } else if (past) {
+      finding = {
+        id: `d13:${ev.id}`,
+        section: 'offer_hold',
+        severity: 'red',
+        title: `Held slot passed with no answer — ${customer || summary}`,
+        ageDays: Math.floor((now - startMs) / DAY),
+        detail: `${when}. The offered time came and went without a customer reply — that inventory is gone. Delete the hold; decide whether to re-engage.`,
+        action: 'Delete the hold; re-offer a new time if still worth chasing',
+        source: 'D13',
+      };
+    } else if (ageH === null) {
+      finding = {
+        id: `d13:${ev.id}`,
+        section: 'offer_hold',
+        severity: 'yellow',
+        title: `Hand-made hold — ${customer || summary}`,
+        detail: `${when}. No offer metadata on this hold (hand-created?). Confirm it's still needed or release the slot.`,
+        action: 'Review: still needed?',
+        source: 'D13',
+      };
+    } else if (ageH >= OFFER_UNANSWERED_HOURS) {
+      const imminent = startMs - now < STUB_IMMINENT_HOURS * 3_600_000;
+      finding = {
+        id: `d13:${ev.id}`,
+        section: 'offer_hold',
+        severity: imminent ? 'red' : 'yellow',
+        title: `Offer unanswered ${ageH}h — ${customer || summary}`,
+        detail: `${when}. Offered ${offeredAtIso?.slice(0, 16).replace('T', ' ')} and the customer has gone quiet${
+          imminent ? ', and the slot is almost here' : ''
+        }. Nudge them or release the time.`,
+        action: 'Nudge the customer or delete the hold to free the slot',
+        source: 'D13',
+      };
+    } else {
+      continue; // young hold, silence is still normal
+    }
+    if (holdPhone) finding.phone = holdPhone;
+    offeredHolds++;
+    findings.push(finding);
+  }
+  stats.offeredHolds = offeredHolds;
+
+  // ── D14: agreed slot, no calendar event ───────────────────────────
+  // Stub-automation backstop (Vetrano incident 2026-10-12): a directive
+  // carrying an agreed slot (customer confirmed, or Matt declared the
+  // booking) should have materialized as a calendar event — STUB or
+  // hand-made. The webhook can be killed mid-stub-creation without any
+  // error landing anywhere, so this sweep reconciles the directive queue
+  // against the calendar and surfaces the silent misses.
+  const d14NameByDigits = new Map<string, string>();
+  const d14NameByQbId = new Map<string, string>();
+  for (const c of snapshot.customers ?? []) {
+    d14NameByQbId.set(c.id, c.name);
+    for (const p of c.phones) {
+      d14NameByDigits.set(p.replace(/\D/g, '').replace(/^1(?=\d{10}$)/, ''), c.name);
+    }
+  }
+  const d14Seen = new Set<string>();
+  let directiveGaps = 0;
+  for (const d of snapshot.scheduling.pending) {
+    const intent = String(d.intent ?? '');
+    const slotCommitment = String(d.slotCommitment ?? '');
+    const agreed =
+      intent === 'appointment_confirmed' ||
+      (intent === 'manual_schedule' && slotCommitment === 'booked');
+    if (!agreed) continue;
+    const score = Number((d.confidence as { score?: unknown } | undefined)?.score ?? 0);
+    if (score < 0.7) continue; // below the stub flow's own gate
+    const slot = d.knownSlot as { startIso?: string } | null | undefined;
+    const startIso = slot?.startIso;
+    if (!startIso) continue;
+    const startMs = new Date(startIso).getTime();
+    if (!Number.isFinite(startMs)) continue;
+    // Only judge slots the calendar snapshot can actually see.
+    const calFrom = new Date(snapshot.windows.calendarFrom).getTime();
+    const calTo = new Date(snapshot.windows.calendarTo).getTime();
+    if (startMs < calFrom + DAY || startMs > calTo - DAY) continue;
+
+    const phone = String(d.customerPhone ?? '');
+    const digits = phone.replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+    const dedupeKey = `${digits || String(d.pdPersonId ?? d.id)}|${startIso.slice(0, 10)}`;
+    if (d14Seen.has(dedupeKey)) continue;
+    d14Seen.add(dedupeKey);
+
+    const name =
+      d14NameByQbId.get(String(d.qbCustomerId ?? '')) ?? d14NameByDigits.get(digits) ?? null;
+    const tokens = name ? nameTokens(name) : [];
+    // Looser than eventMatchesName on purpose: suppressing a finding only
+    // needs "plausibly the same person on the same day" (exact first name
+    // + surname prefix), so hand-made events with drifted surname
+    // spellings (Eriksen/Erickson) don't produce false red alerts.
+    const looseMatch = (ev: CalEvent): boolean => {
+      if (tokens.length < 2) return false;
+      const hayTokens = nameTokens(`${ev.summary} ${ev.location ?? ''}`);
+      const surname = tokens[tokens.length - 1];
+      return (
+        hayTokens.includes(tokens[0]) &&
+        hayTokens.some((h) => h.slice(0, 3) === surname.slice(0, 3))
+      );
+    };
+    const matched =
+      tokens.length > 0 &&
+      events.some(
+        (ev) =>
+          Math.abs(new Date(ev.start).getTime() - startMs) <= DAY &&
+          (eventMatchesName(ev, tokens) || looseMatch(ev)),
+      );
+    if (matched) continue;
+
+    const when = startIso.slice(0, 16).replace('T', ' ');
+    directiveGaps++;
+    findings.push({
+      id: `d14:${d.id}`,
+      section: 'booked_gap',
+      severity: name ? 'red' : 'yellow',
+      title: name
+        ? `Confirmed slot not on calendar — ${name}`
+        : `Confirmed slot not on calendar — unresolved customer`,
+      ...(name ? { customer: name } : {}),
+      ...(phone ? { phone } : {}),
+      detail: [
+        `Directive ${String(d.id).slice(0, 8)} (${intent}, confidence ${score}) agreed ${when}`,
+        `on ${String(d.createdAt ?? '').slice(0, 10)} — scope: ${String(d.scopeSummary ?? 'unknown')}.`,
+        name
+          ? 'No calendar event near that slot matches this customer; the stub likely died mid-creation (webhook timeout).'
+          : 'Could not resolve a customer name from QBO to verify against the calendar — check the thread by phone.',
+        'The customer thinks they are booked.',
+      ].join(' '),
+      action: name
+        ? 'Verify the thread, then put the booking on the calendar'
+        : 'Identify the customer from the thread and verify the booking exists',
+      source: 'D14',
+    });
+  }
+  stats.directiveGaps = directiveGaps;
+
   // ── D11: incomplete upcoming events ───────────────────────────────
   // Shivani incident 2026-10-02: Mike drove to an assessment whose event
   // had no address — he reconstructed it from the attachment, but if Matt
@@ -830,7 +1042,7 @@ async function main(): Promise<void> {
     )
     .join('\n');
 
-  const systemPrompt = `You triage SMS/call threads for Attack A Crack, a foundation-repair company in Quincy MA. Matt is the owner. In threads, OUT messages and transcript lines starting "M:" are Matt; IN and "C:" are the other party. Today is ${nowIso.slice(0, 10)}.
+  const systemPrompt = `You triage SMS/call/email threads for Attack A Crack, a foundation-repair company in Quincy MA. Matt is the owner. In threads, OUT messages and transcript lines starting "M:" are Matt; IN and "C:" are the other party. Today is ${nowIso.slice(0, 10)}.
 
 Below is the company Google Calendar (past 14 days + next 60 days). Event kinds: JOB = booked paid work, ASSESS = assessment visit, CALLBACK = warranty rework.
 
@@ -853,9 +1065,40 @@ For the thread you are given, decide if it contains a genuinely actionable gap:
 Be conservative: a real gap only. If a matching calendar event exists, it is NOT a booked_gap. Respond with ONLY a JSON object:
 {"needs_action": boolean, "category": "booked_gap"|"quote_promised"|"deal_closer"|"unresolved"|"solicitation"|"none", "customer_name": string|null, "title": "short label", "summary": "1-2 sentences", "evidence": "short verbatim quote from the thread", "suggested_action": "imperative, short", "urgency": "red"|"yellow"|"info", "confidence": "high"|"medium"|"low"}`;
 
+  let llmErrors = 0;
+  const askVerdict = async (label: string, userPrompt: string): Promise<LlmVerdict | null> => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const raw = await gemini.generateContent(userPrompt, {
+          systemPrompt,
+          temperature: 0,
+          // 3.6-flash counts internal reasoning against this budget —
+          // 1024 truncated ~20% of responses mid-JSON.
+          maxOutputTokens: 8192,
+        });
+        const v = parseVerdict(raw);
+        if (!v) {
+          llmErrors++;
+          console.log(`  ! parse failure ${label}: ${raw.slice(0, 160).replace(/\n/g, ' ')}`);
+        }
+        return v;
+      } catch (err) {
+        const msg = (err as Error).message;
+        // Rate limits / transient 5xx: back off and retry.
+        if (attempt < 2 && /429|500|503|timeout|aborted/i.test(msg)) {
+          await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
+          continue;
+        }
+        llmErrors++;
+        console.log(`  ! LLM error ${label}: ${msg.slice(0, 200).replace(/\n/g, ' ')}`);
+        return null;
+      }
+    }
+    return null;
+  };
+
   const candidates = snapshot.threads.filter((t) => t.messages.length > 0 || t.calls.length > 0);
   stats.llmThreads = candidates.length;
-  let llmErrors = 0;
   const verdicts = new Map<string, LlmVerdict>();
 
   for (let i = 0; i < candidates.length; i += LLM_CONCURRENCY) {
@@ -864,39 +1107,12 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
       batch.map(async (t) => {
         const digest = threadDigest(t, transcriptDir, ourDigits);
         if (!digest.trim()) return;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            const raw = await gemini.generateContent(`THREAD with ${t.phone}:\n${digest}`, {
-              systemPrompt,
-              temperature: 0,
-              // 3.6-flash counts internal reasoning against this budget —
-              // 1024 truncated ~20% of responses mid-JSON.
-              maxOutputTokens: 8192,
-            });
-            const v = parseVerdict(raw);
-            if (v) verdicts.set(t.phone, v);
-            else {
-              llmErrors++;
-              console.log(`  ! parse failure ${t.phone}: ${raw.slice(0, 160).replace(/\n/g, ' ')}`);
-            }
-            return;
-          } catch (err) {
-            const msg = (err as Error).message;
-            // Rate limits / transient 5xx: back off and retry.
-            if (attempt < 2 && /429|500|503|timeout|aborted/i.test(msg)) {
-              await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
-              continue;
-            }
-            llmErrors++;
-            console.log(`  ! LLM error ${t.phone}: ${msg.slice(0, 200).replace(/\n/g, ' ')}`);
-            return;
-          }
-        }
+        const v = await askVerdict(t.phone, `THREAD with ${t.phone}:\n${digest}`);
+        if (v) verdicts.set(t.phone, v);
       }),
     );
     if (i % 20 === 0) console.log(`  LLM ${Math.min(i + LLM_CONCURRENCY, candidates.length)}/${candidates.length}`);
   }
-  stats.llmErrors = llmErrors;
 
   for (const t of snapshot.threads) {
     const v = verdicts.get(t.phone);
@@ -919,14 +1135,7 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
         confidence: v.confidence,
       });
     } else if (v?.needs_action && v.category !== 'none') {
-      const section: Section =
-        v.category === 'booked_gap'
-          ? 'booked_gap'
-          : v.category === 'quote_promised'
-            ? 'quote_promised'
-            : v.category === 'deal_closer'
-              ? 'deal_closer'
-              : 'conversation';
+      const section = sectionForCategory(v.category);
       findings.push({
         id: `l1:${t.phone}`,
         section,
@@ -964,6 +1173,88 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
       });
     }
   }
+
+  // ── L2 + D12: email threads ───────────────────────────────────────
+  // Same triage brain, different channel — quote requests increasingly
+  // arrive by email and were invisible to the dashboard (added 2026-10-07).
+  // L2 = LLM verdict on an email thread; D12 = deterministic unanswered-
+  // inbound fallback when the LLM gave nothing (mirrors D6 for SMS).
+  const emailThreads = snapshot.emails ?? [];
+  stats.llmEmailThreads = emailThreads.length;
+  if (snapshot.emailSweepError) {
+    findings.push({
+      id: 'system-email-sweep',
+      section: 'system',
+      severity: 'yellow',
+      title: 'Email sweep failing — email triage is blind',
+      detail: snapshot.emailSweepError,
+      action:
+        'If this mentions scopes or permissions, the Google token lacks gmail.readonly: run npx tsx tools/src/scratch/reauth-google.ts and paste the new GOOGLE_REFRESH_TOKEN into .env.diagnostic.',
+      source: 'system',
+    });
+  }
+
+  const emailVerdicts = new Map<string, LlmVerdict>();
+  for (let i = 0; i < emailThreads.length; i += LLM_CONCURRENCY) {
+    const batch = emailThreads.slice(i, i + LLM_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (t) => {
+        const v = await askVerdict(`email:${t.threadId}`, `EMAIL THREAD:\n${emailDigest(t)}`);
+        if (v) emailVerdicts.set(t.threadId, v);
+      }),
+    );
+  }
+
+  for (const t of emailThreads) {
+    const v = emailVerdicts.get(t.threadId);
+    const displayName = t.counterparty.replace(/<[^>]*>/, '').trim() || t.counterpartyAddress;
+    const last = t.messages[t.messages.length - 1];
+    if (v?.category === 'solicitation') {
+      findings.push({
+        id: `l2:${t.threadId}`,
+        section: 'conversation',
+        severity: 'info',
+        title: `Likely solicitation (email) — ${v.title || t.subject}`,
+        customer: v.customer_name ?? displayName,
+        evidence: v.evidence,
+        detail: v.summary,
+        action: 'Ignore (vendor/marketing).',
+        source: 'L2',
+        confidence: v.confidence,
+        link: gmailThreadLink(t.threadId),
+      });
+    } else if (v?.needs_action && v.category !== 'none') {
+      findings.push({
+        id: `l2:${t.threadId}`,
+        section: sectionForCategory(v.category),
+        severity: v.urgency ?? 'yellow',
+        title: `✉ ${v.title || t.subject}`,
+        customer: v.customer_name ?? displayName,
+        evidence: v.evidence,
+        detail: v.summary,
+        action: v.suggested_action,
+        source: 'L2',
+        confidence: v.confidence,
+        link: gmailThreadLink(t.threadId),
+      });
+    } else if (!v && last.direction === 'incoming') {
+      const ageH = Math.round((now - new Date(last.at).getTime()) / 3_600_000);
+      if (ageH >= REPLY_LAG_HOURS) {
+        findings.push({
+          id: `d12:${t.threadId}`,
+          section: 'conversation',
+          severity: 'info',
+          title: `Email awaiting reply ${ageH}h — ${t.subject}`,
+          customer: displayName,
+          evidence: last.text.slice(0, 240),
+          source: 'D12',
+          confidence: 'low',
+          link: gmailThreadLink(t.threadId),
+        });
+      }
+    }
+  }
+  stats.llmErrors = llmErrors;
 
   // ── dismissals ────────────────────────────────────────────────────
   // analysis/data/triage/dismissals.json: owner-curated suppressions for
@@ -1022,6 +1313,7 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
       quotePromisedCount: findings.filter((f) => f.section === 'quote_promised').length,
       assessedUnquotedCount: findings.filter((f) => f.source === 'D9').length,
       stubAwaitingReviewCount: findings.filter((f) => f.source === 'D10').length,
+      offeredHoldCount: findings.filter((f) => f.source === 'D13').length,
       incompleteUpcomingCount: findings.filter((f) => f.source === 'D11').length,
       jobsNext7: jobsBetween(now, now + 7 * DAY),
       jobsNext30: jobsBetween(now, now + 30 * DAY),

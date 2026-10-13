@@ -655,6 +655,87 @@ Live prompt check: `tools/src/scratch/try-stub-description.mts`
 
 ---
 
+## Offered-slot HOLD placeholders — built 2026-10-07
+
+Matt's ask (2026-10-07, verbatim problem): *"placeholder calendar events
+that go on when I offer a time before it's confirmed, so that I never
+offer the same time"* + *"warning and triage if an offered time has been
+left unanswered for more than 24 hours."* Real incident the same week:
+Nov 9 8:30am was offered to Pat, mentioned to Sarah, and offered to
+Jill/Bob within four days, and only conversation archaeology showed who
+actually had a claim on it. This is the "offered-slot memory" item from
+the #7-lite deferred list, shipped calendar-shaped.
+
+1. **`@aac/scheduling/execute-hold`** (`executeHoldEvent`,
+   `getOfferedSlot`): a `manual_schedule` directive with an EXPLICIT
+   `slotCommitment: 'offered'` + `knownSlot` creates `HOLD — {Name}`:
+   colorId **8 (graphite** — never a work color, so D1/D4/D11 and the
+   field crons ignore it), **no attendees** (Mike never hears about
+   unconfirmed offers), same duration defaults as stubs, and two
+   machine-readable description lines for triage: `Offered-At: {ISO}`
+   and `Customer-Phone: {E164}`. Same guards as stubs (no slot / past /
+   duplicate-by-customer-name ±24h). Legacy directives with the field
+   absent do NOT create holds (calendar writes need the explicit signal).
+2. **Upgrade path**: `executeStubEvent`'s duplicate guard now treats
+   `HOLD — ` events for the same customer as the offer being answered —
+   it deletes them (new `GoogleCalendarClient.deleteEvent`, sendUpdates
+   none) and creates the stub. A real (non-hold) duplicate still wins.
+   Hold-cleanup failure is soft: stub creation proceeds, triage catches
+   the orphan.
+3. **Middleware dispatch**: `createHoldForDirective` behind
+   `SCHEDULING_HOLD_EVENTS=true` (own flag, OFF by default — deploy is
+   inert until it's set; kill switch = remove the var) + the same ≥0.7
+   confidence gate. Summary gains `holdsCreated`. Deliberately lighter
+   than stubs: no Matt-voice description, no photos.
+4. **Triage D13** (`tools/src/triage/analyze.ts`, section
+   `offer_hold`, "Offered times on hold"): holds where the customer
+   replied after Offered-At (→ resolve/convert), the slot passed
+   unanswered (red — inventory wasted), unanswered ≥ 24h (yellow; red
+   when the slot is < 48h out), or hand-made holds with no metadata
+   (review). Matching is case-sensitive `HOLD` so Matt's own soft blocks
+   ("Hold in case additional Teddy Watler work") don't trip it.
+5. **Availability**: `suggestSlot` itself treats whatever events it is
+   GIVEN as busy — but the proposal-builder feeds it only events Mike
+   attends (that attendee cut is what keeps Matt's Zoom calls, BNI, and
+   private events from blocking customer slots — Matt confirmed this
+   protection matters, 2026-10-07). Since holds are attendee-less by
+   design, the cut moved client-side: new exported
+   `selectBusyEvents(events, technicianEmails)` keeps Mike-attended
+   events PLUS `HOLD — ` events, and `listEvents` is now called without
+   the `attendeeEmails` filter. Known limit: holds don't count toward
+   the 2-jobs/day soft cap — two different-time offers on one day can
+   both confirm. Acceptable for v1; Matt reviews stubs anyway.
+
+## Stub timeout incident + create-first fix — 2026-10-13
+
+Incident (Vetrano, 2026-10-12): customer confirmed Nov 16 1pm by text,
+directive written (0.88), **no stub appeared and no error logged
+anywhere**. Root cause: stub enrichment (live 10/05) runs Gemini
+description + MMS photo collection + Drive uploads inline in the Quo
+webhook, which had `maxDuration: 30`. Photo-heavy threads (Vetrano: 6
+photos ≈ 13.6s + 6.7s Gemini, 21.6s total measured) blow the budget and
+Vercel kills the function mid-flight — after the directive write, before
+`createEvent`, past every catch block. Same silent kill ate Eriksen
+(10/09). Fixes, all shipped 2026-10-13:
+
+1. **`api/webhooks/*.ts` → `maxDuration: 300`** in
+   `apps/middleware/vercel.json` (same as crons).
+2. **Create-first, enrich-after**: `createStubForDirective` now creates
+   the bare stub (scopeSummary body, correct title/color/attendee/
+   location) BEFORE any enrichment, then patches the Matt-voice
+   description + photo attachments onto the event via new
+   `enrichStubEvent()` (`packages/scheduling/src/execute-stub.ts`,
+   shares the provenance-footer builder). A timeout or enrichment
+   failure now costs decoration, never the booking.
+3. **Triage D14** ("agreed slot, no calendar event", section
+   `booked_gap`): reconciles pending directives that passed the stub
+   gate against the calendar; any agreed slot with no name-matched
+   event within ±1 day is a red finding. Suppression matching is looser
+   than detection (exact first name + surname prefix) so hand-made
+   events with drifted spellings (Eriksen/Erickson) don't false-alarm.
+   Known limit: an event MOVED > 1 day after creation (Lad, Nov 9 → 11)
+   flags until dismissed.
+
 ## Related
 
 - Package CLAUDE: `packages/scheduling/CLAUDE.md`

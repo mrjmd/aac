@@ -40,23 +40,28 @@ function main(): void {
   if (owed.length === 0) {
     md.push('No unpaid commissions — Ed is fully paid up.');
   } else {
-    md.push(`**Commissions owed to Ed: ${owed.length} — total ${musd(owedTotal)}**`);
+    md.push('## For payroll');
     md.push('');
-    md.push('| Customer | Invoice | Customer paid | Job total | Rate | Commission |');
-    md.push('|---|---|---|---:|---:|---:|');
+    md.push(`Please add a commission payment of **${musd(owedTotal)}** to Ed Crowell's next payroll run.`);
+    md.push('');
+    md.push('| Invoice | Customer | Commission |');
+    md.push('|---|---|---:|');
     for (const e of owed) {
-      md.push(`| ${e.personName} | ${e.invoiceDocNumber} | ${e.paidDate} | ${musd(e.invoiceAmount)} | ${ratePct} | ${musd(e.commission)} |`);
+      md.push(`| ${e.invoiceDocNumber} | ${e.personName} | ${musd(e.commission)} |`);
     }
-    md.push('');
-    md.push(`**Total payable to Ed this cycle: ${musd(owedTotal)}**`);
+    md.push(`| | **Total** | **${musd(owedTotal)}** |`);
   }
   md.push('');
-  md.push(`_Already paid to Ed: ${musd(paidTotal)} (${paid.length} jobs). On its way: ${musd(pendingTotal)} across ${findings.pendingInvoices.length} invoiced-not-yet-paid jobs. Potential if open quotes close: ${musd(potentialTotal)} across ${findings.openEstimates.length} quotes._`);
-  md.push('');
-  md.push(`_Basis: ${ratePct} of the invoice total once the customer pays in full. Attribution: referred by Ed, referred through Ed's chain, or contact owned by Ed in Pipedrive._`);
   fs.writeFileSync(EMAIL_PATH, md.join('\n'));
 
   // ── html report ──────────────────────────────────────────────────
+  const payrollRows = owed.map((e) => `
+    <tr>
+      <td>${esc(e.invoiceDocNumber)}</td>
+      <td>${esc(e.personName)}</td>
+      <td class="num strong">${usd(e.commission)}</td>
+    </tr>`).join('');
+
   const eventRows = findings.events.map((e) => `
     <tr>
       <td>${esc(e.personName)}<span class="sub">${esc(e.reason)}</span></td>
@@ -103,6 +108,9 @@ function main(): void {
   .wrap { max-width: 980px; margin: 0 auto; padding: 24px 20px 60px; }
   header h1 { margin: 0 0 4px; font-size: 22px; }
   header .meta { color: var(--mut); font-size: 13px; }
+  .payroll { background: #fff; border: 2px solid var(--blue); border-radius: 10px; padding: 16px 18px 18px; margin: 18px 0 8px; }
+  .payroll h2 { margin: 0 0 4px; }
+  .payroll table { border-radius: 8px; }
   .chips { display: flex; gap: 12px; flex-wrap: wrap; margin: 18px 0 26px; }
   .chip { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px 18px; min-width: 150px; }
   .chip .v { font-size: 22px; font-weight: 700; }
@@ -133,6 +141,16 @@ function main(): void {
     <h1>Ed Crowell — commission report</h1>
     <div class="meta">Run ${esc(findings.runAt)} · rate ${ratePct} of invoice total, earned when the customer pays in full · Pipedrive is the source of truth for attribution</div>
   </header>
+
+  ${owed.length ? `<div class="payroll">
+    <h2>For payroll — this cycle</h2>
+    <p class="lede">Add a commission payment of <strong>${usd(owedTotal)}</strong> to Ed Crowell's next payroll run.</p>
+    <table>
+      <thead><tr><th>Invoice</th><th>Customer</th><th class="num">Commission</th></tr></thead>
+      <tbody>${payrollRows}</tbody>
+      <tfoot><tr><td colspan="2">Total payable to Ed Crowell</td><td class="num">${usd(owedTotal)}</td></tr></tfoot>
+    </table>
+  </div>` : ''}
 
   <div class="chips">
     <div class="chip"><div class="v blue">${usd(owedTotal)}</div><div class="k">Owed to Ed now (${owed.length})</div></div>

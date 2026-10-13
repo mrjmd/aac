@@ -19,6 +19,7 @@ import { Redis } from '@upstash/redis';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { QuoClient, type QuoMessage, type QuoCall, type QuoConversation } from '@aac/api-clients/quo';
 import { GoogleCalendarClient, type CalendarEvent } from '@aac/api-clients/google-calendar';
+import { GmailClient, type GmailMessage } from '@aac/api-clients/gmail';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import { keys } from '@aac/shared-utils/redis';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
@@ -58,6 +59,19 @@ const QBO_SINCE_DAYS = 180;
 const QUO_ACTIVE_DAYS = 21;
 const THREAD_HISTORY_DAYS = 45;
 const TRANSCRIPT_MIN_SEC = 45;
+const EMAIL_ACTIVE_DAYS = 21;
+const EMAIL_MAX_MESSAGES = 300;
+const EMAIL_BODY_CAP = 1500;
+
+// Both addresses are Matt — attackacrack.com is an alias into the same
+// gmail mailbox, and he sends from either depending on the thread.
+const OUR_EMAIL_ADDRESSES = ['matt@attackacrack.com', 'attackacrackma@gmail.com'];
+
+// Machine senders: never customers, not worth an LLM look. Category
+// filtering happens in the Gmail query; this catches transactional mail
+// that lands in Primary (QBO receipts, bank alerts, Google notifications).
+const AUTOMATED_SENDER_RE =
+  /noreply|no-reply|donotreply|do-not-reply|notifications?@|mailer-daemon|postmaster@|@docs\.google|@calendar\.google|@payments\.google|quickbooks@|@intuit\.com|alerts?@|billing@|receipts?@/i;
 
 // ── snapshot shape (consumed by analyze.ts) ──────────────────────────
 
@@ -76,6 +90,23 @@ export interface ThreadSnapshot {
     hasTranscript: boolean;
     /** Voicemail transcript, when the caller left one (0s completed call). */
     voicemail?: string;
+  }>;
+}
+
+export interface EmailThreadSnapshot {
+  threadId: string;
+  subject: string;
+  /** Display name + address of the non-Matt side, from the From header. */
+  counterparty: string;
+  counterpartyAddress: string;
+  lastActivityAt: string;
+  /** Oldest-first. */
+  messages: Array<{
+    direction: 'incoming' | 'outgoing';
+    at: string;
+    /** text/plain body, quoted-reply tail stripped, capped. */
+    text: string;
+    attachmentNames: string[];
   }>;
 }
 
@@ -106,7 +137,61 @@ export interface Snapshot {
   };
   todos: Array<Record<string, unknown>>;
   threads: ThreadSnapshot[];
+  emails: EmailThreadSnapshot[];
+  /** Set when the Gmail sweep failed (e.g. token lacks gmail.readonly). */
+  emailSweepError?: string;
   stats: Record<string, number>;
+}
+
+// ── email helpers ────────────────────────────────────────────────────
+
+/**
+ * Strip the quoted-reply tail ("On … wrote:" + "> " lines) and cap
+ * length — triage only needs the new words in each message.
+ */
+export function cleanEmailBody(body: string): string {
+  const lines = body.split('\n');
+  const kept: string[] = [];
+  for (const line of lines) {
+    if (/^On .{5,80} wrote:\s*$/.test(line.trim())) break;
+    if (line.trimStart().startsWith('>')) continue;
+    kept.push(line);
+  }
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, EMAIL_BODY_CAP);
+}
+
+function buildEmailThreads(messages: GmailMessage[]): EmailThreadSnapshot[] {
+  const ours = new Set(OUR_EMAIL_ADDRESSES);
+  const byThread = new Map<string, GmailMessage[]>();
+  for (const m of messages) {
+    if (!byThread.has(m.threadId)) byThread.set(m.threadId, []);
+    byThread.get(m.threadId)!.push(m);
+  }
+
+  const threads: EmailThreadSnapshot[] = [];
+  for (const [threadId, msgs] of byThread) {
+    msgs.sort((a, b) => a.at.localeCompare(b.at));
+    const external = msgs.filter((m) => !ours.has(m.fromAddress));
+    // Matt-only threads (notes to self, outbound with no reply yet) and
+    // pure machine threads carry no triage signal.
+    if (external.length === 0) continue;
+    if (external.every((m) => AUTOMATED_SENDER_RE.test(m.fromAddress))) continue;
+    const latestExternal = external[external.length - 1];
+    threads.push({
+      threadId,
+      subject: msgs[0].subject || '(no subject)',
+      counterparty: latestExternal.from,
+      counterpartyAddress: latestExternal.fromAddress,
+      lastActivityAt: msgs[msgs.length - 1].at,
+      messages: msgs.map((m) => ({
+        direction: ours.has(m.fromAddress) ? 'outgoing' : 'incoming',
+        at: m.at,
+        text: cleanEmailBody(m.body) || m.snippet,
+        attachmentNames: m.attachmentNames,
+      })),
+    });
+  }
+  return threads;
 }
 
 // ── QBO raw query with pagination ────────────────────────────────────
@@ -439,6 +524,34 @@ async function main(): Promise<void> {
     `  ${threads.length} threads, transcripts: ${transcriptsCached} cached + ${transcriptsFetched} new, voicemails: ${voicemailsCached} cached + ${voicemailsFetched} new`,
   );
 
+  // 5 ── Gmail sweep (quote requests arrive by email too)
+  // Requires gmail.readonly on the diagnostic token. Degrades to an empty
+  // list + emailSweepError so a scope gap becomes a dashboard card
+  // instead of a dead nightly run (analyze.ts renders it under System).
+  console.log(`Gmail messages from last ${EMAIL_ACTIVE_DAYS}d…`);
+  let emails: EmailThreadSnapshot[] = [];
+  let emailSweepError: string | undefined;
+  try {
+    const gmail = new GmailClient({
+      oauth: {
+        clientId: requireEnv('GOOGLE_CLIENT_ID'),
+        clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),
+        refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
+      },
+    });
+    const messages = await gmail.listMessages({
+      query: `newer_than:${EMAIL_ACTIVE_DAYS}d -in:spam -in:trash -in:chats -category:promotions -category:social -category:forums`,
+      maxResults: EMAIL_MAX_MESSAGES,
+    });
+    emails = buildEmailThreads(messages);
+    console.log(`  ${messages.length} messages → ${emails.length} threads with a human counterparty`);
+  } catch (err) {
+    emailSweepError = (err as Error).message.slice(0, 300);
+    console.log(`  ! Gmail sweep failed: ${emailSweepError}`);
+  }
+  stats.emailThreads = emails.length;
+  stats.emailSweepOk = emailSweepError ? 0 : 1;
+
   const snapshot: Snapshot = {
     generatedAt: new Date(now).toISOString(),
     windows: {
@@ -455,6 +568,8 @@ async function main(): Promise<void> {
     scheduling: { pending, review },
     todos,
     threads,
+    emails,
+    ...(emailSweepError ? { emailSweepError } : {}),
     stats,
   };
 
