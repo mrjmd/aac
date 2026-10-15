@@ -25,6 +25,25 @@ export interface GmailConfig {
     clientSecret: string;
     refreshToken: string;
   };
+  /**
+   * Retry tuning for rate-limit errors (429, or 403 quota/rate-limit).
+   * Defaults: 6 attempts, 2s base delay doubling to a 60s cap — the
+   * cumulative wait spans a full per-minute quota window, so a sweep that
+   * exhausts 'Units per minute per user' resumes in the next window
+   * instead of failing.
+   */
+  retry?: {
+    maxAttempts?: number;
+    baseDelayMs?: number;
+  };
+}
+
+export interface GmailAttachmentRef {
+  /** Pass to downloadAttachment together with the message id. */
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
 }
 
 export interface GmailMessage {
@@ -43,6 +62,7 @@ export interface GmailMessage {
   /** Decoded text/plain body (empty string when only HTML exists). */
   body: string;
   attachmentNames: string[];
+  attachments: GmailAttachmentRef[];
 }
 
 export interface ListMessagesOptions {
@@ -83,12 +103,31 @@ function plainTextOf(part: gmail_v1.Schema$MessagePart | undefined): string {
   return '';
 }
 
-function attachmentNamesOf(part: gmail_v1.Schema$MessagePart | undefined): string[] {
+function isRateLimitError(err: unknown): boolean {
+  const e = err as {
+    code?: number | string;
+    status?: number;
+    response?: { status?: number };
+    message?: string;
+  };
+  const status = Number(e.code ?? e.status ?? e.response?.status ?? NaN);
+  if (status === 429) return true;
+  return status === 403 && /quota|rate ?limit/i.test(e.message ?? '');
+}
+
+function attachmentsOf(part: gmail_v1.Schema$MessagePart | undefined): GmailAttachmentRef[] {
   if (!part) return [];
-  const names: string[] = [];
-  if (part.filename && part.body?.attachmentId) names.push(part.filename);
-  for (const child of part.parts ?? []) names.push(...attachmentNamesOf(child));
-  return names;
+  const refs: GmailAttachmentRef[] = [];
+  if (part.filename && part.body?.attachmentId) {
+    refs.push({
+      attachmentId: part.body.attachmentId,
+      filename: part.filename,
+      mimeType: part.mimeType ?? 'application/octet-stream',
+      sizeBytes: part.body.size ?? 0,
+    });
+  }
+  for (const child of part.parts ?? []) refs.push(...attachmentsOf(child));
+  return refs;
 }
 
 // ── Client ───────────────────────────────────────────────────────────
@@ -110,8 +149,24 @@ export class GmailClient {
     return this._client;
   }
 
+  private async withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    const maxAttempts = this.config.retry?.maxAttempts ?? 6;
+    let delay = this.config.retry?.baseDelayMs ?? 2000;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        if (!isRateLimitError(err) || attempt >= maxAttempts) throw err;
+        log.warn('Gmail rate limited; backing off', { label, attempt, delayMs: delay });
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay = Math.min(delay * 2, 60_000);
+      }
+    }
+  }
+
   private mapMessage(msg: gmail_v1.Schema$Message): GmailMessage {
     const from = header(msg, 'From');
+    const attachments = attachmentsOf(msg.payload);
     return {
       id: msg.id ?? '',
       threadId: msg.threadId ?? '',
@@ -126,7 +181,8 @@ export class GmailClient {
       labelIds: msg.labelIds ?? [],
       snippet: msg.snippet ?? '',
       body: plainTextOf(msg.payload),
-      attachmentNames: attachmentNamesOf(msg.payload),
+      attachmentNames: attachments.map((a) => a.filename),
+      attachments,
     };
   }
 
@@ -142,12 +198,14 @@ export class GmailClient {
     const ids: string[] = [];
     let pageToken: string | undefined;
     while (ids.length < max) {
-      const res = await gmail.users.messages.list({
-        userId: 'me',
-        q: options.query,
-        maxResults: Math.min(100, max - ids.length),
-        pageToken,
-      });
+      const res = await this.withRetry('messages.list', () =>
+        gmail.users.messages.list({
+          userId: 'me',
+          q: options.query,
+          maxResults: Math.min(100, max - ids.length),
+          pageToken,
+        }),
+      );
       for (const m of res.data.messages ?? []) {
         if (m.id) ids.push(m.id);
       }
@@ -157,12 +215,31 @@ export class GmailClient {
 
     const messages: GmailMessage[] = [];
     for (const id of ids) {
-      const res = await gmail.users.messages.get({ userId: 'me', id, format: 'full' });
+      const res = await this.withRetry('messages.get', () =>
+        gmail.users.messages.get({ userId: 'me', id, format: 'full' }),
+      );
       messages.push(this.mapMessage(res.data));
     }
 
     log.info('Listed Gmail messages', { query: options.query, count: messages.length });
     return messages;
+  }
+
+  /**
+   * Download one attachment's bytes. Ids come from GmailMessage.attachments.
+   * Returns null when Gmail returns no data for the id (expired/invalid).
+   */
+  async downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer | null> {
+    const gmail = this.getClient();
+    const res = await this.withRetry('attachments.get', () =>
+      gmail.users.messages.attachments.get({
+        userId: 'me',
+        messageId,
+        id: attachmentId,
+      }),
+    );
+    if (!res.data.data) return null;
+    return Buffer.from(res.data.data.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
   }
 
   /** The authenticated account's email address. */
