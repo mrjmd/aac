@@ -23,6 +23,77 @@ export interface StubPhotoAttachment {
   mimeType: string;
 }
 
+/** One photo's bytes, ready for the Drive upload leg. */
+export interface PhotoUploadItem {
+  data: ArrayBuffer | Buffer;
+  mimeType: string;
+  name: string;
+}
+
+export const DEFAULT_PHOTO_FOLDER = 'AAC Job Photos (auto)';
+
+/**
+ * Shared Drive leg for every photo source (Quo MMS, field app, email):
+ * upload each item into the folder, share with the technician(s), return
+ * Calendar-ready attachment descriptors. Per-item failures are logged and
+ * skipped — partial results beat none.
+ */
+export async function uploadPhotoAttachments(
+  drive: GoogleDriveClient,
+  input: {
+    items: PhotoUploadItem[];
+    shareWithEmails: string[];
+    folderName?: string;
+  },
+): Promise<StubPhotoAttachment[]> {
+  if (input.items.length === 0) return [];
+  const folderId = await drive.ensureFolder(input.folderName ?? DEFAULT_PHOTO_FOLDER);
+  const attachments: StubPhotoAttachment[] = [];
+  for (const item of input.items) {
+    try {
+      const uploaded = await drive.uploadFile({
+        name: item.name,
+        mimeType: item.mimeType,
+        data: item.data,
+        folderId,
+      });
+      if (input.shareWithEmails.length > 0) {
+        await drive.shareWithUsers(uploaded.id, input.shareWithEmails);
+      }
+      attachments.push({ fileUrl: uploaded.fileUrl, title: item.name, mimeType: item.mimeType });
+    } catch (err) {
+      log.warn('Photo upload failed — skipping photo', {
+        name: item.name,
+        error: (err as Error).message,
+      });
+    }
+  }
+  return attachments;
+}
+
+/**
+ * Merge attachments from multiple sources in priority order, dropping
+ * exact title duplicates (same photo arriving via two channels) and
+ * capping the total — Matt reviews stubs on a phone; a wall of photos
+ * stops being information.
+ */
+export function mergePhotoAttachments(
+  sources: StubPhotoAttachment[][],
+  maxTotal = 12,
+): StubPhotoAttachment[] {
+  const seen = new Set<string>();
+  const merged: StubPhotoAttachment[] = [];
+  for (const source of sources) {
+    for (const att of source) {
+      if (seen.has(att.title)) continue;
+      seen.add(att.title);
+      merged.push(att);
+      if (merged.length >= maxTotal) return merged;
+    }
+  }
+  return merged;
+}
+
 export interface CollectStubPhotosDeps {
   quo: QuoClient;
   drive: GoogleDriveClient;
@@ -44,7 +115,6 @@ export interface CollectStubPhotosInput {
 
 const DEFAULT_MAX_PHOTOS = 6;
 const DEFAULT_SINCE_DAYS = 60;
-const DEFAULT_FOLDER = 'AAC Job Photos (auto)';
 const MESSAGE_SCAN_LIMIT = 50;
 
 function isImage(type: string | undefined, url: string): boolean {
@@ -93,11 +163,7 @@ export async function collectStubPhotoAttachments(
 
     if (candidates.length === 0) return [];
 
-    const folderId = await deps.drive.ensureFolder(
-      input.folderName ?? DEFAULT_FOLDER,
-    );
-
-    const attachments: StubPhotoAttachment[] = [];
+    const items: PhotoUploadItem[] = [];
     for (const [i, media] of candidates.entries()) {
       try {
         const downloaded = await deps.quo.downloadMessageMedia(media.url);
@@ -107,25 +173,24 @@ export async function collectStubPhotoAttachments(
           });
           continue;
         }
-        const mimeType = media.type ?? downloaded.contentType;
-        const name = mediaFileName(media.url, i);
-        const uploaded = await deps.drive.uploadFile({
-          name,
-          mimeType,
+        items.push({
           data: downloaded.data,
-          folderId,
+          mimeType: media.type ?? downloaded.contentType,
+          name: mediaFileName(media.url, i),
         });
-        if (input.shareWithEmails.length > 0) {
-          await deps.drive.shareWithUsers(uploaded.id, input.shareWithEmails);
-        }
-        attachments.push({ fileUrl: uploaded.fileUrl, title: name, mimeType });
       } catch (err) {
-        log.warn('Stub photo upload failed — skipping photo', {
+        log.warn('Stub photo download failed — skipping photo', {
           customerPhone: input.customerPhone,
           error: (err as Error).message,
         });
       }
     }
+
+    const attachments = await uploadPhotoAttachments(deps.drive, {
+      items,
+      shareWithEmails: input.shareWithEmails,
+      folderName: input.folderName,
+    });
 
     log.info('Stub photos collected', {
       customerPhone: input.customerPhone,
