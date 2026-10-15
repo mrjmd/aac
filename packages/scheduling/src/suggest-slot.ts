@@ -601,6 +601,31 @@ async function findSlotOnDayWithTravel(
   return null;
 }
 
+// ── Backup-slot helper ─────────────────────────────────────────────
+
+/**
+ * Build a synthetic all-day busy event covering the local calendar day of
+ * `slotStartIso`. Feed it back into `suggestSlot` alongside the real busy
+ * events to get a backup suggestion on a different day than the primary.
+ * HOLD-titled so production busy filters (selectBusyEvents) keep it even
+ * though it has no attendees.
+ */
+export function syntheticDayBlocker(
+  slotStartIso: string,
+  timezone: string = DEFAULT_POLICY.timezone,
+): CalendarEvent {
+  const dayKey = localDateKey(new Date(slotStartIso), timezone);
+  return {
+    id: `synthetic-day-blocker-${dayKey}`,
+    summary: 'HOLD — synthetic-day-blocker',
+    start: isoAtLocalHour(dayKey, 0, 0, timezone),
+    end: isoAtLocalHour(dayKey, 23, 59, timezone),
+    attendees: [],
+    htmlLink: '',
+    attachments: [],
+  };
+}
+
 // ── Rounding ───────────────────────────────────────────────────────
 
 /**

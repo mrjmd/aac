@@ -59,6 +59,13 @@ export interface ExecuteHoldInput {
   customerName: string;
   /** Street address for the event location; omitted when unknown. */
   customerAddress?: string | null;
+  /**
+   * Algorithm-SUGGESTED slot (quote_approved → suggestSlot flow) rather
+   * than a slot Matt already offered by text. When set, the hold is
+   * created on this slot with "Slot SUGGESTED … NOT yet offered" wording;
+   * getOfferedSlot (which only honors manual_schedule offers) is bypassed.
+   */
+  suggestedSlot?: KnownSlot | null;
 }
 
 export type ExecuteHoldResult =
@@ -81,9 +88,9 @@ export async function executeHoldEvent(
   deps: ExecuteHoldDeps,
   input: ExecuteHoldInput,
 ): Promise<ExecuteHoldResult> {
-  const { directive, customerName, customerAddress } = input;
+  const { directive, customerName, customerAddress, suggestedSlot } = input;
 
-  const slot = getOfferedSlot(directive);
+  const slot = suggestedSlot ?? getOfferedSlot(directive);
   if (!slot) return { status: 'skipped', reason: 'no_slot' };
 
   const start = new Date(slot.startIso);
@@ -118,15 +125,20 @@ export async function executeHoldEvent(
     return { status: 'skipped', reason: 'duplicate_event' };
   }
 
+  const headline = suggestedSlot
+    ? `Slot SUGGESTED for ${customerName} — quote accepted, time NOT yet offered to the customer. Mike not assigned.`
+    : `Time OFFERED to ${customerName} — awaiting their reply. Not confirmed; Mike not assigned.`;
   const description = [
-    `Time OFFERED to ${customerName} — awaiting their reply. Not confirmed; Mike not assigned.`,
+    headline,
     directive.scopeSummary,
     '',
     `${HOLD_OFFERED_AT_LABEL} ${deps.now().toISOString()}`,
     `${HOLD_CUSTOMER_PHONE_LABEL} ${directive.customerPhone}`,
     `Auto-created hold from ${directive.source} directive ${directive.id}`
       + ` (confidence ${directive.confidence.score}).`,
-    'If the customer confirms, the stub flow replaces this. If they decline or go quiet, delete it to release the slot.',
+    suggestedSlot
+      ? 'If the customer confirms, the stub flow replaces this. If the time goes elsewhere, delete it to release the slot.'
+      : 'If the customer confirms, the stub flow replaces this. If they decline or go quiet, delete it to release the slot.',
   ].join('\n');
 
   const event = await deps.cal.createEvent({

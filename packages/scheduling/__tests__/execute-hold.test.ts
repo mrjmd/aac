@@ -184,3 +184,72 @@ describe('executeHoldEvent', () => {
     );
   });
 });
+
+describe('executeHoldEvent — suggestedSlot variant (quote_approved suggestion flow)', () => {
+  function makeQuoteApproved() {
+    return {
+      id: 'dir-qa-1',
+      createdAt: NOW.toISOString(),
+      source: 'qb_webhook',
+      intent: 'quote_approved',
+      eventClass: 'job',
+      confidence: { score: 1, signals: [] },
+      customerPhone: '+16175550123',
+      pdPersonId: 9001,
+      qbEstimateId: 'qb-est-1',
+      scopeSummary: 'crack injection, front wall',
+      estimatedDurationHours: 4,
+      durationPrediction: null,
+    } as const;
+  }
+
+  it('creates a hold on the suggested slot with SUGGESTED wording', async () => {
+    const { deps, createEvent } = makeDeps();
+    const result = await executeHoldEvent(deps, {
+      directive: makeQuoteApproved() as unknown as ManualScheduleDirective,
+      customerName: 'Jane Smith',
+      customerAddress: '42 Beacon St, Boston, MA',
+      suggestedSlot: { startIso: SLOT_START, endIso: '2026-10-06T18:00:00.000Z' },
+    });
+    expect(result.status).toBe('created');
+    const args = createEvent.mock.calls[0][0];
+    expect(args.summary).toBe(`${HOLD_TITLE_PREFIX}Jane Smith`);
+    expect(args.colorId).toBe(HOLD_COLOR_ID);
+    expect(args.start).toBe(SLOT_START);
+    expect(args.end).toBe('2026-10-06T18:00:00.000Z');
+    expect(args.description).toContain('Slot SUGGESTED for Jane Smith');
+    expect(args.description).toContain('NOT yet offered');
+    expect(args.description).toContain(HOLD_OFFERED_AT_LABEL);
+    expect(args.description).toContain(`${HOLD_CUSTOMER_PHONE_LABEL} +16175550123`);
+  });
+
+  it('still skips via the duplicate guard with a suggestedSlot', async () => {
+    const { deps, createEvent } = makeDeps([
+      {
+        id: 'existing',
+        summary: 'Jane Smith crack injection',
+        start: SLOT_START,
+        end: '2026-10-06T18:00:00.000Z',
+        attendees: [],
+        htmlLink: '',
+        attachments: [],
+      },
+    ]);
+    const result = await executeHoldEvent(deps, {
+      directive: makeQuoteApproved() as unknown as ManualScheduleDirective,
+      customerName: 'Jane Smith',
+      suggestedSlot: { startIso: SLOT_START },
+    });
+    expect(result).toEqual({ status: 'skipped', reason: 'duplicate_event' });
+    expect(createEvent).not.toHaveBeenCalled();
+  });
+
+  it('keeps OFFERED wording when no suggestedSlot is passed', async () => {
+    const { deps, createEvent } = makeDeps();
+    await executeHoldEvent(deps, {
+      directive: makeOffered(),
+      customerName: 'Jane Smith',
+    });
+    expect(createEvent.mock.calls[0][0].description).toContain('Time OFFERED to Jane Smith');
+  });
+});

@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
-import { suggestSlot, type SuggestSlotTravelDeps } from '../src/suggest-slot.js';
+import {
+  suggestSlot,
+  syntheticDayBlocker,
+  type SuggestSlotTravelDeps,
+} from '../src/suggest-slot.js';
 import type { TravelLeg } from '../src/travel-time.js';
 import type {
   QuoteApprovedDirective,
@@ -639,6 +643,32 @@ describe('suggestSlot — travel-aware', () => {
       travel: routedTravel(routes),
     });
     expect(result.slot!.startIso.slice(0, 10)).not.toBe('2026-06-02');
+  });
+
+  it('syntheticDayBlocker pushes the suggestion to the next day (backup-slot flow)', async () => {
+    const primary = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [],
+      now: NOW,
+      customerAddress: '123 Customer Ln, Boston, MA',
+      travel: constantTravel(30),
+    });
+    expect(primary.slot!.startIso.slice(0, 10)).toBe('2026-06-02');
+
+    const blocker = syntheticDayBlocker(primary.slot!.startIso);
+    // Covers the whole ET day: Jun 2 00:00 EDT = Jun 2 04:00 UTC.
+    expect(blocker.start).toBe('2026-06-02T04:00:00.000Z');
+    expect(blocker.end).toBe('2026-06-03T03:59:00.000Z');
+    expect(blocker.summary.startsWith('HOLD — ')).toBe(true);
+
+    const backup = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [blocker],
+      now: NOW,
+      customerAddress: '123 Customer Ln, Boston, MA',
+      travel: constantTravel(30),
+    });
+    expect(backup.slot!.startIso.slice(0, 10)).toBe('2026-06-03');
   });
 
   it('skips a gap when Maps returns null for the inbound leg', async () => {
