@@ -14,6 +14,7 @@ import {
 import { QuoClient } from '@aac/api-clients/quo';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { GeminiClient } from '@aac/api-clients/gemini';
+import { GmailClient } from '@aac/api-clients/gmail';
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import { GoogleMapsClient } from '@aac/api-clients/google-maps';
@@ -26,6 +27,7 @@ let _quickbooks: QuickBooksClient | null = null;
 let _gemini: GeminiClient | null = null;
 let _calendar: GoogleCalendarClient | null = null;
 let _drive: GoogleDriveClient | null = null;
+let _gmail: GmailClient | null = null;
 let _maps: GoogleMapsClient | null = null;
 
 export function getPipedrive(): PipedriveClient {
@@ -111,6 +113,28 @@ export function getDrive(): GoogleDriveClient | null {
     });
   }
   return _drive;
+}
+
+/**
+ * Gmail client on the same OAuth token as Calendar/Drive. Returns null
+ * when the Google creds are absent OR the token lacks gmail.readonly at
+ * runtime — callers treat null/failed Gmail as "skip email photos".
+ */
+export function getGmail(): GmailClient | null {
+  if (!_gmail) {
+    const env = getEnv();
+    if (!env.google.clientId || !env.google.clientSecret || !env.google.refreshToken) {
+      return null;
+    }
+    _gmail = new GmailClient({
+      oauth: {
+        clientId: env.google.clientId,
+        clientSecret: env.google.clientSecret,
+        refreshToken: env.google.refreshToken,
+      },
+    });
+  }
+  return _gmail;
 }
 
 export function getCalendar(): GoogleCalendarClient {

@@ -27,6 +27,7 @@ import {
   GeminiClient,
   type ClassifiedSchedulingIntent,
 } from '@aac/api-clients/gemini';
+import type { GmailClient } from '@aac/api-clients/gmail';
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import type { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import {
@@ -37,8 +38,11 @@ import {
 import type { QuoClient } from '@aac/api-clients/quo';
 import {
   buildEventDescription,
+  collectEmailPhotoAttachments,
+  collectFieldPhotoAttachments,
   collectStubPhotoAttachments,
   enrichStubEvent,
+  mergePhotoAttachments,
   executeHoldEvent,
   executeStubEvent,
   getActionableSlot,
@@ -48,6 +52,7 @@ import {
   normalizeQuoCustomerIntent,
   resolveCallbackParent,
   type EventDescriptionMessage,
+  type FieldCompletionRecord,
   type QuoCallbackParent,
   type QuoCustomerIntentLabel,
   type SchedulingDirective,
@@ -67,6 +72,16 @@ const log = createLogger('scheduling-dispatch');
 // Same length floor as entity extraction. Avoids spending API calls on
 // "ok" / "thanks" / etc.
 const MIN_CLASSIFIER_TEXT_LENGTH = 10;
+
+// Customer texts under the length floor still classify when they read as a
+// bare affirmation — "Perfect" / "Yes" / "Ok 👍" are exactly how customers
+// accept an offered slot (appointment_confirmed), and the conversation
+// context gives the classifier the antecedent offer to resolve the slot
+// from. Found live 2026-10-15: Luke Li's "Perfect" (7 chars) never reached
+// the classifier, so his confirmed slot never became a stub. Customer-side
+// only — Matt's short outbounds carry no schedulable intent on their own.
+const SHORT_AFFIRMATION_RE =
+  /\b(yes|yep|yeah|yup|ok|okay|sure|perfect|great|deal|works|confirmed?)\b|👍|👌|✅/i;
 
 const DEFAULT_TIMEZONE = 'America/New_York';
 
@@ -114,6 +129,17 @@ export interface SchedulingDispatchDeps {
      * created without photos.
      */
     drive?: GoogleDriveClient | null;
+    /**
+     * Gmail client for the email photo source (customer-emailed photos,
+     * the MMS-bounce fallback). Absent = email source skipped.
+     */
+    gmail?: GmailClient | null;
+    /**
+     * Lookup of the field app's completion record for a calendar event
+     * (photos Mike took during a prior visit). Absent = field source
+     * skipped.
+     */
+    fetchFieldCompletion?: (calendarEventId: string) => Promise<FieldCompletionRecord | null>;
   };
   /**
    * HOLD-placeholder execution config. When absent or disabled, offered
@@ -418,6 +444,7 @@ async function createStubForDirective(
       eventId: result.eventId,
       customerName,
       customerAddress: info.address,
+      customerEmails: info.emails,
       technicianEmails,
     });
     return true;
@@ -433,10 +460,11 @@ async function createStubForDirective(
 }
 
 /**
- * Best-effort enrichment pass over an already-created stub: collect MMS
- * photos into Drive, write the Matt-voice description, and patch both
- * onto the event. Every failure is soft — the bare stub already holds
- * the booking, so enrichment never throws past this function.
+ * Best-effort enrichment pass over an already-created stub: collect
+ * photos from every available source (Quo MMS, field-app visits, email),
+ * write the Matt-voice description, and patch both onto the event. Every
+ * failure is soft — the bare stub already holds the booking, so
+ * enrichment never throws past this function.
  */
 async function enrichCreatedStub(
   deps: SchedulingDispatchDeps,
@@ -446,20 +474,52 @@ async function enrichCreatedStub(
     eventId: string;
     customerName: string;
     customerAddress: string | null;
+    customerEmails: string[];
     technicianEmails: string[];
   },
 ): Promise<void> {
   const now = deps.now ?? (() => new Date());
   try {
     let attachments: StubPhotoAttachment[] = [];
-    if (deps.stub?.drive) {
-      attachments = await collectStubPhotoAttachments(
-        { quo: deps.quo, drive: deps.stub.drive, now },
-        {
-          customerPhone: context.customerPhone,
-          shareWithEmails: stub.technicianEmails,
-        },
-      );
+    const drive = deps.stub?.drive;
+    if (drive) {
+      // Three independent sources, each fail-soft (they return [] on any
+      // error). Field photos lead the merge — Mike's own assessment shots
+      // carry the most context for the job he's walking into.
+      const [fieldPhotos, quoPhotos, emailPhotos] = await Promise.all([
+        deps.stub?.fetchFieldCompletion
+          ? collectFieldPhotoAttachments(
+              {
+                cal: deps.cal,
+                drive,
+                fetchCompletion: deps.stub.fetchFieldCompletion,
+                now,
+              },
+              {
+                customerName: stub.customerName,
+                customerAddress: stub.customerAddress,
+                shareWithEmails: stub.technicianEmails,
+              },
+            )
+          : Promise.resolve([]),
+        collectStubPhotoAttachments(
+          { quo: deps.quo, drive, now },
+          {
+            customerPhone: context.customerPhone,
+            shareWithEmails: stub.technicianEmails,
+          },
+        ),
+        deps.stub?.gmail
+          ? collectEmailPhotoAttachments(
+              { gmail: deps.stub.gmail, drive, now },
+              {
+                customerEmails: stub.customerEmails,
+                shareWithEmails: stub.technicianEmails,
+              },
+            )
+          : Promise.resolve([]),
+      ]);
+      attachments = mergePhotoAttachments([fieldPhotos, quoPhotos, emailPhotos]);
     }
 
     let description: string | undefined;
@@ -562,7 +622,9 @@ export function extractClassifierInputs(
 ): ClassifierInput[] {
   if (context.eventType === 'message.received') {
     const text = (context.text ?? '').trim();
-    if (text.length < MIN_CLASSIFIER_TEXT_LENGTH) return [];
+    if (text.length < MIN_CLASSIFIER_TEXT_LENGTH && !SHORT_AFFIRMATION_RE.test(text)) {
+      return [];
+    }
     return [{ text, speakerRole: 'customer' }];
   }
 
@@ -714,7 +776,12 @@ async function buildDirective(
 async function fetchPdPersonInfo(
   pd: PipedriveClient,
   pdPersonId: number,
-): Promise<{ name: string | null; qbCustomerId: string | null; address: string | null }> {
+): Promise<{
+  name: string | null;
+  qbCustomerId: string | null;
+  address: string | null;
+  emails: string[];
+}> {
   let person: PipedrivePerson | null = null;
   try {
     person = await pd.getPerson(pdPersonId);
@@ -723,22 +790,23 @@ async function fetchPdPersonInfo(
       pdPersonId,
       error: (err as Error).message,
     });
-    return { name: null, qbCustomerId: null, address: null };
+    return { name: null, qbCustomerId: null, address: null, emails: [] };
   }
 
   const name = person?.name ?? null;
+  const emails = (person?.email ?? []).map((e) => e.value).filter(Boolean);
   const rawPerson = person as unknown as Record<string, unknown> | null;
   const rawAddress = rawPerson?.[PIPEDRIVE_CROSS_SYSTEM_FIELDS.PERSONAL_ADDRESS];
   const address = typeof rawAddress === 'string' && rawAddress.length > 0 ? rawAddress : null;
 
   const cachedQbId = await getQbCustomerIdFromPipedrive(String(pdPersonId));
-  if (cachedQbId) return { name, qbCustomerId: cachedQbId, address };
+  if (cachedQbId) return { name, qbCustomerId: cachedQbId, address, emails };
 
   const rawField = rawPerson?.[PIPEDRIVE_CROSS_SYSTEM_FIELDS.QB_CUSTOMER_ID];
   const qbCustomerId = typeof rawField === 'string' && rawField.length > 0 ? rawField : null;
   if (qbCustomerId) {
     await storePipedriveToQbMapping(String(pdPersonId), qbCustomerId);
   }
-  return { name, qbCustomerId, address };
+  return { name, qbCustomerId, address, emails };
 }
 

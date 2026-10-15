@@ -63,6 +63,20 @@ export async function wasEventProcessed(
   return exists === 1;
 }
 
+// ── Field-app completion records ─────────────────────────────────────
+
+/**
+ * Photos (and completion state) the field app recorded for a calendar
+ * event. Read-only here — the field app owns writes. Shape mirrors
+ * FieldCompletionRecord in @aac/scheduling (the photo subset).
+ */
+export async function readFieldCompletion(
+  calendarEventId: string,
+): Promise<{ photos?: Array<{ url: string; label: string; takenAt: string; kind?: 'image' | 'video' }> } | null> {
+  const redis = getRedis();
+  return await redis.get(keys.fieldCompletion(calendarEventId));
+}
+
 // ── ID Mapping (Pipedrive ↔ Quo) ────────────────────────────────────
 
 export async function storeIdMapping(

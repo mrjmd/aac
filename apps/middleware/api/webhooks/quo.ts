@@ -23,12 +23,13 @@ import { GeminiClient, ExtractionError } from '@aac/api-clients/gemini';
 import {
   markEventProcessed,
   getPipedriveIdFromPhone,
+  readFieldCompletion,
   storePhoneMapping,
   trackWebhookProcessed,
   logHealthError,
 } from '../../lib/redis.js';
 import { getEnv } from '../../lib/env.js';
-import { getCalendar, getDrive, getPipedrive, getGemini, getQuo } from '../../lib/clients.js';
+import { getCalendar, getDrive, getGmail, getPipedrive, getGemini, getQuo } from '../../lib/clients.js';
 import { ensureInboundLeadDeal } from '../../lib/inbound-deal.js';
 import {
   dispatchSchedulingIntent,
@@ -578,6 +579,8 @@ export async function POST(request: Request): Promise<Response> {
               enabled: env.scheduling.stubEventsEnabled,
               technicianEmails: env.scheduling.stubAttendeeEmails,
               drive: getDrive(),
+              gmail: getGmail(),
+              fetchFieldCompletion: readFieldCompletion,
             },
             holds: {
               enabled: env.scheduling.holdEventsEnabled,

@@ -147,8 +147,21 @@ describe('extractClassifierInputs', () => {
     expect(out).toEqual([{ text: 'Tuesday at 10 works for me', speakerRole: 'matt' }]);
   });
 
-  it('skips when message text is below min length', () => {
-    expect(extractClassifierInputs(ctxMsg({ text: 'ok' }))).toEqual([]);
+  it('skips short texts unless they read as an affirmation', () => {
+    expect(extractClassifierInputs(ctxMsg({ text: 'Thanks' }))).toEqual([]);
+    expect(extractClassifierInputs(ctxMsg({ text: 'Perfect' })))
+      .toEqual([{ text: 'Perfect', speakerRole: 'customer' }]);
+    expect(extractClassifierInputs(ctxMsg({ text: 'ok' })))
+      .toEqual([{ text: 'ok', speakerRole: 'customer' }]);
+    expect(extractClassifierInputs(ctxMsg({ text: '👍' })))
+      .toEqual([{ text: '👍', speakerRole: 'customer' }]);
+  });
+
+  it('keeps the length gate for matt outbound (affirmation bypass is customer-only)', () => {
+    expect(extractClassifierInputs(ctxMsg({
+      eventType: 'message.delivered',
+      text: 'Perfect',
+    }))).toEqual([]);
   });
 
   it('returns both customer and matt inputs from transcript dialogue', () => {
@@ -410,7 +423,7 @@ describe('dispatchSchedulingIntent', () => {
     const summary = await dispatchSchedulingIntent(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { pd: makePd('X'), cal: makeCal([]), gemini: gemini as any, quo: makeQuo(), now: fixedNow },
-      ctxMsg({ text: 'ok' }),
+      ctxMsg({ text: 'Thanks' }),
     );
 
     expect(summary.classified).toBe(0);
@@ -727,7 +740,7 @@ describe('dispatchSchedulingIntent', () => {
     ]);
     gemini.generateContent = vi
       .fn()
-      .mockResolvedValue('NOTE: call ahead.\n\nWet basement in the NE corner, go have a look.\n\nSee attached photos.');
+      .mockResolvedValue('NOTE: call ahead.\n\nWet basement in the NE corner, go have a look.');
     const quo = makeQuo([
       {
         text: 'Here are the photos',
@@ -780,6 +793,111 @@ describe('dispatchSchedulingIntent', () => {
       { fileUrl: 'https://drive.google.com/open?id=f1', title: 'abc.jpg', mimeType: 'image/jpeg' },
     ]);
     expect(drive.shareWithUsers).toHaveBeenCalledWith('f1', ['mike@attackacrack.com']);
+  });
+
+  it('merges field-app and email photos ahead of/alongside Quo MMS photos', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'appointment_confirmed',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: { startIso: '2026-06-08T15:30:00Z' },
+        eventClass: 'job',
+        scopeSummary: 'crack injection rear wall',
+      }),
+    ]);
+    gemini.generateContent = vi.fn().mockResolvedValue('Crack injection on the rear wall.');
+    // PD person carries an email → email source activates.
+    const pd = makePd('Margie Mercadante');
+    pd.getPerson.mockResolvedValue({
+      id: 9001,
+      name: 'Margie Mercadante',
+      email: [{ value: 'margie@example.com', primary: true }],
+    });
+    // Time-aware calendar: the past-visit lookup (timeMax <= now) sees the
+    // prior assessment; the duplicate-guard window (future) sees nothing.
+    const visit = {
+      id: 'visit-1',
+      summary: 'Margie Mercadante',
+      location: '12 Elm St, Quincy, MA',
+      start: '2026-05-20T15:00:00Z',
+      end: '2026-05-20T15:30:00Z',
+      colorId: '3',
+      attendees: ['mike@attackacrack.com'],
+      htmlLink: '',
+      attachments: [],
+    };
+    const cal = makeCal([]);
+    cal.listEvents.mockImplementation(({ timeMax }: { timeMax: string }) =>
+      Promise.resolve(new Date(timeMax).getTime() <= fixedNow().getTime() ? [visit] : []),
+    );
+    const fetchFieldCompletion = vi.fn().mockResolvedValue({
+      photos: [
+        {
+          url: 'https://x.public.blob.vercel-storage.com/field/visit-1/photo-1.jpg',
+          label: 'photo',
+          takenAt: '2026-05-20T15:20:00Z',
+        },
+      ],
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(1)),
+        headers: { get: () => 'image/jpeg' },
+      }),
+    );
+    const gmail = {
+      listMessages: vi.fn().mockResolvedValue([
+        {
+          id: 'gm1',
+          at: '2026-05-25T12:00:00Z',
+          attachments: [
+            { attachmentId: 'att1', filename: 'IMG_9.jpg', mimeType: 'image/jpeg', sizeBytes: 9 },
+          ],
+        },
+      ]),
+      downloadAttachment: vi.fn().mockResolvedValue(Buffer.from([1])),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const drive = {
+      ensureFolder: vi.fn().mockResolvedValue('FOLD'),
+      uploadFile: vi.fn().mockImplementation(({ name }: { name: string }) =>
+        Promise.resolve({ id: `id-${name}`, fileUrl: `https://drive.google.com/open?id=${name}` }),
+      ),
+      shareWithUsers: vi.fn().mockResolvedValue(undefined),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+
+    try {
+      const summary = await dispatchSchedulingIntent(
+        {
+          pd,
+          cal,
+          gemini,
+          quo: makeQuo(),
+          stub: { ...stubOn, drive, gmail, fetchFieldCompletion },
+          now: fixedNow,
+        },
+        ctxMsg({ text: 'Yes. That will work. Thank you.' }),
+      );
+
+      expect(summary.stubsCreated).toBe(1);
+      expect(fetchFieldCompletion).toHaveBeenCalledWith('visit-1');
+      expect(gmail.listMessages).toHaveBeenCalledWith({
+        query: 'from:margie@example.com has:attachment newer_than:60d',
+        maxResults: 20,
+      });
+      const [, patch] = cal.updateEvent.mock.calls[0];
+      // Field photos lead the merge, then email (no Quo MMS in this thread).
+      expect(patch.attachments.map((a: { title: string }) => a.title)).toEqual([
+        'photo-1.jpg',
+        'IMG_9.jpg',
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('a photo-pipeline failure still creates the stub without attachments', async () => {
