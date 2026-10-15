@@ -67,6 +67,29 @@ export interface SuggestSlotPolicy {
    * next gap.
    */
   slotStartRoundingMinutes: number;
+  /**
+   * First-job-of-day arrival banding (Matt, 2026-10-15). When the candidate
+   * slot is the day's first appointment, the customer-facing arrival snaps
+   * to a clean band instead of "workStart + drive" (earlier than 8:30 is
+   * often inconvenient for customers; departure is almost never the
+   * constraint — Mike willingly leaves home early):
+   *   drive ≤ firstJobShortDriveMaxMinutes → firstJobShortDriveArrivalHour
+   *   drive >  firstJobLongDriveMinMinutes → firstJobLongDriveArrivalHour
+   *   otherwise                            → firstJobArrivalHour
+   * Decimal local hours (8.5 = 8:30 AM).
+   */
+  firstJobArrivalHour: number;
+  firstJobShortDriveArrivalHour: number;
+  firstJobShortDriveMaxMinutes: number;
+  firstJobLongDriveArrivalHour: number;
+  firstJobLongDriveMinMinutes: number;
+  /**
+   * Sanity floor on banding: arrival can't be earlier than leaving home at
+   * this local hour plus the drive. Keeps a far-out customer (3h+ drive)
+   * from implying a pre-dawn departure; for normal service-area drives the
+   * band always wins.
+   */
+  earliestLeaveHomeHour: number;
 }
 
 export const DEFAULT_POLICY: SuggestSlotPolicy = {
@@ -83,6 +106,12 @@ export const DEFAULT_POLICY: SuggestSlotPolicy = {
   homeReturnDeadlineHour: 17.5,
   travelBufferMinutes: 15,
   slotStartRoundingMinutes: 15,
+  firstJobArrivalHour: 8.5,
+  firstJobShortDriveArrivalHour: 8,
+  firstJobShortDriveMaxMinutes: 20,
+  firstJobLongDriveArrivalHour: 9,
+  firstJobLongDriveMinMinutes: 90,
+  earliestLeaveHomeHour: 7,
 };
 
 // ── I/O shapes ─────────────────────────────────────────────────────
@@ -323,7 +352,8 @@ function findSlotOnDay(
  *                   overlapping event starts earliest with a non-empty
  *                   `location`)
  *   leg_to    = drive(prev_location → customer, departing prev.end)
- *   slot_start = (prev=home) workStart + leg_to
+ *   slot_start = (prev=home) banded first-job arrival: 8:00/8:30/9:00 by
+ *                drive length, floored by earliestLeaveHomeHour + leg_to
  *                else        max(workStart, prev.end + leg_to + buffer)
  *   slot_end   = slot_start + duration
  *   leg_back  = drive(customer → next_location, departing slot_end)
@@ -345,11 +375,11 @@ async function findSlotOnDayWithTravel(
   const dayStartMs = new Date(
     isoAtLocalHour(dayKey, policy.workStartHour, 0, policy.timezone),
   ).getTime();
-  const deadlineHour = Math.floor(policy.homeReturnDeadlineHour);
-  const deadlineMin = Math.round((policy.homeReturnDeadlineHour - deadlineHour) * 60);
-  const homeDeadlineMs = new Date(
-    isoAtLocalHour(dayKey, deadlineHour, deadlineMin, policy.timezone),
-  ).getTime();
+  const homeDeadlineMs = msAtLocalDecimalHour(
+    dayKey,
+    policy.homeReturnDeadlineHour,
+    policy.timezone,
+  );
 
   const dayEvents = events
     .map((e) => ({
@@ -475,9 +505,26 @@ async function findSlotOnDayWithTravel(
     const legToMs = legTo.durationSec * 1000;
 
     let earliestStart: number;
+    let firstJobNote = '';
     if (prev.isHome) {
-      // Mike leaves home around workStart; arrives at customer workStart + drive.
-      earliestStart = dayStartMs + legToMs;
+      // First job of the day: arrival is banded by drive length, not derived
+      // from a departure time (see SuggestSlotPolicy.firstJobArrivalHour).
+      const driveMin = legTo.durationSec / 60;
+      const bandHour =
+        driveMin <= policy.firstJobShortDriveMaxMinutes
+          ? policy.firstJobShortDriveArrivalHour
+          : driveMin > policy.firstJobLongDriveMinMinutes
+            ? policy.firstJobLongDriveArrivalHour
+            : policy.firstJobArrivalHour;
+      const bandedMs = msAtLocalDecimalHour(dayKey, bandHour, policy.timezone);
+      const departFloorMs =
+        msAtLocalDecimalHour(dayKey, policy.earliestLeaveHomeHour, policy.timezone) +
+        legToMs;
+      earliestStart = Math.max(bandedMs, departFloorMs);
+      firstJobNote =
+        bandedMs >= departFloorMs
+          ? ', first-job arrival banded'
+          : ', first-job start floored by earliest home departure';
     } else {
       earliestStart = Math.max(dayStartMs, prev.endMs + legToMs + bufferMs);
     }
@@ -514,7 +561,7 @@ async function findSlotOnDayWithTravel(
     return {
       startIso: new Date(slotStart).toISOString(),
       endIso: new Date(slotEnd).toISOString(),
-      reasoning: `${dayKey}: ${fromLabel} → customer ${legToMin}min, ${durationHours}h on-site, customer → ${toLabel} ${legBackMin}min (+${policy.travelBufferMinutes}min buffer each leg)`,
+      reasoning: `${dayKey}: ${fromLabel} → customer ${legToMin}min, ${durationHours}h on-site, customer → ${toLabel} ${legBackMin}min (+${policy.travelBufferMinutes}min buffer each leg)${firstJobNote}`,
     };
   }
 
@@ -573,6 +620,13 @@ function isWeekend(d: Date, tz: string): boolean {
   const short = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: tz }).format(d);
   const dow = WEEKDAY_INDEX[short] ?? 0;
   return dow === 0 || dow === 6;
+}
+
+/** Decimal local hour (17.5 = 5:30 PM) → UTC epoch ms on the given local date. */
+function msAtLocalDecimalHour(dayKey: string, decimalHour: number, tz: string): number {
+  const hour = Math.floor(decimalHour);
+  const minute = Math.round((decimalHour - hour) * 60);
+  return new Date(isoAtLocalHour(dayKey, hour, minute, tz)).getTime();
 }
 
 /**

@@ -364,9 +364,8 @@ describe('suggestSlot — travel-aware', () => {
     };
   }
 
-  it('shifts first slot of day forward by home → customer drive time', async () => {
-    // Empty calendar; constant 30min drive home ↔ customer.
-    // Expected slot start = 8am ET + 30min = 8:30am ET (no buffer on home leg).
+  it('bands a mid-length drive (21–90min) to the default 8:30 first-job arrival', async () => {
+    // Empty calendar; constant 30min drive home ↔ customer → 8:30 AM band.
     const result = await suggestSlot({
       directive: assessment(), // 0.5h
       existingEvents: [],
@@ -376,11 +375,57 @@ describe('suggestSlot — travel-aware', () => {
     });
     expect(result.travelAware).toBe(true);
     expect(result.slot).not.toBeNull();
-    // 8am ET + 30min = 8:30am ET = 12:30 UTC
+    // Banded 8:30am ET = 12:30 UTC
     expect(result.slot!.startIso).toBe('2026-06-02T12:30:00.000Z');
     expect(result.slot!.endIso).toBe('2026-06-02T13:00:00.000Z');
     expect(result.reasoning).toMatch(/home → customer 30min/);
     expect(result.reasoning).toMatch(/home \(back by deadline\)/);
+    expect(result.reasoning).toMatch(/first-job arrival banded/);
+  });
+
+  it('bands a short drive (≤20min) to an 8:00 first-job arrival', async () => {
+    const result = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [],
+      now: NOW,
+      customerAddress: '123 Customer Ln, Quincy, MA',
+      travel: constantTravel(10),
+    });
+    // 8:00am ET = 12:00 UTC (band, not 8:00 + 10min drive).
+    expect(result.slot!.startIso).toBe('2026-06-02T12:00:00.000Z');
+  });
+
+  it('bands a long drive (>90min) to a 9:00 first-job arrival', async () => {
+    // 104min (the Mashpee precedent): band 9:00 beats the 7:00-departure
+    // floor (7:00 + 104min = 8:44).
+    const result = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [],
+      now: NOW,
+      customerAddress: '1 Customer Rd, Mashpee, MA',
+      travel: constantTravel(104),
+    });
+    // 9:00am ET = 13:00 UTC.
+    expect(result.slot!.startIso).toBe('2026-06-02T13:00:00.000Z');
+  });
+
+  it('band boundaries: exactly 20min → 8:00, exactly 90min → 8:30', async () => {
+    const at20 = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [],
+      now: NOW,
+      customerAddress: '1 Boundary St, MA',
+      travel: constantTravel(20),
+    });
+    expect(at20.slot!.startIso).toBe('2026-06-02T12:00:00.000Z'); // 8:00 ET
+    const at90 = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [],
+      now: NOW,
+      customerAddress: '1 Boundary St, MA',
+      travel: constantTravel(90),
+    });
+    expect(at90.slot!.startIso).toBe('2026-06-02T12:30:00.000Z'); // 8:30 ET
   });
 
   it('Margie scenario: Sean fills Tue 8:30–12:30, Falmouth slot lands 14:05 (12:30 + 80min + 15min buffer)', async () => {
@@ -414,7 +459,7 @@ describe('suggestSlot — travel-aware', () => {
   it('skips a day whose return-home deadline would be missed', async () => {
     // Tue Jun 2: Sean 8:30–16:30. Customer is 90min from Sean AND from home.
     // Gap after Sean: 16:30 + 90min + 15min = 18:15 earliest start (already past 17:30). Skip Tue.
-    // Wed Jun 3: empty calendar. Slot fits at 8am + 90min = 9:30am ET.
+    // Wed Jun 3: empty calendar. 90min drive → banded 8:30am ET arrival.
     const SEAN = '99 Sean St, Boston, MA';
     const FAR = '1 Way, Far, MA';
     const sean = ev('2026-06-02T12:30:00Z', '2026-06-02T20:30:00Z', '10', SEAN);
@@ -435,15 +480,14 @@ describe('suggestSlot — travel-aware', () => {
     });
     expect(result.travelAware).toBe(true);
     expect(result.slot).not.toBeNull();
-    // Wed Jun 3 08:00 EDT + 90min = 09:30 EDT = 13:30 UTC.
-    expect(result.slot!.startIso).toBe('2026-06-03T13:30:00.000Z');
+    // Wed Jun 3, banded 08:30 EDT = 12:30 UTC.
+    expect(result.slot!.startIso).toBe('2026-06-03T12:30:00.000Z');
   });
 
   it('returns null when no day allows a feasible round-trip in window', async () => {
-    // Customer is 4 hours from home → home→customer drive alone (240min)
-    // means slot can't start before 12pm, then 0.5h on-site, then 4h back =
-    // 16:30. + 15min buffer = 16:45 — under 17:30! Should fit. Push to 5h:
-    // 8 + 300 = 13:00 ET start. +0.5 = 13:30. +5h = 18:30 + 15 = 18:45 → past 17:30. Fails.
+    // Customer is 5 hours from home. Banding wants a 9:00 arrival, but the
+    // earliest-leave-home floor (7:00 + 300min = 12:00 ET) wins. Slot
+    // 12:00–12:30, then 5h back + 15min buffer → home 17:45, past 17:30. Fails.
     const FAR = '1 Way, Maine';
     const routes = {
       [`${HOME} → ${FAR}`]: 300,
@@ -510,17 +554,18 @@ describe('suggestSlot — travel-aware', () => {
   });
 
   it('rounds slot start UP to the next 15-minute mark even on the home-anchored first gap', async () => {
-    // Constant 17min home→customer drive. Without rounding: 8:00 + 17min = 8:17.
-    // With 15-min rounding: 8:30 (next multiple of 15 after 8:17).
+    // 128min drive: band wants 9:00, but the 7:00-departure floor gives
+    // 7:00 + 128min = 9:08. With 15-min rounding: 9:15.
     const result = await suggestSlot({
       directive: assessment(),
       existingEvents: [],
       now: NOW,
       customerAddress: '1 Customer St, Boston, MA',
-      travel: constantTravel(17),
+      travel: constantTravel(128),
     });
-    expect(result.slot!.startIso).toBe('2026-06-02T12:30:00.000Z'); // 8:30am ET
-    expect(result.slot!.endIso).toBe('2026-06-02T13:00:00.000Z');   // 9:00am ET
+    expect(result.slot!.startIso).toBe('2026-06-02T13:15:00.000Z'); // 9:15am ET
+    expect(result.slot!.endIso).toBe('2026-06-02T13:45:00.000Z');   // 9:45am ET
+    expect(result.reasoning).toMatch(/floored by earliest home departure/);
   });
 
   it('respects custom rounding policy (5-minute step)', async () => {
@@ -529,11 +574,11 @@ describe('suggestSlot — travel-aware', () => {
       existingEvents: [],
       now: NOW,
       customerAddress: '1 Customer St, Boston, MA',
-      travel: constantTravel(17),
+      travel: constantTravel(128),
       policy: { slotStartRoundingMinutes: 5 },
     });
-    // 8:00 + 17min = 8:17, rounded UP to nearest 5min = 8:20am ET.
-    expect(result.slot!.startIso).toBe('2026-06-02T12:20:00.000Z');
+    // Floor 7:00 + 128min = 9:08, rounded UP to nearest 5min = 9:10am ET.
+    expect(result.slot!.startIso).toBe('2026-06-02T13:10:00.000Z');
   });
 
   it('rejects a slot when rounding pushes it past the home-return deadline', async () => {
