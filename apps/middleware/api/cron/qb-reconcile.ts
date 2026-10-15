@@ -23,6 +23,7 @@ import { createLogger } from '@aac/shared-utils/logger';
 import { normalizeQbApproval } from '@aac/scheduling';
 import { getPipedrive, getQuickBooks, getQuo } from '../../lib/clients.js';
 import { verifyCronAuth } from '../../lib/cron.js';
+import { maybePostSuggestionNote } from '../../lib/suggestion-note.js';
 import {
   getDirectiveIdByEstimate,
   logHealthError,
@@ -113,6 +114,8 @@ export default async function handler(
           estimateId: directive.qbEstimateId,
           confidence: directive.confidence.score,
         });
+
+        await maybePostSuggestionNote(directive, 'qb-reconcile');
       } catch (err) {
         summary.errors++;
         log.error('Failed to reconcile estimate', err as Error, {

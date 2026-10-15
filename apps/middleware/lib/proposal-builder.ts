@@ -161,8 +161,8 @@ export async function buildProposalForDirective(
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-async function fetchCustomer(
-  deps: ProposalBuilderDeps,
+export async function fetchCustomer(
+  deps: Pick<ProposalBuilderDeps, 'pd' | 'qb'>,
   directive: SchedulingDirective,
 ): Promise<{
   customerName: string;
@@ -295,6 +295,40 @@ export function selectBusyEvents(
   );
 }
 
+/**
+ * Fetch the next-3-weeks calendar window and reduce it to the events that
+ * block scheduling (Mike-attended + HOLDs). Returns null when the calendar
+ * read fails — callers decide whether to proceed with an empty busy set
+ * (proposal preview) or bail (anything that creates holds/notes).
+ */
+export async function fetchBusyEvents(
+  deps: Pick<ProposalBuilderDeps, 'calendar' | 'technicianEmails'>,
+  directiveId: string,
+  now: Date,
+): Promise<CalendarEvent[] | null> {
+  const techEmails = deps.technicianEmails ?? [];
+  if (techEmails.length === 0) {
+    log.warn('proposal-builder: no technicianEmails configured; calendar gap walker will block on every event including non-tech meetings', {
+      directiveId,
+    });
+  }
+  try {
+    const all = await deps.calendar.listEvents({
+      timeMin: new Date(now.getTime() - CALENDAR_LOOKBACK_BUFFER_MS).toISOString(),
+      timeMax: new Date(now.getTime() + CALENDAR_LOOKAHEAD_MS).toISOString(),
+      maxResults: 500,
+    });
+    return selectBusyEvents(all, techEmails);
+  } catch (err) {
+    await logHealthError(
+      'proposal-builder',
+      `Calendar listEvents failed: ${(err as Error).message}`,
+      { directiveId },
+    );
+    return null;
+  }
+}
+
 async function runSuggestSlot(
   deps: ProposalBuilderDeps,
   directive: SchedulingDirective,
@@ -308,36 +342,12 @@ async function runSuggestSlot(
     ...(travel ? { travel } : {}),
     ...(customerAddress ? { customerAddress } : {}),
   };
-  try {
-    const timeMin = new Date(now.getTime() - CALENDAR_LOOKBACK_BUFFER_MS).toISOString();
-    const timeMax = new Date(now.getTime() + CALENDAR_LOOKAHEAD_MS).toISOString();
-    const techEmails = deps.technicianEmails ?? [];
-    if (techEmails.length === 0) {
-      log.warn('proposal-builder: no technicianEmails configured; calendar gap walker will block on every event including non-tech meetings', {
-        directiveId: directive.id,
-      });
-    }
-    const all = await deps.calendar.listEvents({
-      timeMin,
-      timeMax,
-      maxResults: 500,
-    });
-    return await suggestSlot({
-      ...baseInput,
-      existingEvents: selectBusyEvents(all, techEmails),
-    });
-  } catch (err) {
-    await logHealthError(
-      'proposal-builder',
-      `Calendar listEvents failed: ${(err as Error).message}`,
-      { directiveId: directive.id },
-    );
-    return await suggestSlot({ ...baseInput, existingEvents: [] });
-  }
+  const busy = await fetchBusyEvents(deps, directive.id, now);
+  return await suggestSlot({ ...baseInput, existingEvents: busy ?? [] });
 }
 
-function buildTravelDeps(
-  deps: ProposalBuilderDeps,
+export function buildTravelDeps(
+  deps: Pick<ProposalBuilderDeps, 'maps' | 'redis' | 'homeAddress'>,
   directive: SchedulingDirective,
 ): SuggestSlotTravelDeps | null {
   if (!deps.maps) {

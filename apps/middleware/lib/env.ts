@@ -81,6 +81,15 @@ export interface EnvConfig {
      */
     holdEventsEnabled: boolean;
     /**
+     * Quote-accepted suggestion notes: when true, a quote_approved
+     * directive (QB webhook or reconcile cron) runs suggestSlot, places a
+     * HOLD on the primary slot, and posts the tight 3-line suggestion note
+     * to the customer's Quo contact panel. Matt still sends every customer
+     * text himself. Off by default; flip SCHEDULING_SUGGEST_NOTES=true in
+     * Vercel to enable, remove to disable.
+     */
+    suggestNotesEnabled: boolean;
+    /**
      * Attendees added to auto-created STUB events. Deliberately separate
      * from TECHNICIAN_EMAILS, which is a broad READ filter (reminder /
      * follow-up / invoice crons match events where Mike attends under any
@@ -156,6 +165,7 @@ export function getEnv(): EnvConfig {
       agentBaseUrl: process.env.AGENT_BASE_URL || null,
       stubEventsEnabled: process.env.SCHEDULING_STUB_EVENTS === 'true',
       holdEventsEnabled: process.env.SCHEDULING_HOLD_EVENTS === 'true',
+      suggestNotesEnabled: process.env.SCHEDULING_SUGGEST_NOTES === 'true',
       stubAttendeeEmails: (process.env.STUB_ATTENDEE_EMAILS || 'mike@attackacrack.com')
         .split(',')
         .map((e) => e.trim())

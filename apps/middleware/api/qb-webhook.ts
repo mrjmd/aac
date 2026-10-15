@@ -31,6 +31,7 @@ import {
   logHealthError,
   writePendingDirective,
 } from '../lib/redis.js';
+import { maybePostSuggestionNote } from '../lib/suggestion-note.js';
 
 const log = createLogger('qb-webhook');
 
@@ -206,6 +207,8 @@ async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
       estimateId: directive.qbEstimateId,
       confidence: directive.confidence.score,
     });
+
+    await maybePostSuggestionNote(directive, 'qb-webhook');
     return 'directive';
   } catch (err) {
     log.error('Failed to process QB event', err as Error, {
