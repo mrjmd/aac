@@ -272,13 +272,25 @@ async function fetchConversation(
 }
 
 /**
- * Which calendar events block scheduling. Two kinds:
+ * "Mike OOO" / "Mike out of office" entries — Matt creates these on the
+ * shared calendar without inviting Mike, so the attendee test misses them
+ * (2026-10-15 incident: suggestSlot proposed slots during Mike's day off).
+ * Requires BOTH the name and an OOO marker so Matt's own OOO and customer
+ * events never match.
+ */
+export function isTechOutOfOffice(summary: string): boolean {
+  return /\bmike\b/i.test(summary) && /\booo\b|out of office/i.test(summary);
+}
+
+/**
+ * Which calendar events block scheduling. Three kinds:
  *   1. Events Mike attends (jobs, assessments, callbacks, stubs) — the
  *      attendee test is what keeps Matt's Zoom calls, BNI mornings, and
  *      private events from blocking customer slots.
  *   2. HOLD placeholders (execute-hold) — deliberately attendee-less so
  *      Mike never sees unconfirmed offers, but their whole purpose is to
  *      stop the offered time being suggested to anyone else.
+ *   3. "Mike OOO" entries (see isTechOutOfOffice) — attendee-less by habit.
  * With no technicianEmails configured we keep the historical degraded
  * behavior (everything blocks) — the caller already warns about it.
  */
@@ -291,6 +303,7 @@ export function selectBusyEvents(
   return events.filter(
     (e) =>
       e.summary.startsWith(HOLD_TITLE_PREFIX)
+      || isTechOutOfOffice(e.summary)
       || e.attendees.some((a) => emails.includes(a.toLowerCase())),
   );
 }

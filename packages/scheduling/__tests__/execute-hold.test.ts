@@ -60,11 +60,12 @@ function makeDeps(existingEvents: Partial<CalendarEvent>[] = []) {
     htmlLink: 'https://calendar.google.com/event?id=evt-hold',
     summary: 'HOLD — Test',
   } as CalendarEvent);
+  const deleteEvent = vi.fn().mockResolvedValue(undefined);
   const deps: ExecuteHoldDeps = {
-    cal: { listEvents, createEvent } as unknown as GoogleCalendarClient,
+    cal: { listEvents, createEvent, deleteEvent } as unknown as GoogleCalendarClient,
     now: () => NOW,
   };
-  return { deps, listEvents, createEvent };
+  return { deps, listEvents, createEvent, deleteEvent };
 }
 
 beforeEach(() => {
@@ -143,13 +144,49 @@ describe('executeHoldEvent', () => {
     expect(createEvent).not.toHaveBeenCalled();
   });
 
-  it('skips when any event for the customer already sits near the slot', async () => {
-    const { deps, createEvent } = makeDeps([
-      { id: 'evt-existing', summary: 'HOLD — Jane Smith' },
+  it('supersedes an existing same-customer hold: deletes it and holds the new offer', async () => {
+    const { deps, createEvent, deleteEvent } = makeDeps([
+      {
+        id: 'evt-existing',
+        summary: 'HOLD — Jane Smith',
+        start: '2026-10-08T14:00:00.000Z', // different day than the new offer
+        end: '2026-10-08T18:00:00.000Z',
+      },
+    ]);
+    const result = await executeHoldEvent(deps, { directive: makeOffered(), ...baseInput });
+    expect(deleteEvent).toHaveBeenCalledWith('evt-existing');
+    expect(result.status).toBe('created');
+    expect(createEvent).toHaveBeenCalledTimes(1);
+    expect(createEvent.mock.calls[0][0].start).toBe(SLOT_START);
+  });
+
+  it('skips when a NON-hold event for the customer sits near the slot', async () => {
+    const { deps, createEvent, deleteEvent } = makeDeps([
+      {
+        id: 'evt-booked',
+        summary: 'Jane Smith crack injection',
+        start: SLOT_START,
+        end: '2026-10-06T18:00:00.000Z',
+      },
     ]);
     const result = await executeHoldEvent(deps, { directive: makeOffered(), ...baseInput });
     expect(result).toEqual({ status: 'skipped', reason: 'duplicate_event' });
     expect(createEvent).not.toHaveBeenCalled();
+    expect(deleteEvent).not.toHaveBeenCalled();
+  });
+
+  it('ignores a far-future non-hold event for the customer (dup window stays ±24h)', async () => {
+    const { deps, createEvent } = makeDeps([
+      {
+        id: 'evt-later-job',
+        summary: 'Jane Smith resurfacing',
+        start: '2026-11-10T14:00:00.000Z',
+        end: '2026-11-10T18:00:00.000Z',
+      },
+    ]);
+    const result = await executeHoldEvent(deps, { directive: makeOffered(), ...baseInput });
+    expect(result.status).toBe('created');
+    expect(createEvent).toHaveBeenCalledTimes(1);
   });
 
   it('creates when nearby events belong to other customers', async () => {
@@ -241,6 +278,25 @@ describe('executeHoldEvent — suggestedSlot variant (quote_approved suggestion 
       suggestedSlot: { startIso: SLOT_START },
     });
     expect(result).toEqual({ status: 'skipped', reason: 'duplicate_event' });
+    expect(createEvent).not.toHaveBeenCalled();
+  });
+
+  it('a suggestion defers to ANY outstanding same-customer hold (never supersedes)', async () => {
+    const { deps, createEvent, deleteEvent } = makeDeps([
+      {
+        id: 'evt-matt-hold',
+        summary: 'HOLD — Jane Smith',
+        start: '2026-10-20T14:00:00.000Z', // two weeks out, well past ±24h
+        end: '2026-10-20T18:00:00.000Z',
+      },
+    ]);
+    const result = await executeHoldEvent(deps, {
+      directive: makeQuoteApproved() as unknown as ManualScheduleDirective,
+      customerName: 'Jane Smith',
+      suggestedSlot: { startIso: SLOT_START },
+    });
+    expect(result).toEqual({ status: 'skipped', reason: 'duplicate_event' });
+    expect(deleteEvent).not.toHaveBeenCalled();
     expect(createEvent).not.toHaveBeenCalled();
   });
 

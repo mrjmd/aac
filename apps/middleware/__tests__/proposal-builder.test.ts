@@ -235,5 +235,24 @@ describe('buildProposalForDirective', () => {
       const events = [ev('Ed / Matt 121', ['ed@example.com']), ev('BNI Plus', [])];
       expect(selectBusyEvents(events, [])).toEqual(events);
     });
+
+    it('keeps attendee-less Mike OOO entries (2026-10-15 gap)', () => {
+      const kept = selectBusyEvents(
+        [
+          ev('Mike OOO', []),
+          ev('Mike out of office', []),
+          ev('mike ooo — hunting trip', []),
+          ev('Matt OOO', []), // Matt's absence never blocks Mike's jobs
+          ev('OOO', []), // ambiguous — whose? don't block
+          ev('Smith vacation home — crack injection', []), // customer event, not OOO
+        ],
+        TECH,
+      );
+      expect(kept.map((e) => e.summary)).toEqual([
+        'Mike OOO',
+        'Mike out of office',
+        'mike ooo — hunting trip',
+      ]);
+    });
   });
 });

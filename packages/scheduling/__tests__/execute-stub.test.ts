@@ -204,7 +204,12 @@ describe('executeStubEvent', () => {
 
   it('skips when an event for the same customer already exists near the slot', async () => {
     const { deps, createEvent } = makeDeps([
-      { id: 'evt-existing', summary: 'Jane Smith — crack injection' },
+      {
+        id: 'evt-existing',
+        summary: 'Jane Smith — crack injection',
+        start: SLOT_START,
+        end: '2026-10-06T18:00:00.000Z',
+      },
     ]);
     const result = await executeStubEvent(deps, { directive: makeConfirmed(), ...baseInput });
     expect(result).toEqual({ status: 'skipped', reason: 'duplicate_event' });
@@ -213,7 +218,12 @@ describe('executeStubEvent', () => {
 
   it('matches duplicates case-insensitively (including prior stubs)', async () => {
     const { deps, createEvent } = makeDeps([
-      { id: 'evt-stub', summary: 'STUB — JANE SMITH' },
+      {
+        id: 'evt-stub',
+        summary: 'STUB — JANE SMITH',
+        start: SLOT_START,
+        end: '2026-10-06T18:00:00.000Z',
+      },
     ]);
     const result = await executeStubEvent(deps, { directive: makeConfirmed(), ...baseInput });
     expect(result).toEqual({ status: 'skipped', reason: 'duplicate_event' });
@@ -243,12 +253,33 @@ describe('executeStubEvent', () => {
   it('a real (non-hold) duplicate still wins over hold cleanup', async () => {
     const { deps, createEvent, deleteEvent } = makeDeps([
       { id: 'evt-hold', summary: 'HOLD — Jane Smith' },
-      { id: 'evt-real', summary: 'Jane Smith — crack injection' },
+      {
+        id: 'evt-real',
+        summary: 'Jane Smith — crack injection',
+        start: SLOT_START,
+        end: '2026-10-06T18:00:00.000Z',
+      },
     ]);
     const result = await executeStubEvent(deps, { directive: makeConfirmed(), ...baseInput });
     expect(result).toEqual({ status: 'skipped', reason: 'duplicate_event' });
     expect(createEvent).not.toHaveBeenCalled();
     expect(deleteEvent).not.toHaveBeenCalled();
+  });
+
+  it('releases a same-customer hold on a DIFFERENT day than the confirmed slot', async () => {
+    // Superseded-offer leftover: hold sits a week after the confirmed time.
+    const { deps, createEvent, deleteEvent } = makeDeps([
+      {
+        id: 'evt-stale-hold',
+        summary: 'HOLD — Jane Smith',
+        start: '2026-10-13T14:00:00.000Z',
+        end: '2026-10-13T18:00:00.000Z',
+      },
+    ]);
+    const result = await executeStubEvent(deps, { directive: makeConfirmed(), ...baseInput });
+    expect(result.status).toBe('created');
+    expect(deleteEvent).toHaveBeenCalledWith('evt-stale-hold');
+    expect(createEvent).toHaveBeenCalledTimes(1);
   });
 
   it('creates when nearby events are for other customers', async () => {

@@ -25,7 +25,7 @@
 
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { createLogger } from '@aac/shared-utils/logger';
-import { HOLD_TITLE_PREFIX } from './execute-hold.js';
+import { HOLD_RELEASE_LOOKAHEAD_MS, HOLD_TITLE_PREFIX } from './execute-hold.js';
 import type { EventClass, KnownSlot, SchedulingDirective } from './types.js';
 import { isAppointmentConfirmed, isManualSchedule } from './types.js';
 
@@ -138,17 +138,28 @@ export async function executeStubEvent(
   // the slot means either a previous stub or Matt's own hand-made event.
   // Exception: HOLD placeholders (execute-hold) represent the OFFER this
   // confirmation is answering — they are deleted and replaced by the
-  // stub, never treated as duplicates.
+  // stub, never treated as duplicates. The scan window is wide so a
+  // confirmation releases EVERY outstanding hold for the customer (a
+  // superseded offer may sit on a different day than the confirmed slot).
+  const nowMs = deps.now().getTime();
+  const dupMinMs = start.getTime() - DUPLICATE_WINDOW_MS;
+  const dupMaxMs = end.getTime() + DUPLICATE_WINDOW_MS;
   const nearby = await deps.cal.listEvents({
-    timeMin: new Date(start.getTime() - DUPLICATE_WINDOW_MS).toISOString(),
-    timeMax: new Date(end.getTime() + DUPLICATE_WINDOW_MS).toISOString(),
+    timeMin: new Date(Math.min(nowMs, dupMinMs)).toISOString(),
+    timeMax: new Date(Math.max(dupMaxMs, nowMs + HOLD_RELEASE_LOOKAHEAD_MS)).toISOString(),
+    maxResults: 500,
   });
   const nameLc = customerName.trim().toLowerCase();
   const matches = nameLc.length > 0
     ? nearby.filter((e) => e.summary?.toLowerCase().includes(nameLc))
     : [];
   const holds = matches.filter((e) => e.summary?.startsWith(HOLD_TITLE_PREFIX));
-  const existing = matches.find((e) => !e.summary?.startsWith(HOLD_TITLE_PREFIX));
+  const existing = matches.find(
+    (e) =>
+      !e.summary?.startsWith(HOLD_TITLE_PREFIX)
+      && new Date(e.end).getTime() > dupMinMs
+      && new Date(e.start).getTime() < dupMaxMs,
+  );
   if (existing) {
     log.info('Stub skipped — event already exists for customer near slot', {
       directiveId: directive.id,

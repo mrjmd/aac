@@ -48,6 +48,13 @@ export const HOLD_CUSTOMER_PHONE_LABEL = 'Customer-Phone:';
 /** How far around the slot to scan for an existing event for the same customer. */
 const DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * How far ahead to scan for same-customer HOLDs. A new explicit offer
+ * supersedes every outstanding unconfirmed hold for that customer, wherever
+ * it sits — not just within the duplicate window.
+ */
+export const HOLD_RELEASE_LOOKAHEAD_MS = 60 * 24 * 60 * 60 * 1000;
+
 export interface ExecuteHoldDeps {
   cal: GoogleCalendarClient;
   now: () => Date;
@@ -107,22 +114,73 @@ export async function executeHoldEvent(
     ? new Date(slot.endIso)
     : new Date(start.getTime() + STUB_DEFAULT_HOURS[directive.eventClass] * 60 * 60 * 1000);
 
-  // Duplicate guard: any event mentioning this customer within a day of
-  // the slot — an earlier hold, a stub, or a hand-made booking — means
-  // the time is already represented on the calendar.
+  // Scan once, wide: duplicate detection needs ±24h around the slot, hold
+  // supersession needs every future same-customer HOLD.
+  const nowMs = deps.now().getTime();
+  const dupMinMs = start.getTime() - DUPLICATE_WINDOW_MS;
+  const dupMaxMs = end.getTime() + DUPLICATE_WINDOW_MS;
   const nearby = await deps.cal.listEvents({
-    timeMin: new Date(start.getTime() - DUPLICATE_WINDOW_MS).toISOString(),
-    timeMax: new Date(end.getTime() + DUPLICATE_WINDOW_MS).toISOString(),
+    timeMin: new Date(Math.min(nowMs, dupMinMs)).toISOString(),
+    timeMax: new Date(Math.max(dupMaxMs, nowMs + HOLD_RELEASE_LOOKAHEAD_MS)).toISOString(),
+    maxResults: 500,
   });
   const nameLc = customerName.trim().toLowerCase();
-  const existing = nearby.find((e) => e.summary?.toLowerCase().includes(nameLc));
-  if (nameLc.length > 0 && existing) {
+  const matches = nameLc.length > 0
+    ? nearby.filter((e) => e.summary?.toLowerCase().includes(nameLc))
+    : [];
+  const holds = matches.filter((e) => e.summary?.startsWith(HOLD_TITLE_PREFIX));
+
+  // Non-hold events (stubs, hand-made bookings) only block within ±24h of
+  // the slot — a customer with an unrelated event next month is not a dup.
+  const existing = matches.find(
+    (e) =>
+      !e.summary?.startsWith(HOLD_TITLE_PREFIX)
+      && new Date(e.end).getTime() > dupMinMs
+      && new Date(e.start).getTime() < dupMaxMs,
+  );
+  if (existing) {
     log.info('Hold skipped — event already exists for customer near slot', {
       directiveId: directive.id,
       existingEventId: existing.id,
       existingSummary: existing.summary,
     });
     return { status: 'skipped', reason: 'duplicate_event' };
+  }
+
+  if (suggestedSlot) {
+    // A suggestion never tramples an existing hold: if ANY hold stands for
+    // this customer, an offer (Matt's hand-made or chat-detected) is already
+    // out — the suggestion defers to it.
+    if (holds.length > 0) {
+      log.info('Suggested hold skipped — customer already has an outstanding hold', {
+        directiveId: directive.id,
+        existingHoldId: holds[0].id,
+      });
+      return { status: 'skipped', reason: 'duplicate_event' };
+    }
+  } else {
+    // Matt's explicit offer supersedes every outstanding unconfirmed hold
+    // for this customer — including a same-time suggestion hold (recreated
+    // below with fresh Offered-At + OFFERED wording) and stale holds on
+    // other days.
+    for (const hold of holds) {
+      try {
+        await deps.cal.deleteEvent(hold.id);
+        log.info('Prior hold superseded by new offer', {
+          directiveId: directive.id,
+          supersededHoldId: hold.id,
+          supersededSummary: hold.summary,
+        });
+      } catch (err) {
+        // A lingering hold is cosmetic (triage D13 surfaces it); the new
+        // offer's hold matters more.
+        log.warn('Failed to delete superseded hold — continuing', {
+          directiveId: directive.id,
+          holdEventId: hold.id,
+          error: (err as Error).message,
+        });
+      }
+    }
   }
 
   const headline = suggestedSlot
