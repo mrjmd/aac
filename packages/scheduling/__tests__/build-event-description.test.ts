@@ -94,8 +94,6 @@ describe('buildEventDescription', () => {
       'NOTE: side entrance, friendly dog, gate code 1234.',
       '',
       'Urethane crack injection on the 8ft vertical crack on the rear wall, plus a couple of carbon fiber staples.',
-      '',
-      'See attached photos.',
     ].join('\n');
 
     const gemini = makeGemini(async () => good);
@@ -149,6 +147,30 @@ describe('buildEventDescription', () => {
     expect(result.qualityFlags).toContain('hallucinated_facts_suspected');
   });
 
+  it('flags photo mentions — "see attached photos" is banned filler', async () => {
+    const withPhotos = 'Urethane crack injection on the rear wall. See attached photos.';
+    const gemini = makeGemini(async () => withPhotos);
+    const result = await buildEventDescription(makeDeps(gemini), makeInput());
+    expect(result.qualityFlags).toContain('photo_mention');
+  });
+
+  it('flags quote/estimate numbers — money references are banned', async () => {
+    const withQuote = 'Urethane crack injection on the rear wall per quote #1506.';
+    const gemini = makeGemini(async () => withQuote);
+    const result = await buildEventDescription(makeDeps(gemini), makeInput());
+    expect(result.qualityFlags).toContain('money_reference');
+  });
+
+  it('flags dollar amounts even when they appear in the source facts', async () => {
+    const priced = 'Urethane crack injection on the rear wall, $1,250 due on completion.';
+    const gemini = makeGemini(async () => priced);
+    const result = await buildEventDescription(
+      makeDeps(gemini),
+      makeInput({ scopeSummary: 'crack injection on rear wall, $1,250 due on completion' }),
+    );
+    expect(result.qualityFlags).toContain('hallucinated_facts_suspected');
+  });
+
   it('flags hallucinated facts when output invents a phone number', async () => {
     const haunted = 'Urethane crack injection on the rear wall. Contact: 617-555-9999';
     const gemini = makeGemini(async () => haunted);
@@ -183,7 +205,7 @@ describe('buildEventDescription', () => {
     expect(result.attempts).toBe(3); // 1 + 2 retries
     expect(result.description).toContain('Urethane');
     expect(result.description).toContain('NOTE: Side entrance');
-    expect(result.description).toContain('See attached photos.');
+    expect(result.description).not.toContain('See attached photos');
     expect(result.qualityFlags).toContain('fallback_used');
     expect(gemini.generateContent).toHaveBeenCalledTimes(3);
   });

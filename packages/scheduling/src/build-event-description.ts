@@ -6,8 +6,10 @@
  * The output is written in Matt's own calendar voice — a short, plain
  * note to Mike (second person), optionally led by a "NOTE:" line for
  * access/contact instructions. It deliberately does NOT contain the
- * address (that goes in the event's location field) and only mentions
- * photos when the caller is actually attaching some (photoCount).
+ * address (that goes in the event's location field), never mentions
+ * photos/attachments (Mike sees what's attached — saying so is filler),
+ * and never contains prices, dollar amounts, or quote/estimate numbers
+ * (money does not belong in the tech-facing event; Matt 2026-10-15).
  *
  * Pure function: LLM client + clock arrive via `deps`. The caller (the
  * middleware dispatch helper for Walk #6/7) is responsible for gathering
@@ -219,6 +221,16 @@ function runQualityGates(description: string, facts: CollectedFacts): string[] {
     flags.push('hallucinated_facts_suspected');
   }
 
+  // "See attached photos" and friends are banned filler (Matt 2026-10-15):
+  // Mike sees the attachments without being told. Quote/estimate numbers
+  // are banned alongside dollar amounts (caught in hasUnsourcedFigures).
+  if (/\b(see )?attach(ed|ment)s?\b.*\bphotos?\b|\bphotos?\b.*\battach(ed|ment)s?\b/i.test(description)) {
+    flags.push('photo_mention');
+  }
+  if (/\b(quote|estimate|invoice)\s*#?\s*\d+/i.test(description)) {
+    flags.push('money_reference');
+  }
+
   return flags;
 }
 
@@ -259,7 +271,7 @@ function hasUnsourcedFigures(
     .join(' ')
     .toLowerCase();
 
-  for (const re of [PHONE_RE, EMAIL_RE, MONEY_RE]) {
+  for (const re of [PHONE_RE, EMAIL_RE]) {
     re.lastIndex = 0;
     const matches = description.match(re) ?? [];
     for (const m of matches) {
@@ -268,7 +280,10 @@ function hasUnsourcedFigures(
       }
     }
   }
-  return false;
+  // Money is banned outright — even when a price appears in the source
+  // facts, it must not reach the event body.
+  MONEY_RE.lastIndex = 0;
+  return MONEY_RE.test(description);
 }
 
 // ── prompt building ──────────────────────────────────────────────────────
@@ -307,9 +322,8 @@ function buildPrompt(args: {
 
   const exampleBlock = STYLE_EXAMPLES.map((e) => `---\n${e}`).join('\n');
 
-  const photoRule = facts.photoCount > 0
-    ? `Photos from the customer are attached to this event — end the body with "See attached photos."`
-    : 'No photos are attached — do not mention photos.';
+  const photoRule =
+    'Never mention photos or attachments in the body — if photos are attached, Mike sees them without being told.';
 
   const retryNote = previousAttempt
     ? `\n\nPRIOR ATTEMPT FAILED these checks: ${previousAttempt.flags.join(', ')}. Fix the issues — every fact you state must come from the facts block, and when line items are provided the work described must clearly reference at least one of them.\n\nPRIOR ATTEMPT TEXT (for reference, do not copy):\n${previousAttempt.description}\n`
@@ -326,7 +340,7 @@ RULES:
 2. Lead with what the work is, in plain language (from the scope and line items).
 3. If the conversation or access notes mention access/contact instructions (lockbox, gate code, call ahead, dog, parking, tenant), put them first on their own line starting "NOTE: ".
 4. Do NOT include the address — it goes in the event's location field.
-5. Do NOT include phone numbers, emails, or dollar amounts unless they appear verbatim in the facts below.
+5. Do NOT include phone numbers or emails unless they appear verbatim in the facts below. NEVER include dollar amounts, prices, or quote/estimate numbers — even if they appear in the facts.
 6. Only say "you've been here" / "we've been out here" if the facts or conversation clearly show a prior visit (callbacks qualify).
 7. For an assessment, frame it as what to look at and figure out. For a callback, frame it as rework on something we previously repaired.
 8. If the duration estimate says the job is unusually long (6+ hours or multi-day), mention that naturally; otherwise leave duration out.
@@ -366,11 +380,6 @@ function buildFallbackDescription(input: BuildEventDescriptionInput): string {
   if (facts.durationLine) {
     parts.push('');
     parts.push(`Duration estimate: ${facts.durationLine}`);
-  }
-
-  if (facts.photoCount > 0) {
-    parts.push('');
-    parts.push('See attached photos.');
   }
 
   let out = parts.join('\n');
