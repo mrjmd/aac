@@ -16,6 +16,16 @@ const QUO_API_BASE = 'https://api.openphone.com/v1';
 /** Max 429 retries before surfacing the error to the caller. */
 const MAX_RETRIES_429 = 3;
 
+/**
+ * Versioned-API surface for endpoints that don't exist on the legacy
+ * unversioned v1 host (currently: contact notes). It lives on a different
+ * base URL (api.quo.com, no /v1 prefix) and requires the Quo-Api-Version
+ * header on every request. Scoped per-request rather than globally so the
+ * long-standing unversioned behavior of every other method is untouched.
+ */
+const QUO_VERSIONED_API_BASE = 'https://api.quo.com';
+const QUO_API_VERSION = '2026-03-30';
+
 // ── Interfaces ───────────────────────────────────────────────────────
 
 export interface QuoConfig {
@@ -156,6 +166,16 @@ export interface QuoConversation {
   updatedAt: string;
 }
 
+export interface QuoContactNote {
+  id: string;
+  text: string;
+  media?: Array<{ url: string; type?: string; name?: string }>;
+  /** Quo user ID (US...) of the note author — the API key's user. */
+  actorId?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface QuoPaginated<T> {
   data: T[];
   nextPageToken?: string;
@@ -180,9 +200,10 @@ export class QuoClient {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    baseUrl: string = QUO_API_BASE
   ): Promise<T> {
-    const url = `${QUO_API_BASE}${endpoint}`;
+    const url = `${baseUrl}${endpoint}`;
 
     let response!: Response;
     for (let attempt = 0; ; attempt++) {
@@ -476,6 +497,52 @@ export class QuoClient {
     log.info('Deleted contact', { contactId: id });
   }
 
+  // ── Contact notes ───────────────────────────────────────────────
+  //
+  // Notes live on the contact and surface in the Quo app's contact panel
+  // (right side of the conversation view) — the delivery channel for
+  // agent-generated scheduling suggestions. Notes are additive (POST),
+  // so none of the PATCH read-merge-write danger applies. Requires the
+  // versioned API (Quo-Api-Version header); the unversioned v1 surface
+  // predates contact notes.
+
+  /**
+   * Create a note on a contact. `text` is 1–2000 chars; "@USxxx" mentions
+   * are resolved to real users and trigger an in-app notification.
+   */
+  async createContactNote(contactId: string, text: string): Promise<QuoContactNote> {
+    log.info('Creating contact note', { contactId, textLength: text.length });
+    const result = await this.request<{ data: QuoContactNote }>(
+      `/contacts/${contactId}/notes`,
+      {
+        method: 'POST',
+        headers: { 'Quo-Api-Version': QUO_API_VERSION },
+        body: JSON.stringify({ text }),
+      },
+      QUO_VERSIONED_API_BASE
+    );
+    log.info('Created contact note', { contactId, noteId: result.data.id });
+    return result.data;
+  }
+
+  async listContactNotes(contactId: string): Promise<QuoContactNote[]> {
+    const result = await this.request<{ data: QuoContactNote[] }>(
+      `/contacts/${contactId}/notes`,
+      { headers: { 'Quo-Api-Version': QUO_API_VERSION } },
+      QUO_VERSIONED_API_BASE
+    );
+    return result.data ?? [];
+  }
+
+  async deleteContactNote(contactId: string, noteId: string): Promise<void> {
+    log.info('Deleting contact note', { contactId, noteId });
+    await this.request(
+      `/contacts/${contactId}/notes/${noteId}`,
+      { method: 'DELETE', headers: { 'Quo-Api-Version': QUO_API_VERSION } },
+      QUO_VERSIONED_API_BASE
+    );
+  }
+
   // ── Custom fields ───────────────────────────────────────────────
 
   async getCustomFields(): Promise<QuoCustomFieldDefinition[]> {
@@ -566,10 +633,13 @@ export class QuoClient {
 
   /**
    * List messages between our line and a specific E.164 participant.
+   * Group threads require EVERY participant: Quo matches the participant
+   * set exactly, so pass the full array (from QuoConversation.participants)
+   * to read a group conversation — a single member returns nothing.
    * Returns OpenPhone's paginated envelope. Caller can page via nextPageToken.
    */
   async listMessages(opts: {
-    participantE164: string;
+    participantE164: string | string[];
     phoneNumberId?: string;
     maxResults?: number;
     pageToken?: string;
@@ -582,7 +652,10 @@ export class QuoClient {
     // Quo rejects the bracketed form (participants[]) with a 400 on
     // /messages and /calls — plain repeated `participants` is the accepted
     // array serialization.
-    params.append('participants', opts.participantE164);
+    const participants = Array.isArray(opts.participantE164)
+      ? opts.participantE164
+      : [opts.participantE164];
+    for (const p of participants) params.append('participants', p);
     if (opts.pageToken) params.set('pageToken', opts.pageToken);
 
     return this.request<QuoPaginated<QuoMessage>>(`/messages?${params.toString()}`);

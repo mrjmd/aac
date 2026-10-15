@@ -406,6 +406,47 @@ describe('QuoClient', () => {
     });
   });
 
+  describe('contact notes', () => {
+    it('creates a note with the versioned-API header and returns it', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        data: { id: 'note-1', text: 'Next slot: Thu 8:30', createdAt: '2026-10-15T12:00:00Z' },
+      }));
+
+      const note = await client.createContactNote('quo-1', 'Next slot: Thu 8:30');
+      expect(note.id).toBe('note-1');
+
+      const [url, init] = mockFetch.mock.calls[0];
+      expect(url).toBe('https://api.quo.com/contacts/quo-1/notes');
+      expect(init.method).toBe('POST');
+      expect(init.headers['Quo-Api-Version']).toBe('2026-03-30');
+      expect(init.headers.Authorization).toBe('test-api-key');
+      expect(JSON.parse(init.body)).toEqual({ text: 'Next slot: Thu 8:30' });
+    });
+
+    it('lists notes for a contact', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        data: [{ id: 'note-1', text: 'hello', createdAt: '2026-10-15T12:00:00Z' }],
+      }));
+
+      const notes = await client.listContactNotes('quo-1');
+      expect(notes).toHaveLength(1);
+      expect(mockFetch.mock.calls[0][1].headers['Quo-Api-Version']).toBe('2026-03-30');
+    });
+
+    it('deletes a note', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(Promise.resolve({ ok: true, status: 204, json: () => Promise.resolve({}) }));
+
+      await client.deleteContactNote('quo-1', 'note-1');
+      const [url, init] = mockFetch.mock.calls[0];
+      expect(url).toBe('https://api.quo.com/contacts/quo-1/notes/note-1');
+      expect(init.method).toBe('DELETE');
+      expect(init.headers['Quo-Api-Version']).toBe('2026-03-30');
+    });
+  });
+
   describe('error handling', () => {
     it('throws on API error', async () => {
       const client = makeClient();
