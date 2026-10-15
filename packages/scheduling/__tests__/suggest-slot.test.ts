@@ -409,6 +409,38 @@ describe('suggestSlot — travel-aware', () => {
     expect(result.slot!.startIso).toBe('2026-06-02T13:00:00.000Z');
   });
 
+  it('flags customers >90min from home for manual consideration (slot still computed)', async () => {
+    const result = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [],
+      now: NOW,
+      customerAddress: '1 Customer Rd, Mashpee, MA',
+      travel: constantTravel(104),
+    });
+    expect(result.slot).not.toBeNull();
+    expect(result.manualReviewReason).toMatch(/~104min drive from home/);
+    expect(result.manualReviewReason).toMatch(/manual consideration/);
+  });
+
+  it('does not flag customers within the 90min auto-scheduling limit', async () => {
+    const near = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [],
+      now: NOW,
+      customerAddress: '123 Customer Ln, Boston, MA',
+      travel: constantTravel(30),
+    });
+    expect(near.manualReviewReason).toBeNull();
+    const at90 = await suggestSlot({
+      directive: assessment(),
+      existingEvents: [],
+      now: NOW,
+      customerAddress: '1 Boundary St, MA',
+      travel: constantTravel(90), // exactly 90 = still auto
+    });
+    expect(at90.manualReviewReason).toBeNull();
+  });
+
   it('band boundaries: exactly 20min → 8:00, exactly 90min → 8:30', async () => {
     const at20 = await suggestSlot({
       directive: assessment(),
@@ -502,6 +534,8 @@ describe('suggestSlot — travel-aware', () => {
     });
     expect(result.slot).toBeNull();
     expect(result.reasoning).toMatch(/respects drive time/);
+    // 300min from home → also carries the manual-review flag.
+    expect(result.manualReviewReason).toMatch(/manual consideration/);
   });
 
   it('falls back to v0 when customerAddress is empty (with travel deps still provided)', async () => {

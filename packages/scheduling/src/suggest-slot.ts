@@ -90,6 +90,13 @@ export interface SuggestSlotPolicy {
    * band always wins.
    */
   earliestLeaveHomeHour: number;
+  /**
+   * Customers more than this many minutes' drive from home are flagged for
+   * manual consideration (Matt, 2026-10-15) — the result still carries a
+   * computed slot as a starting point, but automation must route it to Matt
+   * instead of acting on it.
+   */
+  manualReviewDriveMinutes: number;
 }
 
 export const DEFAULT_POLICY: SuggestSlotPolicy = {
@@ -112,6 +119,7 @@ export const DEFAULT_POLICY: SuggestSlotPolicy = {
   firstJobLongDriveArrivalHour: 9,
   firstJobLongDriveMinMinutes: 90,
   earliestLeaveHomeHour: 7,
+  manualReviewDriveMinutes: 90,
 };
 
 // ── I/O shapes ─────────────────────────────────────────────────────
@@ -158,6 +166,14 @@ export interface SuggestSlotResult {
   exceededSoftCap: boolean;
   /** True when the search used the travel-aware path. False on v0 fallback. */
   travelAware: boolean;
+  /**
+   * Non-null when the suggestion needs Matt's eyes before any automated
+   * action (e.g. customer beyond manualReviewDriveMinutes from home). The
+   * slot is still computed as a starting point; callers that act
+   * automatically (note-posting, holds) MUST route flagged results to Matt
+   * instead.
+   */
+  manualReviewReason: string | null;
 }
 
 // ── Public function ────────────────────────────────────────────────
@@ -179,6 +195,7 @@ export async function suggestSlot(input: SuggestSlotInput): Promise<SuggestSlotR
       durationSource: 'known_slot',
       exceededSoftCap: false,
       travelAware: false,
+      manualReviewReason: null,
     };
   }
 
@@ -194,6 +211,7 @@ export async function suggestSlot(input: SuggestSlotInput): Promise<SuggestSlotR
       durationSource,
       exceededSoftCap: false,
       travelAware: false,
+      manualReviewReason: null,
     };
   }
 
@@ -203,6 +221,19 @@ export async function suggestSlot(input: SuggestSlotInput): Promise<SuggestSlotR
     log.warn('Travel deps provided but no customerAddress — falling back to v0 (no drive-time check)', {
       directiveId: directive.id,
     });
+  }
+
+  // Far-customer gate (Matt, 2026-10-15): beyond ~1.5h from home, never act
+  // automatically — compute the slot as a starting point but flag it.
+  let manualReviewReason: string | null = null;
+  if (travelEnabled) {
+    const homeLeg = await travel!.getLeg(travel!.homeAddress, trimmedAddress, now);
+    if (homeLeg) {
+      const driveMin = Math.round(homeLeg.durationSec / 60);
+      if (driveMin > policy.manualReviewDriveMinutes) {
+        manualReviewReason = `customer is ~${driveMin}min drive from home (over the ${policy.manualReviewDriveMinutes}min auto-scheduling limit) — needs Matt's manual consideration`;
+      }
+    }
   }
 
   const days: string[] = [];
@@ -245,6 +276,7 @@ export async function suggestSlot(input: SuggestSlotInput): Promise<SuggestSlotR
           durationSource,
           exceededSoftCap: allowOverCap,
           travelAware: travelEnabled,
+          manualReviewReason,
         };
       }
     }
@@ -259,6 +291,7 @@ export async function suggestSlot(input: SuggestSlotInput): Promise<SuggestSlotR
     durationSource,
     exceededSoftCap: false,
     travelAware: travelEnabled,
+    manualReviewReason,
   };
 }
 
