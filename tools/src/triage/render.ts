@@ -49,8 +49,8 @@ function card(f: Finding): string {
   if (f.amount) bits.push(`<span class="amt">${usd(f.amount)}</span>`);
   if (f.ageDays !== undefined && f.ageDays > 0) bits.push(`<span class="meta">${f.ageDays}d</span>`);
   bits.push(`<span class="src">${esc(f.source)}${f.confidence ? ` · ${esc(f.confidence)}` : ''}</span>`);
-  return `<div class="card sev-${f.severity}">
-  <div class="card-head"><span class="dot"></span><strong>${esc(f.title)}</strong>${bits.join('')}</div>
+  return `<div class="card sev-${f.severity}" data-fid="${esc(f.id)}">
+  <div class="card-head"><input type="checkbox" class="chk" title="Mark handled (visual only — next refresh re-verifies)"><span class="dot"></span><strong>${esc(f.title)}</strong>${bits.join('')}</div>
   ${f.detail ? `<p class="detail">${esc(f.detail)}</p>` : ''}
   ${f.evidence ? `<blockquote>${esc(f.evidence)}</blockquote>` : ''}
   ${f.action ? `<p class="action">→ ${esc(f.action)}</p>` : ''}
@@ -64,10 +64,10 @@ function staleTable(list: Finding[]): string {
     .sort((a, b) => (a.ageDays ?? 0) - (b.ageDays ?? 0) || (b.amount ?? 0) - (a.amount ?? 0))
     .map(
       (f) =>
-        `<tr class="row-${f.severity}" data-amount="${f.amount ?? 0}" data-age="${f.ageDays ?? 0}"><td>${esc(f.customer ?? '')}</td><td>${telLink(f.phone)}</td><td class="num">${f.amount ? usd(f.amount) : ''}</td><td class="num">${f.ageDays ?? ''}d</td><td>${esc(f.lastContact ?? '')}</td><td>${f.action ? `<span class="nudge">→ ${esc(f.action)}</span>` : ''}</td></tr>`,
+        `<tr class="row-${f.severity}" data-fid="${esc(f.id)}" data-amount="${f.amount ?? 0}" data-age="${f.ageDays ?? 0}"><td class="chkcell"><input type="checkbox" class="chk" title="Mark handled (visual only — next refresh re-verifies)"></td><td>${esc(f.customer ?? '')}</td><td>${telLink(f.phone)}</td><td class="num">${f.amount ? usd(f.amount) : ''}</td><td class="num">${f.ageDays ?? ''}d</td><td>${esc(f.lastContact ?? '')}</td><td>${f.action ? `<span class="nudge">→ ${esc(f.action)}</span>` : ''}</td></tr>`,
     )
     .join('\n');
-  return `<div class="tablewrap"><table><thead><tr><th>Customer / estimate</th><th>Phone</th><th class="num" data-sort="amount">Amount</th><th class="num" data-sort="age" data-dir="asc">Age ▴</th><th>Last text/call</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="tablewrap"><table><thead><tr><th></th><th>Customer / estimate</th><th>Phone</th><th class="num" data-sort="amount">Amount</th><th class="num" data-sort="age" data-dir="asc">Age ▴</th><th>Last text/call</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 interface SectionDef {
@@ -133,6 +133,11 @@ const SECTIONS: SectionDef[] = [
     key: ['conversation'],
     title: 'Unresolved conversations',
     blurb: 'SMS and email threads that look like they are waiting on us.',
+  },
+  {
+    key: ['solicitation'],
+    title: 'Likely solicitations',
+    blurb: 'Vendors selling TO us (lead-gen, SEO, advertising). Lowest tier — skim for misclassified real customers, then ignore. Dismiss by phone if one persists.',
   },
 ];
 
@@ -224,6 +229,12 @@ h2 { font-size:16px; border-bottom:2px solid var(--blue); padding-bottom:6px; di
 blockquote { margin:8px 0 0; padding:6px 10px; border-left:3px solid var(--blue); background:#f0f5fa; font-size:13px; color:#3d4652; font-style:italic; }
 .action { font-size:13px; font-weight:600; color:var(--blue); margin:6px 0 0; }
 .empty { color:var(--green); font-size:14px; }
+.chk { width:16px; height:16px; accent-color:var(--green); cursor:pointer; flex:none; align-self:center; }
+.chkcell { width:28px; }
+.card.done { opacity:.45; }
+.card.done .card-head strong, .card.done .detail, .card.done .action { text-decoration:line-through; }
+tr.done td { opacity:.45; }
+tr.done td:not(.chkcell) { text-decoration:line-through; }
 .tablewrap { overflow-x:auto; background:#fff; border:1px solid var(--line); border-radius:8px; }
 table { border-collapse:collapse; width:100%; font-size:13px; }
 th,td { text-align:left; padding:7px 12px; border-bottom:1px solid var(--line); }
@@ -276,6 +287,29 @@ document.querySelectorAll('th[data-sort]').forEach(function (th) {
       .forEach(function (r) { tbody.appendChild(r); });
   });
 });
+
+// Check-off strikethrough: purely visual progress tracking while working the
+// list. State lives in localStorage keyed by this snapshot's generatedAt, so
+// every fresh triage run starts unchecked — anything that didn't actually get
+// done is re-detected and reappears. Old generations' keys are pruned.
+(function () {
+  var KEY = 'triage-done:${esc(data.generatedAt)}';
+  Object.keys(localStorage).forEach(function (k) {
+    if (k.indexOf('triage-done:') === 0 && k !== KEY) localStorage.removeItem(k);
+  });
+  var done = {};
+  try { done = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) {}
+  document.querySelectorAll('[data-fid]').forEach(function (el) {
+    var cb = el.querySelector('.chk');
+    if (!cb) return;
+    if (done[el.dataset.fid]) { cb.checked = true; el.classList.add('done'); }
+    cb.addEventListener('change', function () {
+      el.classList.toggle('done', cb.checked);
+      if (cb.checked) done[el.dataset.fid] = 1; else delete done[el.dataset.fid];
+      localStorage.setItem(KEY, JSON.stringify(done));
+    });
+  });
+})();
 </script>
 </body>
 </html>

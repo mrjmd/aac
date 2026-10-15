@@ -68,7 +68,8 @@ export type Section =
   | 'cash_not_sent'
   | 'cash_overdue'
   | 'stale_estimate'
-  | 'conversation';
+  | 'conversation'
+  | 'solicitation';
 
 export interface Finding {
   id: string;
@@ -883,13 +884,19 @@ async function main(): Promise<void> {
         hayTokens.some((h) => h.slice(0, 3) === surname.slice(0, 3))
       );
     };
+    // A booking that moved after the agreement still counts as booked: any
+    // name-matched event on or after the directive date suppresses the
+    // finding, not just events within a day of the extracted slot (Shivani
+    // Lad false positive 2026-10-14 — agreed 11/09 in-thread, booked 11/11).
+    const createdMs = new Date(String(d.createdAt ?? '')).getTime();
+    const bookedAfterMs = Number.isFinite(createdMs) ? createdMs - DAY : startMs - 14 * DAY;
     const matched =
       tokens.length > 0 &&
-      events.some(
-        (ev) =>
-          Math.abs(new Date(ev.start).getTime() - startMs) <= DAY &&
-          (eventMatchesName(ev, tokens) || looseMatch(ev)),
-      );
+      events.some((ev) => {
+        if (!(eventMatchesName(ev, tokens) || looseMatch(ev))) return false;
+        const evMs = new Date(ev.start).getTime();
+        return Math.abs(evMs - startMs) <= DAY || evMs >= bookedAfterMs;
+      });
     if (matched) continue;
 
     const when = startIso.slice(0, 16).replace('T', ' ');
@@ -1123,7 +1130,7 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
       // a misread real customer should be spottable at a glance.
       findings.push({
         id: `l1:${t.phone}`,
-        section: 'conversation',
+        section: 'solicitation',
         severity: 'info',
         title: `Likely solicitation — ${v.title || t.phone}`,
         customer: v.customer_name ?? undefined,
@@ -1212,7 +1219,7 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
     if (v?.category === 'solicitation') {
       findings.push({
         id: `l2:${t.threadId}`,
-        section: 'conversation',
+        section: 'solicitation',
         severity: 'info',
         title: `Likely solicitation (email) — ${v.title || t.subject}`,
         customer: v.customer_name ?? displayName,
