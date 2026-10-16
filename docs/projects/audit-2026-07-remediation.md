@@ -443,7 +443,7 @@ with reconciliation backstops — today only QB estimates have one
 Rule 3 applies: no signature breaks without checking all consumers; tests for
 everything; `pnpm turbo test` after each item.
 
-### P4-1. QB OAuth refresh: single-flight lock ☐ **[HIGH — three-app outage class]**
+### P4-1. QB OAuth refresh: single-flight lock ☑ **[HIGH — three-app outage class]** (2026-10-16: `refreshLock` option on QuickBooksClient — acquire → re-read → refresh-if-still-stale → release; lock-held + buffer-valid uses existing token; lock-held + hard-expired polls then throws. Wired via `keys.qbRefreshLock` SET NX PX 30s in middleware, field, agent, triage collector. Malformed-payload refresh response now throws instead of storing NaN expiry. 6 tests.)
 
 - **Where:** `packages/api-clients/src/quickbooks.ts:182-241`
   (`refreshAccessToken`/`getValidAccessToken`). Consumers share ONE Redis token

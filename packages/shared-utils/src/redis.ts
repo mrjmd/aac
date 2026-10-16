@@ -62,6 +62,13 @@ export const keys = {
   /** QB OAuth token storage */
   qbOAuthTokens: 'oauth:quickbooks:tokens' as const,
 
+  /**
+   * Single-flight lock for QB token refresh (SET NX PX, 30s TTL). Intuit
+   * rotates the refresh token on every grant; concurrent refreshes across
+   * apps can strand everyone with a dead token.
+   */
+  qbRefreshLock: 'oauth:quickbooks:refresh-lock' as const,
+
   // ── To-Do Items ────────────────────────────────────────────────────
 
   /** Individual to-do item (JSON blob) */
@@ -215,6 +222,7 @@ export const ttl = {
   idMapping: 604_800,        // 7 days
   loopPrevention: 60,        // 60 seconds
   contactCreateLock: 30,     // 30 seconds
+  qbRefreshLock: 30,         // 30 seconds — refresh round-trip is ~1s; TTL only guards crashes
   webhookCount: 172_800,     // 48 hours (keep yesterday + today)
   campaign: 7_776_000,       // 90 days
   attribution: 31_536_000,   // 1 year

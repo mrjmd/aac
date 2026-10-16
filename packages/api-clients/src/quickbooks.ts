@@ -17,6 +17,25 @@ const QBO_API_BASE = 'https://quickbooks.api.intuit.com/v3/company';
 
 // ── Interfaces ───────────────────────────────────────────────────────
 
+/**
+ * Distributed single-flight lock for token refresh. Intuit rotates the
+ * refresh token on every grant, so two processes refreshing concurrently
+ * can strand each other with a dead token (all-apps QB outage until manual
+ * reauth). Wire acquire/release to a Redis SET NX PX / DEL pair on
+ * keys.qbRefreshLock. Optional: without it the client refreshes directly
+ * (legacy single-process behavior).
+ */
+export interface QBRefreshLock {
+  /** Try to take the lock without blocking. True = we hold it. */
+  acquire: () => Promise<boolean>;
+  /** Release the lock (best-effort; the lock must also carry a TTL). */
+  release: () => Promise<void>;
+  /** Poll interval while another process refreshes. Default 500ms. */
+  waitMs?: number;
+  /** Max polls before giving up on the other refresher. Default 10. */
+  maxWaitAttempts?: number;
+}
+
 export interface QuickBooksConfig {
   clientId: string;
   clientSecret: string;
@@ -24,6 +43,7 @@ export interface QuickBooksConfig {
   redirectUri: string;
   getTokens: () => Promise<QBOAuthTokens | null>;
   saveTokens: (tokens: QBOAuthTokens) => Promise<void>;
+  refreshLock?: QBRefreshLock;
 }
 
 export interface QBCustomer {
@@ -207,6 +227,19 @@ export class QuickBooksClient {
 
     const data = await response.json();
 
+    // A malformed response must throw, not be stored: expiresAt would come
+    // out NaN (fails every freshness comparison), so every subsequent call
+    // would re-refresh — churning Intuit's rotating refresh token nonstop.
+    if (
+      typeof data?.access_token !== 'string' ||
+      typeof data?.refresh_token !== 'string' ||
+      typeof data?.expires_in !== 'number' ||
+      !Number.isFinite(data.expires_in)
+    ) {
+      log.error('Token refresh returned malformed payload', new Error('malformed oauth response'));
+      throw new Error('QuickBooks token refresh returned a malformed payload');
+    }
+
     const now = Date.now();
     const newTokens: QBOAuthTokens = {
       accessToken: data.access_token,
@@ -232,12 +265,50 @@ export class QuickBooksClient {
     const now = Date.now();
     const bufferMs = 5 * 60 * 1000;
 
-    if (tokens.expiresAt - bufferMs < now) {
+    if (tokens.expiresAt - bufferMs >= now) {
+      return tokens.accessToken;
+    }
+
+    const lock = this.config.refreshLock;
+    if (!lock) {
       const newTokens = await this.refreshAccessToken(tokens);
       return newTokens.accessToken;
     }
 
-    return tokens.accessToken;
+    if (await lock.acquire()) {
+      try {
+        // Re-read inside the lock: another process may have refreshed (and
+        // rotated the refresh token) between our read and the acquire.
+        const latest = await this.config.getTokens();
+        if (latest && latest.expiresAt - bufferMs >= Date.now()) {
+          return latest.accessToken;
+        }
+        const newTokens = await this.refreshAccessToken(latest ?? tokens);
+        return newTokens.accessToken;
+      } finally {
+        await lock.release();
+      }
+    }
+
+    // Another process holds the refresh lock. Inside the 5-minute buffer the
+    // current access token is still valid — use it rather than blocking.
+    if (tokens.expiresAt > now) {
+      return tokens.accessToken;
+    }
+
+    // Hard-expired: wait for the other refresher to store fresh tokens.
+    const waitMs = lock.waitMs ?? 500;
+    const maxAttempts = lock.maxWaitAttempts ?? 10;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise((r) => setTimeout(r, waitMs));
+      const latest = await this.config.getTokens();
+      if (latest && latest.expiresAt > Date.now()) {
+        return latest.accessToken;
+      }
+    }
+    throw new Error(
+      'QuickBooks token refresh is held by another process and no fresh token appeared in time'
+    );
   }
 
   // ── Private request helper ──────────────────────────────────────

@@ -154,6 +154,160 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('token refresh malformed payload', () => {
+    it('throws instead of storing NaN expiry when the oauth response is malformed', async () => {
+      const saveTokens = vi.fn().mockResolvedValue(undefined);
+      const client = new QuickBooksClient({
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret',
+        realmId: 'test-realm',
+        redirectUri: 'http://localhost/callback',
+        getTokens: vi.fn().mockResolvedValue({
+          accessToken: 'expired',
+          refreshToken: 'valid-refresh',
+          expiresAt: Date.now() - 1000,
+          realmId: 'test-realm',
+        }),
+        saveTokens,
+      });
+      mockFetch.mockReturnValueOnce(mockResponse({ error: 'proxy mangled this' }));
+
+      await expect(client.searchCustomerByEmail('x@example.com')).rejects.toThrow(
+        /malformed payload/
+      );
+      expect(saveTokens).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('refresh single-flight lock (P4-1)', () => {
+    function makeLockedClient(opts: {
+      tokens: ReturnType<typeof makeTokens> | Array<ReturnType<typeof makeTokens>>;
+      acquire: boolean;
+      waitMs?: number;
+      maxWaitAttempts?: number;
+    }) {
+      const getTokens = vi.fn();
+      if (Array.isArray(opts.tokens)) {
+        for (const t of opts.tokens) getTokens.mockResolvedValueOnce(t);
+        getTokens.mockResolvedValue(opts.tokens[opts.tokens.length - 1]);
+      } else {
+        getTokens.mockResolvedValue(opts.tokens);
+      }
+      const acquire = vi.fn().mockResolvedValue(opts.acquire);
+      const release = vi.fn().mockResolvedValue(undefined);
+      const saveTokens = vi.fn().mockResolvedValue(undefined);
+      const client = new QuickBooksClient({
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret',
+        realmId: 'test-realm',
+        redirectUri: 'http://localhost/callback',
+        getTokens,
+        saveTokens,
+        refreshLock: {
+          acquire,
+          release,
+          waitMs: opts.waitMs ?? 1,
+          maxWaitAttempts: opts.maxWaitAttempts ?? 3,
+        },
+      });
+      return { client, getTokens, saveTokens, acquire, release };
+    }
+
+    const expired = () => ({
+      accessToken: 'expired',
+      refreshToken: 'old-refresh',
+      expiresAt: Date.now() - 1000,
+      realmId: 'test-realm',
+    });
+
+    it('refreshes under the lock and releases it', async () => {
+      const { client, acquire, release, saveTokens } = makeLockedClient({
+        tokens: expired(),
+        acquire: true,
+      });
+      mockFetch.mockReturnValueOnce(mockResponse({
+        access_token: 'new-access-token',
+        refresh_token: 'new-refresh-token',
+        expires_in: 3600,
+      }));
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: {} }));
+
+      await client.searchCustomerByEmail('test@example.com');
+
+      expect(acquire).toHaveBeenCalledOnce();
+      expect(release).toHaveBeenCalledOnce();
+      expect(saveTokens).toHaveBeenCalledOnce();
+      expect(mockFetch.mock.calls[0][0]).toContain('oauth.platform.intuit.com');
+    });
+
+    it('skips the refresh when another process refreshed between read and acquire', async () => {
+      const fresh = { ...makeTokens(), accessToken: 'already-refreshed' };
+      const { client, release, saveTokens } = makeLockedClient({
+        tokens: [expired(), fresh],
+        acquire: true,
+      });
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: {} }));
+
+      await client.searchCustomerByEmail('test@example.com');
+
+      // Only the API call — no oauth call
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][0]).toContain('quickbooks.api.intuit.com');
+      expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer already-refreshed');
+      expect(saveTokens).not.toHaveBeenCalled();
+      expect(release).toHaveBeenCalledOnce();
+    });
+
+    it('uses the still-valid buffer-window token when the lock is held elsewhere', async () => {
+      const inBuffer = {
+        accessToken: 'buffer-token',
+        refreshToken: 'r',
+        expiresAt: Date.now() + 60_000, // inside the 5-min buffer, not yet expired
+        realmId: 'test-realm',
+      };
+      const { client, release, saveTokens } = makeLockedClient({
+        tokens: inBuffer,
+        acquire: false,
+      });
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: {} }));
+
+      await client.searchCustomerByEmail('test@example.com');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer buffer-token');
+      expect(saveTokens).not.toHaveBeenCalled();
+      expect(release).not.toHaveBeenCalled();
+    });
+
+    it('waits for the other refresher when hard-expired and lock is held', async () => {
+      const fresh = { ...makeTokens(), accessToken: 'refreshed-elsewhere' };
+      const { client } = makeLockedClient({
+        tokens: [expired(), expired(), fresh],
+        acquire: false,
+      });
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: {} }));
+
+      await client.searchCustomerByEmail('test@example.com');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe('Bearer refreshed-elsewhere');
+    });
+
+    it('throws when hard-expired, lock held, and no fresh token appears', async () => {
+      const { client, saveTokens } = makeLockedClient({
+        tokens: expired(),
+        acquire: false,
+        maxWaitAttempts: 2,
+      });
+
+      await expect(client.searchCustomerByEmail('test@example.com')).rejects.toThrow(
+        /held by another process/
+      );
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(saveTokens).not.toHaveBeenCalled();
+    });
+  });
+
   describe('isConnected', () => {
     it('returns true when tokens are valid', async () => {
       const client = makeClient();

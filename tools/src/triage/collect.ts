@@ -21,7 +21,7 @@ import { QuoClient, type QuoMessage, type QuoCall, type QuoConversation } from '
 import { GoogleCalendarClient, type CalendarEvent } from '@aac/api-clients/google-calendar';
 import { GmailClient, type GmailMessage } from '@aac/api-clients/gmail';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
-import { keys } from '@aac/shared-utils/redis';
+import { keys, ttl } from '@aac/shared-utils/redis';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
 
 // ── env ──────────────────────────────────────────────────────────────
@@ -244,6 +244,18 @@ async function main(): Promise<void> {
       fs.mkdirSync(backupDir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       fs.writeFileSync(path.join(backupDir, `${stamp}.json`), JSON.stringify(tokens, null, 2));
+    },
+    // P4-1: this runs daily at 08:15 alongside middleware crons — exactly the
+    // concurrent-refresh race the single-flight lock exists to prevent.
+    refreshLock: {
+      acquire: async () =>
+        (await redis.set(keys.qbRefreshLock, Date.now(), {
+          nx: true,
+          px: ttl.qbRefreshLock * 1000,
+        })) === 'OK',
+      release: async () => {
+        await redis.del(keys.qbRefreshLock);
+      },
     },
   });
 

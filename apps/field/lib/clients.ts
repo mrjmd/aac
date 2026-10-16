@@ -14,7 +14,7 @@ import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { QuoClient } from '@aac/api-clients/quo';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import { Redis } from '@upstash/redis';
-import { keys } from '@aac/shared-utils/redis';
+import { keys, ttl } from '@aac/shared-utils/redis';
 import { getEnv } from './env';
 
 let _calendar: GoogleCalendarClient | null = null;
@@ -88,6 +88,10 @@ export function getQuickBooks(): QuickBooksClient {
       redirectUri: '',
       getTokens: getQBTokens,
       saveTokens: storeQBTokens,
+      refreshLock: {
+        acquire: acquireQBRefreshLock,
+        release: releaseQBRefreshLock,
+      },
     });
   }
   return _quickbooks;
@@ -101,6 +105,21 @@ async function getQBTokens(): Promise<QBOAuthTokens | null> {
 
 async function storeQBTokens(tokens: QBOAuthTokens): Promise<void> {
   await getRedis().set(keys.qbOAuthTokens, tokens);
+}
+
+// Single-flight lock around token refresh — shared across all apps (P4-1).
+// Intuit rotates the refresh token on every grant; concurrent refreshes can
+// strand every app with a dead token.
+async function acquireQBRefreshLock(): Promise<boolean> {
+  const result = await getRedis().set(keys.qbRefreshLock, Date.now(), {
+    nx: true,
+    px: ttl.qbRefreshLock * 1000,
+  });
+  return result === 'OK';
+}
+
+async function releaseQBRefreshLock(): Promise<void> {
+  await getRedis().del(keys.qbRefreshLock);
 }
 
 export function getCalendar(): GoogleCalendarClient {

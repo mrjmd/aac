@@ -186,6 +186,25 @@ export async function getQBTokens(): Promise<QBOAuthTokens | null> {
   return data || null;
 }
 
+/**
+ * Single-flight lock around QB token refresh (P4-1). Intuit rotates the
+ * refresh token on every grant; two processes refreshing concurrently can
+ * strand all apps with a dead token. TTL guards against crashed holders.
+ */
+export async function acquireQBRefreshLock(): Promise<boolean> {
+  const redis = getRedis();
+  const result = await redis.set(keys.qbRefreshLock, Date.now(), {
+    nx: true,
+    px: ttl.qbRefreshLock * 1000,
+  });
+  return result === 'OK';
+}
+
+export async function releaseQBRefreshLock(): Promise<void> {
+  const redis = getRedis();
+  await redis.del(keys.qbRefreshLock);
+}
+
 // ── Health & Observability ───────────────────────────────────────────
 
 export async function trackWebhookProcessed(
