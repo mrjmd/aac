@@ -13,7 +13,9 @@ import { mkdir, writeFile, readFile } from 'fs/promises';
 import { join } from 'path';
 
 const OUTPUT_DIR = join(import.meta.dirname, 'spike-output');
-const GEMINI_API_KEY = 'AIzaSyALDDD9Wd2fjPF02eFzcum899ExT2i-3L0';
+// The key once hardcoded here leaked via git history; Google auto-disabled it
+// ("reported as leaked", verified 2026-10-16). Use the env var.
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? '';
 const LOGO_PATH = '/Users/matt/Projects/aac-astro/public/images/logo.jpg';
 
 // ─── Imagen API ─────────────────────────────────────────────────────────────
