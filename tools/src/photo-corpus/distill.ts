@@ -13,7 +13,11 @@
  * section-v-draft.md. Nothing is canonical until Matt signs off (it then
  * moves into llm-ruleset.md as SECTION V).
  *
- * Usage: npx tsx tools/src/photo-corpus/distill.ts
+ * Usage:
+ *   npx tsx tools/src/photo-corpus/distill.ts
+ *   npx tsx tools/src/photo-corpus/distill.ts --exclude analysis/data/photo-corpus/holdout.json --out .../section-v-train.md
+ * (--exclude drops the listed estimateIds from the evidence — used to
+ *  build the leakage-free training variant for the Phase 5 holdout eval)
  */
 
 import fs from 'node:fs';
@@ -85,8 +89,20 @@ function sampleFor(lib: LibEntry[], itemName: string, n = SAMPLES_PER_ITEM): str
 
 async function main(): Promise<void> {
   loadEnv();
-  const lib: LibEntry[] = fs.readFileSync(LIBRARY_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  const exemplars = fs.readFileSync(EXEMPLARS_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const argv = process.argv.slice(2);
+  const excludePath = argv.includes('--exclude') ? argv[argv.indexOf('--exclude') + 1] : undefined;
+  const outPath = argv.includes('--out') ? argv[argv.indexOf('--out') + 1] : DRAFT_PATH;
+  const excluded = new Set<string>(
+    excludePath ? (JSON.parse(fs.readFileSync(excludePath, 'utf8')).holdoutEstimateIds as string[]) : [],
+  );
+
+  let lib: LibEntry[] = fs.readFileSync(LIBRARY_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  let exemplars = fs.readFileSync(EXEMPLARS_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  if (excluded.size > 0) {
+    lib = lib.filter((e: LibEntry & { estimateId?: string }) => !excluded.has((e as { estimateId?: string }).estimateId ?? ''));
+    exemplars = exemplars.filter((e) => !excluded.has(e.estimateId));
+    console.log(`excluding ${excluded.size} holdout estimates from evidence`);
+  }
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('Missing env: GEMINI_API_KEY');
   const gemini = new GeminiClient({ apiKey, textModel: MODEL });
@@ -193,8 +209,8 @@ ${pairingRules}
 
 ${exclusionRules}
 `;
-  fs.writeFileSync(DRAFT_PATH, draft);
-  console.log(`\nWrote ${draft.length} chars → ${DRAFT_PATH}`);
+  fs.writeFileSync(outPath, draft);
+  console.log(`\nWrote ${draft.length} chars → ${outPath}`);
 }
 
 main().catch((err) => {
