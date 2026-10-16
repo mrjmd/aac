@@ -382,10 +382,16 @@ async function main(): Promise<void> {
     pageToken = res.nextPageToken;
   }
 
-  // One thread per external participant phone.
+  // One thread per external participant phone. Internal AAC lines are not
+  // customers — the agent platform's comms line carries test/agent traffic
+  // (e.g. the fake "Jim Smith" thread) and must never surface in triage.
+  const INTERNAL_DIGITS = new Set([
+    ourDigits,
+    '16177660151', // QUO_AGENT_PHONE_NUMBER — apps/agent comms line
+  ]);
   const byPhone = new Map<string, QuoConversation>();
   for (const c of activeConvos) {
-    const others = (c.participants ?? []).filter((p) => p.replace(/\D/g, '') !== ourDigits);
+    const others = (c.participants ?? []).filter((p) => !INTERNAL_DIGITS.has(p.replace(/\D/g, '')));
     for (const phone of others) {
       const prev = byPhone.get(phone);
       if (!prev || c.lastActivityAt > prev.lastActivityAt) byPhone.set(phone, c);

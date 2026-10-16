@@ -1263,6 +1263,34 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
   }
   stats.llmErrors = llmErrors;
 
+  // ── booked-customer downgrade ─────────────────────────────────────
+  // A customer with a job (green) event on the calendar today-or-later is
+  // closed business, not an open lead — QBO TxnStatus often stays Pending
+  // after Matt books the job, and the LLM detectors can't see the calendar
+  // (Karim Awad / Shivani false alarms, 2026-10-16). Downgrade rather than
+  // drop: a booked customer can still have a real question in-thread.
+  const upcomingJobs = events.filter(
+    (ev) => ev.colorId === '10' && new Date(ev.start).getTime() >= now - DAY,
+  );
+  const BOOKABLE_SECTIONS: Section[] = [
+    'stale_estimate',
+    'conversation',
+    'deal_closer',
+    'quote_promised',
+    'quote_gap',
+  ];
+  for (const f of findings) {
+    if (f.severity === 'info' || !f.customer) continue;
+    if (!BOOKABLE_SECTIONS.includes(f.section)) continue;
+    const tokens = nameTokens(f.customer);
+    if (tokens.length < 2) continue; // first-name-only matches are too loose
+    const booked = upcomingJobs.find((ev) => eventMatchesName(ev, tokens));
+    if (booked) {
+      f.severity = 'info';
+      f.detail = `[Already booked: "${booked.summary}" ${booked.start.slice(0, 10)}] ${f.detail ?? ''}`.trim();
+    }
+  }
+
   // ── dismissals ────────────────────────────────────────────────────
   // analysis/data/triage/dismissals.json: owner-curated suppressions for
   // findings resolved outside the system or explicitly not worth chasing
