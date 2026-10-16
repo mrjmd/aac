@@ -247,6 +247,19 @@ describe('GeminiClient', () => {
       expect(body.contents[2].parts[0].text).toBe('Write a caption');
     });
 
+    it('passes thinkingBudget through as thinkingConfig and omits it by default', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockContentResponse('ok'));
+      await client.generateContent('Analyze', { thinkingBudget: 4096 });
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 4096 });
+
+      mockFetch.mockReturnValueOnce(mockContentResponse('ok'));
+      await client.generateContent('Analyze');
+      const body2 = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(body2.generationConfig.thinkingConfig).toBeUndefined();
+    });
+
     it('respects temperature and maxOutputTokens', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(mockContentResponse('Creative output'));

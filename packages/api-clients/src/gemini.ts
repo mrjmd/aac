@@ -110,6 +110,13 @@ export interface GenerateContentOptions {
    * long analytical prompts on thinking models need more headroom.
    */
   timeoutMs?: number;
+  /**
+   * Cap reasoning tokens via thinkingConfig. Unset = model default
+   * (unbounded — large analytical prompts can think past any timeout).
+   * Note: some model generations 400 on thinkingConfig; callers setting
+   * this should be prepared to retry without it.
+   */
+  thinkingBudget?: number;
 }
 
 export type ImageAspectRatio = '1:1' | '3:4' | '4:3' | '16:9' | '9:16';
@@ -526,6 +533,9 @@ export class GeminiClient {
             // Generous default: on thinking models, reasoning tokens count
             // against this cap, and caps under ~2k truncate output mid-string.
             maxOutputTokens: options?.maxOutputTokens ?? 8192,
+            ...(options?.thinkingBudget !== undefined
+              ? { thinkingConfig: { thinkingBudget: options.thinkingBudget } }
+              : {}),
           },
         }),
         signal: AbortSignal.timeout(options?.timeoutMs ?? TEXT_TIMEOUT_MS),
