@@ -69,6 +69,18 @@ describe('getDayRangeEastern', () => {
     expect(getDayRangeEastern(-1, '2026-06-01').dateLabel).toBe('2026-05-31');
   });
 
+  it('uses -05:00 during EST (after DST ends in November)', () => {
+    const { timeMin, timeMax } = getDayRangeEastern(0, '2026-11-02');
+    expect(timeMin).toBe('2026-11-02T00:00:00-05:00');
+    expect(timeMax).toBe('2026-11-02T23:59:59-05:00');
+  });
+
+  it('straddles the fall-back transition day correctly', () => {
+    // DST ends 2026-11-01 02:00 — noon that day is already EST
+    expect(getDayRangeEastern(0, '2026-11-01').timeMin).toBe('2026-11-01T00:00:00-05:00');
+    expect(getDayRangeEastern(-1, '2026-11-01').timeMin).toBe('2026-10-31T00:00:00-04:00');
+  });
+
   it('ignores malformed runDate and uses today', () => {
     const { dateLabel } = getDayRangeEastern(0, 'not-a-date');
     expect(dateLabel).toMatch(/^\d{4}-\d{2}-\d{2}$/);

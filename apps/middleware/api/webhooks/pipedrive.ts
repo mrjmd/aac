@@ -7,6 +7,7 @@
  *   2. Sync contact to QuickBooks Online
  */
 
+import crypto from 'crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { createLogger } from '@aac/shared-utils/logger';
@@ -24,6 +25,7 @@ import {
   tryAcquireContactCreateLock,
 } from '../../lib/redis.js';
 import { getPipedrive, getQuo, getQuickBooks } from '../../lib/clients.js';
+import { getEnv } from '../../lib/env.js';
 
 const log = createLogger('pipedrive-webhook');
 
@@ -126,11 +128,43 @@ export function isQbErrorCode(error: unknown, code: string): boolean {
 }
 
 /**
+ * Verify the HTTP Basic credentials Pipedrive attaches to webhook deliveries
+ * (set on the webhook subscription). Timing-safe comparison, mirroring the
+ * QB webhook's signature check.
+ */
+export function verifyPdWebhookAuth(
+  authHeader: string | undefined,
+  user: string,
+  pass: string,
+): boolean {
+  if (!authHeader?.startsWith('Basic ')) return false;
+  const provided = Buffer.from(authHeader.slice(6));
+  const expected = Buffer.from(Buffer.from(`${user}:${pass}`).toString('base64'));
+  if (provided.length !== expected.length) return false;
+  return crypto.timingSafeEqual(provided, expected);
+}
+
+/**
  * Main webhook handler
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // This endpoint writes into Quo/QB/Redis, so forged payloads are a real
+  // poisoning vector. Fail closed in production when the credentials are
+  // not configured (same convention as the QB webhook's 503).
+  const env = getEnv();
+  const { webhookUser, webhookPass } = env.pipedrive;
+  if (!webhookUser || !webhookPass) {
+    if (env.nodeEnv === 'production') {
+      log.error('Pipedrive webhook hit but auth not configured', new Error('not_configured'));
+      return res.status(503).json({ error: 'webhook not configured' });
+    }
+  } else if (!verifyPdWebhookAuth(req.headers.authorization, webhookUser, webhookPass)) {
+    log.warn('Pipedrive webhook auth failed — invalid or missing Basic credentials');
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   const payload = req.body as PipedriveWebhookPayload;

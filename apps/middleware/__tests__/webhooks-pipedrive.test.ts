@@ -48,11 +48,30 @@ vi.mock('../lib/clients.js', () => ({
   getGemini: vi.fn(() => ({ extractEntities: vi.fn().mockResolvedValue(null) })),
 }));
 
+const mockEnv = {
+  pipedrive: {
+    apiKey: 'pd-key',
+    companyDomain: 'test',
+    systemUserId: '1',
+    webhookUser: null as string | null,
+    webhookPass: null as string | null,
+  },
+  nodeEnv: 'development' as 'development' | 'production',
+};
+
+vi.mock('../lib/env.js', () => ({
+  getEnv: vi.fn(() => mockEnv),
+}));
+
 import handler, { buildQbDisplayName, isQbErrorCode } from '../api/webhooks/pipedrive.js';
 import { markEventProcessed, storePhoneMapping, trackWebhookProcessed } from '../lib/redis.js';
 
-function makeReq(body: Record<string, unknown>, method = 'POST') {
-  return { method, body } as any;
+function makeReq(
+  body: Record<string, unknown>,
+  method = 'POST',
+  headers: Record<string, string> = {},
+) {
+  return { method, body, headers } as any;
 }
 
 function makeRes() {
@@ -93,6 +112,9 @@ function makePayload(overrides: Record<string, unknown> = {}) {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mockEnv.pipedrive.webhookUser = null;
+  mockEnv.pipedrive.webhookPass = null;
+  mockEnv.nodeEnv = 'development';
   (markEventProcessed as any).mockResolvedValue(true);
   const redis = await import('../lib/redis.js');
   (redis.tryAcquireContactCreateLock as any).mockResolvedValue(true);
@@ -107,6 +129,50 @@ describe('pipedrive webhook', () => {
     const res = makeRes();
     await handler(makeReq({}, 'GET'), res);
     expect(res.status).toHaveBeenCalledWith(405);
+  });
+
+  describe('webhook auth', () => {
+    const basic = (user: string, pass: string) =>
+      `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
+
+    it('accepts a request with valid Basic credentials', async () => {
+      mockEnv.pipedrive.webhookUser = 'pd';
+      mockEnv.pipedrive.webhookPass = 'secret';
+      const res = makeRes();
+      await handler(makeReq(makePayload(), 'POST', { authorization: basic('pd', 'secret') }), res);
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('rejects wrong credentials with 401', async () => {
+      mockEnv.pipedrive.webhookUser = 'pd';
+      mockEnv.pipedrive.webhookPass = 'secret';
+      const res = makeRes();
+      await handler(makeReq(makePayload(), 'POST', { authorization: basic('pd', 'wrong') }), res);
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(markEventProcessed).not.toHaveBeenCalled();
+    });
+
+    it('rejects a missing Authorization header with 401', async () => {
+      mockEnv.pipedrive.webhookUser = 'pd';
+      mockEnv.pipedrive.webhookPass = 'secret';
+      const res = makeRes();
+      await handler(makeReq(makePayload()), res);
+      expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it('fails closed (503) in production when credentials are unconfigured', async () => {
+      mockEnv.nodeEnv = 'production';
+      const res = makeRes();
+      await handler(makeReq(makePayload()), res);
+      expect(res.status).toHaveBeenCalledWith(503);
+      expect(markEventProcessed).not.toHaveBeenCalled();
+    });
+
+    it('allows unauthenticated requests in development when unconfigured', async () => {
+      const res = makeRes();
+      await handler(makeReq(makePayload()), res);
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
   });
 
   it('rejects invalid payload (no meta)', async () => {

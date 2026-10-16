@@ -7,14 +7,15 @@
  * extraction, and updates the Pipedrive person. Useful for retrying contacts
  * where extraction failed due to rate limits or transient errors.
  *
- * No auth required — this only reads activities and updates contact info,
- * same as the automatic webhook flow. Idempotent (safe to call multiple times).
+ * Admin retry tool — requires the cron bearer secret (same auth as the cron
+ * endpoints). Idempotent (safe to call multiple times).
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
 import { GeminiClient, ExtractionError } from '@aac/api-clients/gemini';
 import { getPipedrive, getGemini } from '../lib/clients.js';
+import { verifyCronAuth } from '../lib/cron.js';
 
 const log = createLogger('enrich');
 
@@ -22,6 +23,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  if (!verifyCronAuth(req, res)) return;
 
   const personId = parseInt(req.query.personId as string, 10);
   if (!personId || isNaN(personId)) {

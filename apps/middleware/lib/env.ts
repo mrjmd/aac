@@ -10,6 +10,14 @@ export interface EnvConfig {
     apiKey: string;
     companyDomain: string;
     systemUserId: string;
+    /**
+     * HTTP Basic credentials the Pipedrive webhook subscription sends with
+     * each delivery. Null = unconfigured; the webhook handler fails closed
+     * (503) in production so a misdeployed env can't silently accept
+     * unauthenticated writes.
+     */
+    webhookUser: string | null;
+    webhookPass: string | null;
   };
   quo: {
     apiKey: string;
@@ -122,6 +130,8 @@ export function getEnv(): EnvConfig {
       apiKey: requireEnv('PIPEDRIVE_API_KEY'),
       companyDomain: requireEnv('PIPEDRIVE_COMPANY_DOMAIN'),
       systemUserId: requireEnv('PIPEDRIVE_SYSTEM_USER_ID'),
+      webhookUser: process.env.PIPEDRIVE_WEBHOOK_USER || null,
+      webhookPass: process.env.PIPEDRIVE_WEBHOOK_PASS || null,
     },
     quo: {
       apiKey: requireEnv('QUO_API_KEY'),

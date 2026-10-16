@@ -111,11 +111,28 @@ export function getDayRangeEastern(
   const day = String(base.getDate()).padStart(2, '0');
 
   const dateLabel = `${year}-${month}-${day}`;
+  const offset = easternUtcOffset(dateLabel);
   return {
-    timeMin: `${dateLabel}T00:00:00-04:00`,
-    timeMax: `${dateLabel}T23:59:59-04:00`,
+    timeMin: `${dateLabel}T00:00:00${offset}`,
+    timeMax: `${dateLabel}T23:59:59${offset}`,
     dateLabel,
   };
+}
+
+/**
+ * UTC offset ("-04:00" or "-05:00") in effect in America/New_York on the
+ * given date. Hardcoding -04:00 shifted the day window by an hour between
+ * November and March (EST).
+ */
+export function easternUtcOffset(dateLabel: string): string {
+  const probe = new Date(`${dateLabel}T12:00:00Z`);
+  const tzPart = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    timeZoneName: 'shortOffset',
+  })
+    .formatToParts(probe)
+    .find((p) => p.type === 'timeZoneName')?.value;
+  return tzPart === 'GMT-5' ? '-05:00' : '-04:00';
 }
 
 /**
