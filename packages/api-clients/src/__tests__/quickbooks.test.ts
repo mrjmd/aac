@@ -1064,4 +1064,34 @@ describe('QuickBooksClient', () => {
       expect(await client.listItems()).toEqual([]);
     });
   });
+
+  describe('listAllCustomers', () => {
+    it('pages via STARTPOSITION until a short page', async () => {
+      const client = makeClient();
+      const fullPage = Array.from({ length: 1000 }, (_, i) => ({
+        Id: String(i + 1),
+        DisplayName: `C${i + 1}`,
+      }));
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: { Customer: fullPage } }));
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: { Customer: [{ Id: '1001', DisplayName: 'Last' }] },
+      }));
+
+      const customers = await client.listAllCustomers();
+      expect(customers).toHaveLength(1001);
+      const url1 = decodeURIComponent(mockFetch.mock.calls[0][0] as string);
+      const url2 = decodeURIComponent(mockFetch.mock.calls[1][0] as string);
+      expect(url1).toContain('STARTPOSITION 1 MAXRESULTS 1000');
+      expect(url2).toContain('STARTPOSITION 1001 MAXRESULTS 1000');
+    });
+
+    it('stops after one page when fewer than the page size', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: { Customer: [{ Id: '1', DisplayName: 'Only' }] },
+      }));
+      expect(await client.listAllCustomers()).toHaveLength(1);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
 });

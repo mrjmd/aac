@@ -677,12 +677,17 @@ export class QuoClient {
   async downloadMessageMedia(
     url: string,
   ): Promise<{ data: ArrayBuffer; contentType: string } | null> {
-    const host = new URL(url).hostname;
+    const parsed = new URL(url);
+    const host = parsed.hostname;
     const allowed =
       host === 'share.quo.com' ||
       host.endsWith('.quo.com') ||
       host === 'm.openphone.com' ||
-      host.endsWith('.openphone.com');
+      host.endsWith('.openphone.com') ||
+      // OpenPhone's static media bucket — where pre-2026 MMS attachments
+      // live (probed 2026-10-16: 2024-era URLs still resolve). Path-pinned
+      // so this never becomes a general GCS fetch.
+      (host === 'storage.googleapis.com' && parsed.pathname.startsWith('/opstatics/'));
     if (!allowed) {
       throw new Error(`Refusing to download media from non-Quo host: ${host}`);
     }

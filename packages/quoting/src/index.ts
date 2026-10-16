@@ -58,3 +58,13 @@ export {
   type DraftValidation,
   type ComparableSummary,
 } from './draft-quote.js';
+
+export {
+  attributePhoto,
+  daysBetween,
+  messagesWithinWindow,
+  type AttributionWindow,
+  type CorpusEstimateRef,
+  type PhotoAttribution,
+  type WindowedMessage,
+} from './photo-corpus.js';

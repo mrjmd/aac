@@ -802,5 +802,26 @@ describe('QuoClient', () => {
       ).rejects.toThrow('non-Quo host');
       expect(mockFetch).not.toHaveBeenCalled();
     });
+
+    it('allows the OpenPhone opstatics bucket (legacy MMS media)', async () => {
+      mockFetch.mockReturnValueOnce(Promise.resolve({
+        ok: true,
+        status: 200,
+        arrayBuffer: () => Promise.resolve(new Uint8Array([9]).buffer),
+        headers: { get: (h: string) => (h === 'content-type' ? 'image/jpeg' : null) },
+      }));
+
+      const result = await makeClient().downloadMessageMedia(
+        'https://storage.googleapis.com/opstatics/abc123',
+      );
+      expect(result?.contentType).toBe('image/jpeg');
+    });
+
+    it('refuses storage.googleapis.com outside /opstatics/', async () => {
+      await expect(
+        makeClient().downloadMessageMedia('https://storage.googleapis.com/other-bucket/x.jpg'),
+      ).rejects.toThrow('non-Quo host');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
   });
 });

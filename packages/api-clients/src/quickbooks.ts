@@ -417,6 +417,25 @@ export class QuickBooksClient {
     }
   }
 
+  /**
+   * Page through all customers (QBO caps a query page at 1000 rows).
+   * Loops STARTPOSITION until a short page.
+   */
+  async listAllCustomers(): Promise<QBCustomer[]> {
+    const pageSize = 1000;
+    const all: QBCustomer[] = [];
+    for (let start = 1; ; start += pageSize) {
+      const sql = `SELECT * FROM Customer STARTPOSITION ${start} MAXRESULTS ${pageSize}`;
+      const result = await this.request<QBResponse<QBCustomer>>(
+        `/query?query=${encodeURIComponent(sql)}&minorversion=70`,
+      );
+      const page = result.QueryResponse?.Customer ?? [];
+      all.push(...page);
+      if (page.length < pageSize) break;
+    }
+    return all;
+  }
+
   async createCustomer(customer: {
     displayName: string;
     firstName?: string;
