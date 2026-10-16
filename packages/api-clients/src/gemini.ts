@@ -117,6 +117,12 @@ export interface GenerateContentOptions {
    * this should be prepared to retry without it.
    */
   thinkingBudget?: number;
+  /**
+   * Inline images sent alongside the text prompt (multimodal input),
+   * e.g. customer MMS photos for quote drafting. Base64-encoded, no
+   * data-URI prefix.
+   */
+  imageParts?: Array<{ mimeType: string; base64: string }>;
 }
 
 export type ImageAspectRatio = '1:1' | '3:4' | '4:3' | '16:9' | '9:16';
@@ -518,7 +524,12 @@ export class GeminiClient {
 
     contents.push({
       role: 'user',
-      parts: [{ text: prompt }],
+      parts: [
+        ...(options?.imageParts ?? []).map((img) => ({
+          inlineData: { mimeType: img.mimeType, data: img.base64 },
+        })),
+        { text: prompt },
+      ],
     });
 
     const response = await fetch(

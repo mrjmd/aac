@@ -37,3 +37,23 @@ export {
   type ScopeSignals,
   type SimilarCase,
 } from './estimate-duration.js';
+
+export {
+  BOT_DRAFT_MARKER,
+  BOT_DRAFT_TOP_LINE,
+  buildQuoteDraftPrompt,
+  parseQuoteDraftResponse,
+  validateQuoteDraft,
+  countInjectionUnits,
+  draftTotal,
+  buildDescriptionLibrary,
+  isBotDraft,
+  assembleEstimateLines,
+  selectComparables,
+  buildDraftPrivateNote,
+  type DraftThreadMessage,
+  type QuoteDraftLine,
+  type QuoteDraft,
+  type DraftValidation,
+  type ComparableSummary,
+} from './draft-quote.js';

@@ -915,4 +915,130 @@ describe('QuickBooksClient', () => {
       expect(url).toContain('minorversion=70');
     });
   });
+
+  describe('createEstimate', () => {
+    it('creates a Pending estimate with mixed line types and a private note', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: {
+          Id: '901',
+          SyncToken: '0',
+          DocNumber: '1532',
+          TxnStatus: 'Pending',
+          CustomerRef: { value: '42' },
+          Line: [],
+          TotalAmt: 3450,
+        },
+      }));
+
+      const estimate = await client.createEstimate({
+        customerId: '42',
+        lines: [
+          {
+            DetailType: 'DescriptionOnly',
+            Description: 'BOT DRAFT — REVIEW BEFORE SENDING',
+            DescriptionLineDetail: {},
+          },
+          {
+            DetailType: 'SalesItemLineDetail',
+            Description: 'Urethane injection of vertical crack.',
+            Amount: 1175,
+            SalesItemLineDetail: { ItemRef: { value: '7' }, Qty: 1, UnitPrice: 1175 },
+          },
+        ],
+        privateNote: 'drafter v1 reasoning',
+      });
+
+      expect(estimate.Id).toBe('901');
+      const url = mockFetch.mock.calls[0][0] as string;
+      expect(url).toContain('/estimate?minorversion=70');
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.TxnStatus).toBe('Pending');
+      expect(body.CustomerRef).toEqual({ value: '42' });
+      expect(body.Line).toHaveLength(2);
+      expect(body.Line[0].DetailType).toBe('DescriptionOnly');
+      expect(body.PrivateNote).toBe('drafter v1 reasoning');
+      expect(body.BillEmail).toBeUndefined();
+    });
+
+    it('passes docNumber through (custom txn numbers mean QBO assigns nothing)', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: '903', SyncToken: '0', DocNumber: '1554', CustomerRef: { value: '42' }, Line: [] },
+      }));
+      await client.createEstimate({
+        customerId: '42',
+        lines: [{ DetailType: 'SalesItemLineDetail', Amount: 100, SalesItemLineDetail: { ItemRef: { value: '7' } } }],
+        docNumber: '1554',
+      });
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.DocNumber).toBe('1554');
+    });
+
+    it('truncates the private note to 4000 chars and throws when QBO returns no estimate', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: '902', SyncToken: '0', CustomerRef: { value: '42' }, Line: [] },
+      }));
+      await client.createEstimate({
+        customerId: '42',
+        lines: [{ DetailType: 'SalesItemLineDetail', Amount: 100, SalesItemLineDetail: { ItemRef: { value: '7' } } }],
+        privateNote: 'x'.repeat(5000),
+      });
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.PrivateNote).toHaveLength(4000);
+
+      mockFetch.mockReturnValueOnce(mockResponse({}));
+      await expect(
+        client.createEstimate({
+          customerId: '42',
+          lines: [{ DetailType: 'SalesItemLineDetail', Amount: 100, SalesItemLineDetail: { ItemRef: { value: '7' } } }],
+        }),
+      ).rejects.toThrow('did not return estimate');
+    });
+  });
+
+  describe('updateEstimate', () => {
+    it('sparse-updates header fields with a fresh SyncToken and never touches Line', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: '2802', SyncToken: '3', CustomerRef: { value: '42' }, Line: [{ Amount: 1 }] },
+      }));
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: '2802', SyncToken: '4', DocNumber: '1554', CustomerRef: { value: '42' }, Line: [] },
+      }));
+
+      const updated = await client.updateEstimate('2802', { docNumber: '1554' });
+      expect(updated.DocNumber).toBe('1554');
+
+      const body = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(body).toEqual({ Id: '2802', SyncToken: '3', sparse: true, DocNumber: '1554' });
+      expect(body.Line).toBeUndefined();
+    });
+  });
+
+  describe('listItems', () => {
+    it('queries active items and returns them', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: {
+          Item: [
+            { Id: '7', Name: 'Crack Repair', Active: true },
+            { Id: '12', Name: 'Guarantee', Active: true },
+          ],
+        },
+      }));
+
+      const items = await client.listItems();
+      expect(items.map((i) => i.Name)).toEqual(['Crack Repair', 'Guarantee']);
+      const url = decodeURIComponent(mockFetch.mock.calls[0][0] as string);
+      expect(url).toContain('FROM Item WHERE Active = true');
+    });
+
+    it('returns empty array when QBO has no items', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: {} }));
+      expect(await client.listItems()).toEqual([]);
+    });
+  });
 });

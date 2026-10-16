@@ -122,7 +122,30 @@ export interface QBEstimate {
   TotalAmt?: number;
   BillEmail?: { Address: string };
   LinkedTxn?: QBLinkedTxn[];
+  PrivateNote?: string;
   MetaData?: { CreateTime?: string; LastUpdatedTime?: string };
+}
+
+/**
+ * Line shape accepted by createEstimate. Separate from QBLine (the read
+ * shape) because DescriptionOnly lines have no Amount, while every line
+ * QBO returns does.
+ */
+export interface QBEstimateCreateLine {
+  DetailType: 'SalesItemLineDetail' | 'DescriptionOnly';
+  Description?: string;
+  Amount?: number;
+  SalesItemLineDetail?: QBSalesItemLineDetail;
+  DescriptionLineDetail?: Record<string, never>;
+}
+
+export interface QBItem {
+  Id: string;
+  Name: string;
+  Description?: string;
+  Active?: boolean;
+  Type?: string;
+  UnitPrice?: number;
 }
 
 export type QBInvoiceEmailStatus = 'NotSet' | 'NeedToSend' | 'EmailSent';
@@ -539,21 +562,38 @@ export class QuickBooksClient {
    * first for a fresh SyncToken.
    */
   async updateEstimateStatus(estimateId: string, status: QBEstimateStatus): Promise<QBEstimate> {
+    return this.updateEstimate(estimateId, { txnStatus: status });
+  }
+
+  /**
+   * Sparse-update header fields on an estimate (status, doc number,
+   * private note). Fetches first for a fresh SyncToken. Lines are
+   * intentionally NOT updatable here — a sparse update that includes
+   * Line replaces the whole set, same hazard class as Quo PATCH.
+   */
+  async updateEstimate(
+    estimateId: string,
+    updates: { txnStatus?: QBEstimateStatus; docNumber?: string; privateNote?: string },
+  ): Promise<QBEstimate> {
     const estimate = await this.getEstimate(estimateId);
     if (!estimate) {
       throw new Error(`QuickBooks estimate ${estimateId} not found`);
     }
 
-    log.info('Updating QuickBooks estimate status', { estimateId, status });
+    log.info('Updating QuickBooks estimate', { estimateId, ...updates });
+
+    const body: Record<string, unknown> = {
+      Id: estimate.Id,
+      SyncToken: estimate.SyncToken,
+      sparse: true,
+    };
+    if (updates.txnStatus) body.TxnStatus = updates.txnStatus;
+    if (updates.docNumber) body.DocNumber = updates.docNumber;
+    if (updates.privateNote !== undefined) body.PrivateNote = updates.privateNote.slice(0, 4000);
 
     const result = await this.request<{ Estimate?: QBEstimate }>('/estimate', {
       method: 'POST',
-      body: JSON.stringify({
-        Id: estimate.Id,
-        SyncToken: estimate.SyncToken,
-        sparse: true,
-        TxnStatus: status,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!result.Estimate) {
@@ -561,6 +601,69 @@ export class QuickBooksClient {
     }
 
     return result.Estimate;
+  }
+
+  /**
+   * Create a new estimate. Used by the quote drafter — drafts are always
+   * TxnStatus 'Pending' unless the caller says otherwise, and nothing here
+   * emails the customer (no BillEmail, no send).
+   */
+  async createEstimate(args: {
+    customerId: string;
+    lines: QBEstimateCreateLine[];
+    txnStatus?: QBEstimateStatus;
+    /** Internal memo, never customer-visible. QBO caps at 4000 chars. */
+    privateNote?: string;
+    txnDate?: string;
+    /**
+     * Required in practice: AAC's QBO has custom transaction numbers on,
+     * so omitting this leaves the estimate with a BLANK number.
+     */
+    docNumber?: string;
+  }): Promise<QBEstimate> {
+    const body: Record<string, unknown> = {
+      CustomerRef: { value: args.customerId },
+      TxnStatus: args.txnStatus ?? 'Pending',
+      Line: args.lines,
+    };
+    if (args.privateNote) body.PrivateNote = args.privateNote.slice(0, 4000);
+    if (args.txnDate) body.TxnDate = args.txnDate;
+    if (args.docNumber) body.DocNumber = args.docNumber;
+
+    log.info('Creating QuickBooks estimate', {
+      customerId: args.customerId,
+      lineCount: args.lines.length,
+      txnStatus: body.TxnStatus,
+    });
+
+    const result = await this.request<{ Estimate?: QBEstimate }>(
+      '/estimate?minorversion=70',
+      { method: 'POST', body: JSON.stringify(body) },
+    );
+
+    if (!result.Estimate) {
+      throw new Error('QuickBooks did not return estimate after creation');
+    }
+
+    log.info('Created QuickBooks estimate', {
+      estimateId: result.Estimate.Id,
+      docNumber: result.Estimate.DocNumber,
+      totalAmt: result.Estimate.TotalAmt,
+    });
+
+    return result.Estimate;
+  }
+
+  /**
+   * List active products/services. The drafter uses this as the item menu
+   * (name → Id) when assembling estimate lines.
+   */
+  async listItems(): Promise<QBItem[]> {
+    const sql = 'SELECT * FROM Item WHERE Active = true ORDER BY Name MAXRESULTS 1000';
+    const result = await this.request<{ QueryResponse?: { Item?: QBItem[] } }>(
+      `/query?query=${encodeURIComponent(sql)}&minorversion=70`,
+    );
+    return result.QueryResponse?.Item ?? [];
   }
 
   // ── Invoices ────────────────────────────────────────────────────

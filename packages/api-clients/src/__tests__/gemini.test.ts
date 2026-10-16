@@ -247,6 +247,25 @@ describe('GeminiClient', () => {
       expect(body.contents[2].parts[0].text).toBe('Write a caption');
     });
 
+    it('sends imageParts as inlineData ahead of the text prompt', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockContentResponse('two cracks visible'));
+
+      await client.generateContent('Count the cracks in these photos', {
+        imageParts: [
+          { mimeType: 'image/jpeg', base64: 'AAAA' },
+          { mimeType: 'image/png', base64: 'BBBB' },
+        ],
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      const parts = body.contents[0].parts;
+      expect(parts).toHaveLength(3);
+      expect(parts[0].inlineData).toEqual({ mimeType: 'image/jpeg', data: 'AAAA' });
+      expect(parts[1].inlineData).toEqual({ mimeType: 'image/png', data: 'BBBB' });
+      expect(parts[2].text).toBe('Count the cracks in these photos');
+    });
+
     it('passes thinkingBudget through as thinkingConfig and omits it by default', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(mockContentResponse('ok'));
