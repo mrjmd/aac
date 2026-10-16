@@ -222,6 +222,17 @@ describe('GeminiClient', () => {
       expect(url).toContain('generateContent');
     });
 
+    it('honors a timeoutMs override via the fetch AbortSignal', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockContentResponse('ok'));
+
+      await client.generateContent('Long analytical prompt', { timeoutMs: 180_000 });
+
+      const init = mockFetch.mock.calls[0][1] as { signal?: unknown };
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect((init.signal as AbortSignal).aborted).toBe(false);
+    });
+
     it('includes system prompt as conversation context', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(mockContentResponse('Branded caption'));

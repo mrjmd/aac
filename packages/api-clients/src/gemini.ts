@@ -105,6 +105,11 @@ export interface GenerateContentOptions {
   systemPrompt?: string;
   temperature?: number;
   maxOutputTokens?: number;
+  /**
+   * Fetch timeout override. The 30s default suits webhook-path calls;
+   * long analytical prompts on thinking models need more headroom.
+   */
+  timeoutMs?: number;
 }
 
 export type ImageAspectRatio = '1:1' | '3:4' | '4:3' | '16:9' | '9:16';
@@ -523,7 +528,7 @@ export class GeminiClient {
             maxOutputTokens: options?.maxOutputTokens ?? 8192,
           },
         }),
-        signal: AbortSignal.timeout(TEXT_TIMEOUT_MS),
+        signal: AbortSignal.timeout(options?.timeoutMs ?? TEXT_TIMEOUT_MS),
       }
     );
 
