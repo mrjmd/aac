@@ -15,7 +15,7 @@ import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-clas
 import { buildDirectionsUrl } from '@/lib/location';
 import { resolveEventCity } from '@/lib/event-city';
 import { resolveTravelLegs, formatDuration, formatDistance, type DayTravel } from '@/lib/travel-time';
-import { getCurrentSession } from '@/lib/session';
+import { getCurrentSession, requireSession } from '@/lib/session';
 import { getUserConfig } from '@/lib/user-config';
 
 export const dynamic = 'force-dynamic';
@@ -25,6 +25,9 @@ interface PageProps {
 }
 
 export default async function DayPage({ searchParams }: PageProps) {
+  // Edge middleware only checks cookie *presence*; validate it against Redis
+  // before rendering customer names/addresses for the day.
+  await requireSession();
   const params = await searchParams;
   const today = getTodayEasternDate();
   const dateLabel =

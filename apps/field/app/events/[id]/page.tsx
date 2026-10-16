@@ -11,6 +11,7 @@ import { formatEventTime, formatDateDisplay } from '@/lib/dates';
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
 import { bucketForEvent, daysLate } from '@/lib/event-time-bucket';
 import { findEventContinuation } from '@/lib/multiday';
+import { requireSession } from '@/lib/session';
 import CompletionChecklist from './completion-flow';
 
 export const dynamic = 'force-dynamic';
@@ -29,6 +30,9 @@ function dateLabelFromISO(iso: string): string {
 }
 
 export default async function EventDetailPage({ params, searchParams }: Props) {
+  // Edge middleware only checks cookie *presence*; validate it against Redis
+  // before rendering customer PII (name/phone/address).
+  await requireSession();
   const { id } = await params;
   const { from } = await searchParams;
 
