@@ -199,13 +199,32 @@ describe('assembleEstimateLines', () => {
     expect(last.Amount).toBe(0);
   });
 
-  it('prefers the model description when present', () => {
+  it('uses the QBO item template verbatim over library and model text', () => {
+    const itemsWithTemplates = ITEMS.map((i) =>
+      i.Name === 'Crack Repair' ? { ...i, Description: 'Standard QBO template.' } : i,
+    );
     const lines = assembleEstimateLines({
+      draft: makeDraft(), // model supplied "Urethane injection."
+      items: itemsWithTemplates,
+      descriptionLibrary: new Map([['Crack Repair', 'Library wording.']]),
+    });
+    expect(lines[1].Description).toBe('Standard QBO template.');
+  });
+
+  it('falls back library → model text only when no template exists', () => {
+    const withLibrary = assembleEstimateLines({
       draft: makeDraft(),
       items: ITEMS,
-      descriptionLibrary: new Map([['Crack Repair', 'Canonical.']]),
+      descriptionLibrary: new Map([['Crack Repair', 'Library wording.']]),
     });
-    expect(lines[1].Description).toBe('Urethane injection.');
+    expect(withLibrary[1].Description).toBe('Library wording.');
+
+    const modelOnly = assembleEstimateLines({
+      draft: makeDraft(),
+      items: ITEMS,
+      descriptionLibrary: new Map(),
+    });
+    expect(modelOnly[1].Description).toBe('Urethane injection.');
   });
 });
 

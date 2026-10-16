@@ -1017,6 +1017,29 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('deleteEstimate', () => {
+    it('fetches for a SyncToken then posts operation=delete', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: '2802', SyncToken: '5', CustomerRef: { value: '42' }, Line: [] },
+      }));
+      mockFetch.mockReturnValueOnce(mockResponse({ Estimate: { Id: '2802', status: 'Deleted' } }));
+
+      await client.deleteEstimate('2802');
+
+      const url = mockFetch.mock.calls[1][0] as string;
+      expect(url).toContain('/estimate?operation=delete');
+      expect(JSON.parse(mockFetch.mock.calls[1][1].body)).toEqual({ Id: '2802', SyncToken: '5' });
+    });
+
+    it('is a no-op when the estimate is already gone', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ error: 'not found' }, 404));
+      await client.deleteEstimate('9999');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('listItems', () => {
     it('queries active items and returns them', async () => {
       const client = makeClient();

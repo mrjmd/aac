@@ -101,11 +101,12 @@ Each line's "item" MUST be one of these QBO item names (exact spelling):
 ${args.itemNames.join(' | ')}
 
 Hard rules:
+- Draft ONLY repairs the thread or photos give concrete evidence for. NEVER infer a repair from the mere presence of a structure. Specifically: a bulkhead alone is NOT a reason for Bulkhead Injection — the indicators are water entry at the sides of the bulkhead-to-foundation seam, at the bolts into the basement, or at the bottom of the stairs. No indicator, no line.
 - NEVER add a discount line on a job with fewer than ${DISCOUNT_MIN_INJECTIONS} injection units. At ${DISCOUNT_MIN_INJECTIONS}+, the Discount line is exactly -$${DISCOUNT_PER_INJECTION} per injection unit — never resized to hit a round total.
 - NEVER add a cash/check discount (payment method is unknown at draft time).
 - Do NOT include a Guarantee line — it is appended automatically.
 - One line per service with qty (e.g. 3 cracks = Crack Repair qty 3), not three separate lines.
-- Descriptions: 1-3 sentences of scope in Matt's plain voice. No prices inside descriptions. Never write "see attached photos".
+- Line descriptions are NOT used on the estimate — each item's standard QBO description template is inserted verbatim. You may omit "description"; anything scope-specific belongs in scope_summary/reasoning instead.
 - If the thread/photos don't support a confident price (fieldstone, bowing walls, unclear scope, $4k+ complexity), set needs_site_visit true and list what's unknown in open_questions — still draft your best-guess lines.
 - If the thread mentions wall bowing over 1.5 inches, drainage/grading as the root cause, or work AAC doesn't do, say so in open_questions.
 
@@ -306,7 +307,10 @@ export function assembleEstimateLines(args: {
     if (!item) throw new Error(`assembleEstimateLines: unresolved item "${line.item}" — validate first`);
     lines.push({
       DetailType: 'SalesItemLineDetail',
-      Description: line.description || args.descriptionLibrary.get(item.Name),
+      // Owner rule (2026-10-16): the standard QBO item template verbatim,
+      // never model-rewritten. Recent-estimate wording covers items with
+      // no template; model text is a last resort only.
+      Description: item.Description || args.descriptionLibrary.get(item.Name) || line.description,
       Amount: round2(line.qty * line.unitPrice),
       SalesItemLineDetail: {
         ItemRef: { value: item.Id, name: item.Name },
@@ -317,7 +321,7 @@ export function assembleEstimateLines(args: {
   }
 
   const guarantee = args.items.find((i) => isGuaranteeItem(i.Name));
-  const guaranteeText = guarantee && args.descriptionLibrary.get(guarantee.Name);
+  const guaranteeText = guarantee && (guarantee.Description || args.descriptionLibrary.get(guarantee.Name));
   if (guarantee && guaranteeText) {
     lines.push({
       DetailType: 'SalesItemLineDetail',

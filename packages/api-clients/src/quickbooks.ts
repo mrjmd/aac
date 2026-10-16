@@ -655,6 +655,26 @@ export class QuickBooksClient {
   }
 
   /**
+   * Hard-delete an estimate (QBO has no soft-delete for estimates).
+   * Exists for bot-draft cleanup — re-drafting after owner feedback.
+   * Fetches first for a fresh SyncToken; no-op if already gone.
+   */
+  async deleteEstimate(estimateId: string): Promise<void> {
+    const estimate = await this.getEstimate(estimateId);
+    if (!estimate) {
+      log.warn('Estimate already deleted', { estimateId });
+      return;
+    }
+
+    log.info('Deleting QuickBooks estimate', { estimateId, docNumber: estimate.DocNumber });
+
+    await this.request('/estimate?operation=delete&minorversion=70', {
+      method: 'POST',
+      body: JSON.stringify({ Id: estimate.Id, SyncToken: estimate.SyncToken }),
+    });
+  }
+
+  /**
    * List active products/services. The drafter uses this as the item menu
    * (name → Id) when assembling estimate lines.
    */

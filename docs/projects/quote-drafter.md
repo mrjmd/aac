@@ -27,9 +27,15 @@ Every draft is unmistakably bot-marked:
   confidence, Section-0 reasoning, up to 3 recent comparable estimates
   ("your last similar jobs ran $X"), open questions, and any
   auto-corrections the validator applied.
-- Canonical line descriptions are reused from the most recent real
-  estimates (so drafts read in Matt's voice); the Guarantee line is
+- Line descriptions are the **standard QBO item templates verbatim**
+  (owner rule, 2026-10-16): `QBItem.Description` first, most recent real
+  estimate's wording second, model text only when neither exists. The
+  model is told its descriptions are discarded. The Guarantee line is
   appended automatically.
+- **Scope must be evidenced** (ruleset Section 0 rule 12 + prompt hard
+  rule): never infer a repair from the mere presence of a structure.
+  Bulkhead injection requires water signs at the seam sides, the bolts,
+  or the bottom of the stairs.
 - Doc numbers continue the estimate sequence (custom transaction numbers
   are ON in AAC's QBO — the API assigns nothing if omitted).
 
@@ -72,9 +78,30 @@ customer who already has a Pending bot draft (detected via the
   the same thread); the ruleset pins crack pricing but masonry/odd work
   moves. The bot marker + review step is the control for this.
 
+## Known gaps / next
+
+- **Guarantee variant selection**: the QBO Guarantee item template is the
+  lifetime transferable crack-injection guarantee; masonry/resurfacing
+  jobs historically carry a 2-year warranty variant instead. The drafter
+  currently always appends the item template — wrong variant on
+  masonry-only drafts. Needs scope-category-aware selection
+  (classifyScope already distinguishes these).
+- Template placeholder filling (sqft/LF blanks) not yet implemented —
+  templates go in verbatim; measurements live in the PrivateNote.
+- No automatic trigger — manual runs only (see "Running it"). Wiring it
+  into the 08:15 triage cron is the deliberate next step once the owner
+  trusts the output.
+
 ## History
 
 - 2026-10-16 — built (same day as the quoting Stage-1 spike GO verdict);
   decision log: skip v0 (triage-markdown drafts) entirely, owner wants
   real QBO Pending estimates. First live draft #1554 (Erin Tortorella,
   bulkhead + masonry, $3,550, site-visit flagged).
+- 2026-10-16 (rev 2, owner review of #1554) — two corrections folded in:
+  (1) descriptions must be the standard QBO item templates verbatim,
+  never model-rewritten; (2) the model had inferred Bulkhead Injection
+  from the mere presence of a bulkhead — evidence rule added to ruleset
+  (Section 0 rule 12) and prompt. #1554 deleted + recreated (masonry
+  only, $1,650). `deleteEstimate` added to QuickBooksClient for draft
+  cleanup.
