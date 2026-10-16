@@ -5,7 +5,10 @@
  */
 import sharp from "sharp";
 
-const VISION_MODEL = "gemini-2.5-flash";
+// "latest" alias — pinned model names churn (2.5-flash retired 2026-08).
+// thinkingBudget 0 keeps the thinking models from eating the small
+// maxOutputTokens budget before emitting the answer (see mw 3e06d7d).
+const VISION_MODEL = "gemini-flash-latest";
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 interface FocalPoint {
@@ -48,7 +51,7 @@ Y: 0.XX`,
               ],
             },
           ],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 50 },
+          generationConfig: { temperature: 0.1, maxOutputTokens: 50, thinkingConfig: { thinkingBudget: 0 } },
         }),
         signal: AbortSignal.timeout(10000),
       },
