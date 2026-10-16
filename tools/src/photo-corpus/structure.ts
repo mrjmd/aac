@@ -126,7 +126,7 @@ Respond with ONLY a JSON object:
 
 function joinPrompt(row: ManifestRow, blindJson: string, photos: ManifestRow['photos']): string {
   const lines = row.lines
-    .map((l) => `- ${l.item} | qty ${l.qty} @ ${l.unitPrice} = ${l.amount} | ${l.description.slice(0, 160)}`)
+    .map((l) => `- ${l.item} | qty ${l.qty} @ ${l.unitPrice} = ${l.amount} | ${(l.description ?? '').slice(0, 160)}`)
     .join('\n');
   return `Earlier you analyzed ${photos.length} customer photo(s) for a foundation-repair quote. Your analysis:
 ${blindJson}
