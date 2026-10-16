@@ -15,10 +15,12 @@
  *     each candidate gap is feasibility-checked with Distance-Matrix drives
  *     into and back out of the customer site.
  *   - Hard return-home anchor: the tech must be back at `travel.homeAddress`
- *     by `homeReturnDeadlineHour` (default 17:30 ET). The last gap of the
- *     day is bounded by this anchor instead of `workEndHour`.
+ *     by `homeReturnDeadlineHour` (default 18:00 ET; see DEFAULT_POLICY
+ *     notes). The last gap of the day is bounded by this anchor instead of
+ *     `workEndHour`.
  *   - Travel buffer: `travelBufferMinutes` of setup/intro slack is added on
- *     each leg.
+ *     each leg (default 0 — the :15 start-rounding grid supplies the slack
+ *     Matt actually books; see DEFAULT_POLICY notes).
  *   - Fail-closed: Maps returning null for any leg skips that gap.
  *   - Fall back to the no-travel path (sync-equivalent) when either dep is
  *     missing, so non-travel callers (e.g. assessment with no address) still
@@ -110,8 +112,15 @@ export const DEFAULT_POLICY: SuggestSlotPolicy = {
   defaultJobHours: 2,
   earliestDayOffset: 1,
   jobColorId: '10',
-  homeReturnDeadlineHour: 17.5,
-  travelBufferMinutes: 15,
+  // Matt's real two-job template (confirmed against Jun–Oct 2026 history,
+  // analysis/scheduling-two-job-policy-2026-10-16.md): morning job 8:30–12,
+  // up to an hour's drive 12→1, second job 1:00–4:30, home with an hour to
+  // spare. Home arrivals in practice run to ~6:20 PM (median 5:30, p75
+  // 5:52) → deadline 6:00 PM. Booked gap − actual drive has a +6 min
+  // median, which is what the :15 start-rounding grid alone yields — so no
+  // extra per-leg buffer on top of it.
+  homeReturnDeadlineHour: 18,
+  travelBufferMinutes: 0,
   slotStartRoundingMinutes: 15,
   firstJobArrivalHour: 8.5,
   firstJobShortDriveArrivalHour: 8,
