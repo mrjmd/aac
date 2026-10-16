@@ -29,7 +29,7 @@ import {
   logHealthError,
 } from '../../lib/redis.js';
 import { getEnv } from '../../lib/env.js';
-import { getCalendar, getDrive, getGmail, getPipedrive, getGemini, getQuo } from '../../lib/clients.js';
+import { getCalendar, getDrive, getGmail, getPipedrive, getGemini, getQuickBooks, getQuo } from '../../lib/clients.js';
 import { ensureInboundLeadDeal } from '../../lib/inbound-deal.js';
 import {
   dispatchSchedulingIntent,
@@ -575,6 +575,7 @@ export async function POST(request: Request): Promise<Response> {
             cal: getCalendar(),
             gemini: getGemini(),
             quo: getQuo(),
+            qb: getQuickBooks(),
             stub: {
               enabled: env.scheduling.stubEventsEnabled,
               technicianEmails: env.scheduling.stubAttendeeEmails,

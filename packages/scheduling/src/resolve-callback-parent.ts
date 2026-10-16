@@ -25,6 +25,7 @@
 import { createLogger } from '@aac/shared-utils/logger';
 import { parseDealMarker } from '@aac/api-clients/pipedrive';
 import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import { nameTokensForMatch, summaryMatchesCustomer } from './name-match.js';
 
 const log = createLogger('resolve-callback-parent');
 
@@ -61,6 +62,16 @@ export async function resolveCallbackParent(
     return null;
   }
 
+  // A single-token name ("Smith") could claim another customer's job in a
+  // metro area — attaching the callback to the wrong parent deal. Refuse to
+  // guess; the caller surfaces the miss for manual handling.
+  if (nameTokensForMatch(name).length < 2) {
+    log.warn('Customer name too ambiguous for callback parent matching', {
+      customerName: name,
+    });
+    return null;
+  }
+
   const lookbackDays = input.lookbackDays ?? DEFAULT_LOOKBACK_DAYS;
   const now = (input.now ?? (() => new Date()))();
   const timeMax = now.toISOString();
@@ -81,9 +92,8 @@ export async function resolveCallbackParent(
     return null;
   }
 
-  const nameLower = name.toLowerCase();
   const matchesCustomer = (e: CalendarEvent): boolean =>
-    e.summary.toLowerCase().includes(nameLower);
+    summaryMatchesCustomer(e.summary, name);
 
   const customerEvents = events.filter(matchesCustomer);
   if (customerEvents.length === 0) {

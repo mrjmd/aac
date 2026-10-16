@@ -20,13 +20,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { randomUUID } from 'crypto';
 import { createLogger } from '@aac/shared-utils/logger';
-import { normalizeQbApproval } from '@aac/scheduling';
-import { getPipedrive, getQuickBooks, getQuo } from '../../lib/clients.js';
+import { normalizeQbApproval, summaryMatchesCustomer } from '@aac/scheduling';
+import type { CalendarEvent } from '@aac/api-clients/google-calendar';
+import { getCalendar, getPipedrive, getQuickBooks, getQuo } from '../../lib/clients.js';
 import { verifyCronAuth } from '../../lib/cron.js';
 import { maybePostSuggestionNote } from '../../lib/suggestion-note.js';
 import {
   getDirectiveIdByEstimate,
   logHealthError,
+  markEstimateHandled,
   trackCronRun,
   writePendingDirective,
 } from '../../lib/redis.js';
@@ -39,10 +41,15 @@ interface ReconcileSummary {
   scanned: number;
   accepted: number;
   alreadyDirectived: number;
+  /** Customer already has an upcoming calendar event — Matt scheduled by hand. */
+  manuallyScheduled: number;
   directivesCreated: number;
   filtered: number;
   errors: number;
 }
+
+/** How far ahead to look for a manually-created event for the customer. */
+const MANUAL_SCHEDULE_LOOKAHEAD_DAYS = 60;
 
 export default async function handler(
   req: VercelRequest,
@@ -58,6 +65,7 @@ export default async function handler(
     scanned: 0,
     accepted: 0,
     alreadyDirectived: 0,
+    manuallyScheduled: 0,
     directivesCreated: 0,
     filtered: 0,
     errors: 0,
@@ -78,6 +86,26 @@ export default async function handler(
     const pd = getPipedrive();
     const quo = getQuo();
 
+    // Walk #7 prereq 1: if the QB webhook was missed and Matt hand-scheduled
+    // the job, the reverse index is empty but the work IS on the calendar.
+    // Fetch upcoming events once per run and name-match per estimate. A
+    // calendar failure degrades to the old behavior (guard disabled).
+    let upcomingEvents: CalendarEvent[] | null = null;
+    try {
+      const now = new Date();
+      upcomingEvents = await getCalendar().listEvents({
+        timeMin: now.toISOString(),
+        timeMax: new Date(
+          now.getTime() + MANUAL_SCHEDULE_LOOKAHEAD_DAYS * 86_400_000,
+        ).toISOString(),
+        maxResults: 500,
+      });
+    } catch (err) {
+      log.warn('Calendar unavailable — manual-schedule guard disabled this run', {
+        error: (err as Error).message,
+      });
+    }
+
     for (const estimate of estimates) {
       if (estimate.TxnStatus !== 'Accepted') continue;
       summary.accepted++;
@@ -86,6 +114,23 @@ export default async function handler(
         const existing = await getDirectiveIdByEstimate(estimate.Id);
         if (existing) {
           summary.alreadyDirectived++;
+          continue;
+        }
+
+        const customerName = estimate.CustomerRef?.name ?? '';
+        const booked = upcomingEvents?.find((e) =>
+          summaryMatchesCustomer(e.summary, customerName),
+        );
+        if (booked) {
+          // Stamp the reverse index so later runs short-circuit on Redis.
+          await markEstimateHandled(estimate.Id, `manual-scheduled:${booked.id}`);
+          summary.manuallyScheduled++;
+          log.info('Estimate already on calendar — skipped (manual schedule)', {
+            estimateId: estimate.Id,
+            customerName,
+            eventId: booked.id,
+            eventSummary: booked.summary,
+          });
           continue;
         }
 
@@ -129,7 +174,7 @@ export default async function handler(
 
     await trackCronRun('qb-reconcile', {
       sent: summary.directivesCreated,
-      skipped: summary.alreadyDirectived + summary.filtered,
+      skipped: summary.alreadyDirectived + summary.manuallyScheduled + summary.filtered,
       errors: summary.errors,
     });
 

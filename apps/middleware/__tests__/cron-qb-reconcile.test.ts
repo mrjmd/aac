@@ -6,6 +6,7 @@ const mockIsConnected = vi.fn();
 const mockListRecentEstimates = vi.fn();
 const mockGetCustomer = vi.fn();
 const mockSearchPersonByPhone = vi.fn();
+const mockListEvents = vi.fn();
 
 vi.mock('../lib/clients.js', () => ({
   getQuickBooks: () => ({
@@ -17,6 +18,9 @@ vi.mock('../lib/clients.js', () => ({
     searchPersonByPhone: mockSearchPersonByPhone,
   }),
   getQuo: () => ({}),
+  getCalendar: () => ({
+    listEvents: mockListEvents,
+  }),
 }));
 
 vi.mock('../lib/env.js', () => ({
@@ -33,11 +37,13 @@ vi.mock('../lib/cron.js', async () => {
 
 const {
   mockGetDirectiveIdByEstimate,
+  mockMarkEstimateHandled,
   mockWritePendingDirective,
   mockTrackCronRun,
   mockLogHealthError,
 } = vi.hoisted(() => ({
   mockGetDirectiveIdByEstimate: vi.fn(),
+  mockMarkEstimateHandled: vi.fn(),
   mockWritePendingDirective: vi.fn(),
   mockTrackCronRun: vi.fn(),
   mockLogHealthError: vi.fn(),
@@ -45,6 +51,7 @@ const {
 
 vi.mock('../lib/redis.js', () => ({
   getDirectiveIdByEstimate: mockGetDirectiveIdByEstimate,
+  markEstimateHandled: mockMarkEstimateHandled,
   writePendingDirective: mockWritePendingDirective,
   trackCronRun: mockTrackCronRun,
   logHealthError: mockLogHealthError,
@@ -112,9 +119,72 @@ describe('qb-reconcile cron', () => {
     mockGetCustomer.mockResolvedValue(makeCustomer());
     mockSearchPersonByPhone.mockResolvedValue(makePerson());
     mockGetDirectiveIdByEstimate.mockResolvedValue(null);
+    mockMarkEstimateHandled.mockResolvedValue(undefined);
     mockWritePendingDirective.mockResolvedValue(undefined);
     mockTrackCronRun.mockResolvedValue(undefined);
     mockLogHealthError.mockResolvedValue(undefined);
+    mockListEvents.mockResolvedValue([]);
+  });
+
+  it('skips an estimate whose customer already has an upcoming event (prereq 1)', async () => {
+    mockListRecentEstimates.mockResolvedValue([makeEstimate({ Id: 'est-manual' })]);
+    mockListEvents.mockResolvedValue([
+      {
+        id: 'evt-booked',
+        summary: 'John Smith — crack injection rear wall',
+        start: '2026-11-03T13:00:00Z',
+        end: '2026-11-03T17:00:00Z',
+        attendees: [],
+        htmlLink: '',
+        attachments: [],
+      },
+    ]);
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(mockWritePendingDirective).not.toHaveBeenCalled();
+    expect(mockMarkEstimateHandled).toHaveBeenCalledWith(
+      'est-manual',
+      'manual-scheduled:evt-booked',
+    );
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.summary.manuallyScheduled).toBe(1);
+  });
+
+  it('does not skip when the upcoming event belongs to a different customer', async () => {
+    mockListRecentEstimates.mockResolvedValue([makeEstimate({ Id: 'est-other' })]);
+    mockListEvents.mockResolvedValue([
+      {
+        id: 'evt-jane',
+        summary: 'Jane Smith — sump pump',
+        start: '2026-11-03T13:00:00Z',
+        end: '2026-11-03T17:00:00Z',
+        attendees: [],
+        htmlLink: '',
+        attachments: [],
+      },
+    ]);
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(mockMarkEstimateHandled).not.toHaveBeenCalled();
+    expect(mockWritePendingDirective).toHaveBeenCalledTimes(1);
+  });
+
+  it('degrades to directive creation when the calendar is unavailable', async () => {
+    mockListRecentEstimates.mockResolvedValue([makeEstimate({ Id: 'est-cal-down' })]);
+    mockListEvents.mockRejectedValue(new Error('cal 500'));
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(mockWritePendingDirective).toHaveBeenCalledTimes(1);
+    expect(mockMarkEstimateHandled).not.toHaveBeenCalled();
   });
 
   it('skips when QuickBooks is not connected', async () => {

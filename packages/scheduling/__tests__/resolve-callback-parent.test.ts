@@ -198,3 +198,38 @@ describe('resolveCallbackParent', () => {
     expect(args.colorIds).toEqual(['10', '5']);
   });
 });
+
+describe('name disambiguation (Walk #7 prereq 4)', () => {
+  it('refuses single-token customer names without touching the calendar', async () => {
+    const cal = makeCal([ev()]);
+    const result = await resolveCallbackParent(
+      { cal },
+      { customerName: 'Smith', now: fixedNow },
+    );
+    expect(result).toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((cal.listEvents as any)).not.toHaveBeenCalled();
+  });
+
+  it('does not match a different customer sharing a surname', async () => {
+    const cal = makeCal([
+      ev({ summary: 'Jane Smith — Sump Pump', description: '[deal:77]' }),
+    ]);
+    const result = await resolveCallbackParent(
+      { cal },
+      { customerName: 'John Smith', now: fixedNow },
+    );
+    expect(result).toBeNull();
+  });
+
+  it('matches regardless of token order and punctuation in the summary', async () => {
+    const cal = makeCal([
+      ev({ summary: 'STUB — Smith, John (crack injection)', description: '[deal:42]' }),
+    ]);
+    const result = await resolveCallbackParent(
+      { cal },
+      { customerName: 'John Smith', now: fixedNow },
+    );
+    expect(result!.parentDealId).toBe(42);
+  });
+});

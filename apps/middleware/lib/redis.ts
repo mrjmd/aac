@@ -297,6 +297,44 @@ export async function getDirectiveIdByEstimate(
 }
 
 /**
+ * Stamp the estimate reverse index with a non-directive marker (e.g.
+ * `manual-scheduled:{eventId}`) so the reconcile cron short-circuits on
+ * estimates whose work is already on the calendar without a directive.
+ */
+export async function markEstimateHandled(
+  qbEstimateId: string,
+  marker: string,
+): Promise<void> {
+  const redis = getRedis();
+  await redis.set(keys.schedulingDirectiveByEstimate(qbEstimateId), marker);
+}
+
+/**
+ * Remove a directive from the shadow queue: blob, both pending lists, and
+ * (when known) the estimate reverse index. Used by the QB status-flip
+ * cleanup — an estimate moving off Accepted invalidates its directive.
+ *
+ * `qbEstimateId` clears the reverse index even when the blob is already
+ * gone or the index held a non-directive marker. Returns true when a
+ * directive blob actually existed.
+ */
+export async function removePendingDirective(
+  directiveId: string,
+  qbEstimateId?: string,
+): Promise<boolean> {
+  const redis = getRedis();
+  const blob = await redis.get<{ qbEstimateId?: string }>(keys.schedulingPending(directiveId));
+  const estimateKey = qbEstimateId ?? blob?.qbEstimateId;
+  await Promise.all([
+    redis.del(keys.schedulingPending(directiveId)),
+    redis.lrem(keys.schedulingPendingList, 0, directiveId),
+    redis.lrem(keys.schedulingPendingReviewList, 0, directiveId),
+    ...(estimateKey ? [redis.del(keys.schedulingDirectiveByEstimate(estimateKey))] : []),
+  ]);
+  return blob !== null && blob !== undefined;
+}
+
+/**
  * Read a single SchedulingDirective from the shadow queue by id. Used by
  * the admin send-proposal trigger and the proposal-decision endpoint to
  * look up the directive in context.

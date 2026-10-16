@@ -8,6 +8,8 @@ vi.mock('../lib/redis.js', () => ({
   trackWebhookProcessed: vi.fn().mockResolvedValue(undefined),
   logHealthError: vi.fn().mockResolvedValue(undefined),
   writePendingDirective: vi.fn().mockResolvedValue(undefined),
+  getDirectiveIdByEstimate: vi.fn().mockResolvedValue(null),
+  removePendingDirective: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock('../lib/env.js', () => ({
@@ -35,7 +37,9 @@ vi.mock('../lib/clients.js', () => ({
 
 import { POST, verifyIntuitSignature } from '../api/qb-webhook.js';
 import {
+  getDirectiveIdByEstimate,
   markEventProcessed,
+  removePendingDirective,
   trackWebhookProcessed,
   writePendingDirective,
 } from '../lib/redis.js';
@@ -171,6 +175,31 @@ describe('QB webhook POST', () => {
     const res = await POST(makeRequest({ events: [makeEvent()] }));
     expect(res.status).toBe(200);
     expect(writePendingDirective).not.toHaveBeenCalled();
+  });
+
+  it('removes the stale directive when an estimate flips off Accepted (prereq 3)', async () => {
+    mockQb.getEstimate.mockResolvedValueOnce(makeAcceptedEstimate({ TxnStatus: 'Rejected' }));
+    (getDirectiveIdByEstimate as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      'dir-stale',
+    );
+    const res = await POST(makeRequest({ events: [makeEvent()] }));
+    expect(res.status).toBe(200);
+    expect(removePendingDirective).toHaveBeenCalledWith('dir-stale', 'est-1234');
+    expect(writePendingDirective).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.counts.cleaned).toBe(1);
+  });
+
+  it('does not create a second directive for an estimate that already has one (prereq 2)', async () => {
+    mockQb.getEstimate.mockResolvedValueOnce(makeAcceptedEstimate());
+    (getDirectiveIdByEstimate as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      'dir-existing',
+    );
+    const res = await POST(makeRequest({ events: [makeEvent()] }));
+    expect(res.status).toBe(200);
+    expect(writePendingDirective).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.counts.duplicate).toBe(1);
   });
 
   it('skips duplicate events', async () => {

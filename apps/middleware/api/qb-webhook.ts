@@ -30,6 +30,8 @@ import {
   trackWebhookProcessed,
   logHealthError,
   writePendingDirective,
+  getDirectiveIdByEstimate,
+  removePendingDirective,
 } from '../lib/redis.js';
 import { maybePostSuggestionNote } from '../lib/suggestion-note.js';
 
@@ -149,13 +151,13 @@ export async function POST(request: Request): Promise<Response> {
       else acc.error++;
       return acc;
     },
-    { directive: 0, filtered: 0, duplicate: 0, ignored: 0, error: 0 },
+    { directive: 0, filtered: 0, duplicate: 0, ignored: 0, cleaned: 0, error: 0 },
   );
   log.info('QB webhook processed', counts);
   return json({ status: 'processed', counts });
 }
 
-type ProcessOutcome = 'directive' | 'filtered' | 'duplicate' | 'ignored';
+type ProcessOutcome = 'directive' | 'filtered' | 'duplicate' | 'ignored' | 'cleaned';
 
 async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
   if (!isEstimateUpdate(evt)) {
@@ -194,11 +196,36 @@ async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
     );
 
     if (!directive) {
+      // Status-flip cleanup (Walk #7 prereq 3): an estimate that moved off
+      // Accepted invalidates any directive it previously produced — leaving
+      // it queued could double-book a customer who changed their mind.
+      const staleId = await getDirectiveIdByEstimate(evt.intuitentityid);
+      if (staleId) {
+        await removePendingDirective(staleId, evt.intuitentityid);
+        log.info('Estimate flipped off Accepted — removed stale directive', {
+          estimateId: evt.intuitentityid,
+          status: estimate.TxnStatus,
+          staleDirectiveId: staleId,
+        });
+        return 'cleaned';
+      }
       log.info('Estimate not in Accepted state — filtered', {
         estimateId: evt.intuitentityid,
         status: estimate.TxnStatus,
       });
       return 'filtered';
+    }
+
+    // At-most-once per estimate (Walk #7 prereq 2, QB side): a second
+    // Accepted-state edit, or a Quo-path quote_approved that already claimed
+    // this estimate, must not produce a second directive.
+    const existingDirective = await getDirectiveIdByEstimate(evt.intuitentityid);
+    if (existingDirective) {
+      log.info('Estimate already has a directive — skipping duplicate', {
+        estimateId: evt.intuitentityid,
+        existingDirective,
+      });
+      return 'duplicate';
     }
 
     await writePendingDirective(directive);

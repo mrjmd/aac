@@ -29,6 +29,7 @@ import {
 } from '@aac/api-clients/gemini';
 import type { GmailClient } from '@aac/api-clients/gmail';
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import type { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import type { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import {
   PIPEDRIVE_CROSS_SYSTEM_FIELDS,
@@ -59,6 +60,7 @@ import {
   type StubPhotoAttachment,
 } from '@aac/scheduling';
 import {
+  getDirectiveIdByEstimate,
   getQbCustomerIdFromPipedrive,
   logHealthError,
   SCHEDULING_AUTO_PROPOSE_THRESHOLD,
@@ -116,6 +118,13 @@ export interface SchedulingDispatchDeps {
   /** Used to fetch recent conversation history as classifier context. */
   quo: QuoClient;
   /**
+   * Used for cross-path quote_approved dedup: a Quo-path approval claims the
+   * customer's most recent QB estimate so the QB webhook/reconcile can't
+   * produce a second directive for the same acceptance. Absent = dedup
+   * skipped (fail-open, pre-existing behavior).
+   */
+  qb?: QuickBooksClient | null;
+  /**
    * Stub-event execution config. When absent or disabled, directives only
    * flow to the shadow queue (pre-stub behavior).
    */
@@ -157,6 +166,8 @@ export interface SchedulingDispatchSummary {
   intentsDetected: number;
   directivesWritten: number;
   callbackParentMisses: number;
+  /** quote_approved dropped because the QB path already claimed the estimate. */
+  crossPathDuplicates: number;
   stubsCreated: number;
   holdsCreated: number;
   errors: number;
@@ -176,6 +187,7 @@ export async function dispatchSchedulingIntent(
     intentsDetected: 0,
     directivesWritten: 0,
     callbackParentMisses: 0,
+    crossPathDuplicates: 0,
     stubsCreated: 0,
     holdsCreated: 0,
     errors: 0,
@@ -251,6 +263,37 @@ export async function dispatchSchedulingIntent(
           });
         }
         continue;
+      }
+
+      // Walk #7 prereq 2: a customer who accepts in QB AND texts "let's do
+      // it" must not produce two directives. Claim the customer's most
+      // recent QB estimate for this approval; if the QB path already
+      // directive-ized it, drop this one.
+      if (
+        directive.intent === 'quote_approved'
+        && !directive.qbEstimateId
+        && deps.qb
+      ) {
+        const estimateId = await findRecentEstimateId(
+          deps.qb,
+          directive.qbCustomerId,
+          now().getTime(),
+        );
+        if (estimateId) {
+          const existing = await getDirectiveIdByEstimate(estimateId);
+          if (existing) {
+            summary.crossPathDuplicates++;
+            log.info('quote_approved already covered by QB-path directive — skipped', {
+              eventId: context.eventId,
+              estimateId,
+              existingDirective: existing,
+            });
+            continue;
+          }
+          // Stamps the reverse index via writePendingDirective below, so
+          // the QB webhook/reconcile dedups against THIS directive too.
+          directive.qbEstimateId = estimateId;
+        }
       }
 
       await writePendingDirective(directive);
@@ -810,3 +853,37 @@ async function fetchPdPersonInfo(
   return { name, qbCustomerId, address, emails };
 }
 
+
+// How far back a QB estimate can be and still be claimed by a Quo-path
+// quote_approved. Older estimates are almost certainly a different job.
+const RECENT_ESTIMATE_WINDOW_DAYS = 90;
+
+/**
+ * The customer's most recent QB estimate (any status) within the window,
+ * or null. Fail-open: a QB error just skips cross-path dedup for this
+ * directive — same behavior as before the guard existed.
+ */
+async function findRecentEstimateId(
+  qb: QuickBooksClient,
+  qbCustomerId: string | undefined,
+  nowMs: number,
+): Promise<string | null> {
+  if (!qbCustomerId) return null;
+  try {
+    if (!(await qb.isConnected())) return null;
+    // Already ordered MetaData.CreateTime DESC by the client's query.
+    const estimates = await qb.getEstimatesByCustomer(qbCustomerId);
+    const cutoff = nowMs - RECENT_ESTIMATE_WINDOW_DAYS * 86_400_000;
+    const recent = estimates.find((e) => {
+      const stamp = e.MetaData?.CreateTime ?? e.TxnDate;
+      return stamp ? new Date(stamp).getTime() >= cutoff : false;
+    });
+    return recent?.Id ?? null;
+  } catch (err) {
+    log.warn('Cross-path estimate lookup failed — dedup skipped', {
+      qbCustomerId,
+      error: (err as Error).message,
+    });
+    return null;
+  }
+}

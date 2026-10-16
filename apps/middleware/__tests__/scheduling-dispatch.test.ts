@@ -8,12 +8,14 @@ const {
   mockLogHealthError,
   mockTrackSchedulingClassification,
   mockGetQbCustomerIdFromPipedrive,
+  mockGetDirectiveIdByEstimate,
   mockStorePipedriveToQbMapping,
 } = vi.hoisted(() => ({
   mockWritePendingDirective: vi.fn(),
   mockLogHealthError: vi.fn(),
   mockTrackSchedulingClassification: vi.fn(),
   mockGetQbCustomerIdFromPipedrive: vi.fn().mockResolvedValue(null),
+  mockGetDirectiveIdByEstimate: vi.fn().mockResolvedValue(null),
   mockStorePipedriveToQbMapping: vi.fn(),
 }));
 
@@ -22,6 +24,7 @@ vi.mock('../lib/redis.js', () => ({
   logHealthError: mockLogHealthError,
   trackSchedulingClassification: mockTrackSchedulingClassification,
   getQbCustomerIdFromPipedrive: mockGetQbCustomerIdFromPipedrive,
+  getDirectiveIdByEstimate: mockGetDirectiveIdByEstimate,
   storePipedriveToQbMapping: mockStorePipedriveToQbMapping,
   SCHEDULING_AUTO_PROPOSE_THRESHOLD: 0.7,
 }));
@@ -218,6 +221,65 @@ describe('dispatchSchedulingIntent', () => {
     expect(written.intent).toBe('quote_approved');
     expect(written.source).toBe('quo_text');
     expect(written.pdPersonId).toBe(9001);
+  });
+
+  describe('cross-path quote_approved dedup (Walk #7 prereq 2)', () => {
+    const quoteApproved = () =>
+      makeGemini([
+        makeClassification({ intent: 'quote_approved', score: 0.9, confidence: 'high' }),
+      ]);
+    const makeQb = (estimates: Array<Record<string, unknown>>) => ({
+      isConnected: vi.fn().mockResolvedValue(true),
+      getEstimatesByCustomer: vi.fn().mockResolvedValue(estimates),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any;
+    const recentEstimate = { Id: 'est-55', MetaData: { CreateTime: '2026-05-20T10:00:00Z' } };
+
+    it('claims the most recent estimate so the reverse index covers this directive', async () => {
+      const qb = makeQb([recentEstimate]);
+      const summary = await dispatchSchedulingIntent(
+        { pd: makePd('John Smith', 'qb-cust-1'), cal: makeCal([]), gemini: quoteApproved(), quo: makeQuo(), qb, now: fixedNow },
+        ctxMsg(),
+      );
+      expect(summary.directivesWritten).toBe(1);
+      const written = mockWritePendingDirective.mock.calls[0][0];
+      expect(written.qbEstimateId).toBe('est-55');
+    });
+
+    it('drops the directive when the QB path already claimed the estimate', async () => {
+      mockGetDirectiveIdByEstimate.mockResolvedValueOnce('dir-from-qb-webhook');
+      const qb = makeQb([recentEstimate]);
+      const summary = await dispatchSchedulingIntent(
+        { pd: makePd('John Smith', 'qb-cust-1'), cal: makeCal([]), gemini: quoteApproved(), quo: makeQuo(), qb, now: fixedNow },
+        ctxMsg(),
+      );
+      expect(summary.crossPathDuplicates).toBe(1);
+      expect(summary.directivesWritten).toBe(0);
+      expect(mockWritePendingDirective).not.toHaveBeenCalled();
+    });
+
+    it('ignores estimates older than the 90-day window', async () => {
+      const qb = makeQb([{ Id: 'est-old', MetaData: { CreateTime: '2025-01-01T10:00:00Z' } }]);
+      const summary = await dispatchSchedulingIntent(
+        { pd: makePd('John Smith', 'qb-cust-1'), cal: makeCal([]), gemini: quoteApproved(), quo: makeQuo(), qb, now: fixedNow },
+        ctxMsg(),
+      );
+      expect(summary.directivesWritten).toBe(1);
+      expect(mockWritePendingDirective.mock.calls[0][0].qbEstimateId).toBeUndefined();
+    });
+
+    it('fails open when the QB lookup throws', async () => {
+      const qb = {
+        isConnected: vi.fn().mockResolvedValue(true),
+        getEstimatesByCustomer: vi.fn().mockRejectedValue(new Error('qb 500')),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any;
+      const summary = await dispatchSchedulingIntent(
+        { pd: makePd('John Smith', 'qb-cust-1'), cal: makeCal([]), gemini: quoteApproved(), quo: makeQuo(), qb, now: fixedNow },
+        ctxMsg(),
+      );
+      expect(summary.directivesWritten).toBe(1);
+    });
   });
 
   it('writes an AssessmentRequestedDirective from an inbound inquiry', async () => {
