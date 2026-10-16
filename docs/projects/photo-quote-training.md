@@ -1,7 +1,15 @@
 # Photo→Quote Training Layer — Deep Plan
 
-**Status:** PLANNED (owner directive 2026-10-16, pending go-ahead).
+**Status:** Phases 1–3 BUILT 2026-10-16 (same day as plan; owner green-lit).
+Corpus harvested (395/542 estimates, 1,854 photos), structured (blind
+baseline 43% exact / 65% family-level), Section V drafted, 685-area
+exemplar retrieval library embedded. **Awaiting owner review** (Section V
+draft + 41-case packet at `analysis/photo-review-2026-10.html`) before
+Phase 4 drafter integration. Findings:
+`analysis/02-strategy/photo-corpus-phase2-findings.md`.
 **Prerequisite:** Quote Drafter v1 (live, see `quote-drafter.md`).
+**Code:** `tools/src/photo-corpus/{harvest,structure,embed,distill}.ts`,
+retrieval + attribution in `@aac/quoting`, `GeminiClient.embedContent`.
 
 ## The lever
 

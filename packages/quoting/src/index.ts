@@ -68,3 +68,9 @@ export {
   type PhotoAttribution,
   type WindowedMessage,
 } from './photo-corpus.js';
+
+export {
+  cosineSimilarity,
+  retrieveSimilar,
+  type Scored,
+} from './retrieval.js';

@@ -331,6 +331,66 @@ describe('GeminiClient', () => {
     });
   });
 
+  describe('embedContent', () => {
+    it('embeds a batch and returns vectors in order', async () => {
+      const client = new GeminiClient({ apiKey: 'test-key' });
+      mockFetch.mockReturnValueOnce(Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          embeddings: [{ values: [0.1, 0.2] }, { values: [0.3, 0.4] }],
+        }),
+      }));
+
+      const vectors = await client.embedContent(['a', 'b']);
+      expect(vectors).toEqual([[0.1, 0.2], [0.3, 0.4]]);
+      const url = mockFetch.mock.calls[0][0] as string;
+      expect(url).toContain('gemini-embedding-001:batchEmbedContents');
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.requests).toHaveLength(2);
+      expect(body.requests[0].content.parts[0].text).toBe('a');
+    });
+
+    it('splits into batches of 100', async () => {
+      const client = new GeminiClient({ apiKey: 'test-key' });
+      const page = (n: number) => Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          embeddings: Array.from({ length: n }, () => ({ values: [1] })),
+        }),
+      });
+      mockFetch.mockReturnValueOnce(page(100)).mockReturnValueOnce(page(1));
+
+      const vectors = await client.embedContent(Array.from({ length: 101 }, (_, i) => `t${i}`));
+      expect(vectors).toHaveLength(101);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('throws on count mismatch and on API error', async () => {
+      const client = new GeminiClient({ apiKey: 'test-key' });
+      mockFetch.mockReturnValueOnce(Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ embeddings: [] }),
+      }));
+      await expect(client.embedContent(['a'])).rejects.toThrow('1 inputs');
+
+      mockFetch.mockReturnValueOnce(Promise.resolve({
+        ok: false,
+        status: 429,
+        text: () => Promise.resolve('quota'),
+      }));
+      await expect(client.embedContent(['a'])).rejects.toThrow('Gemini embed error (429)');
+    });
+
+    it('returns empty for empty input without fetching', async () => {
+      const client = new GeminiClient({ apiKey: 'test-key' });
+      expect(await client.embedContent([])).toEqual([]);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
   describe('generateImage', () => {
     function mockImagenResponse(count = 1) {
       const predictions = Array.from({ length: count }, (_, i) => ({

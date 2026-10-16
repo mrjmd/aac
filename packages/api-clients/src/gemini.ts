@@ -173,6 +173,10 @@ const DEFAULT_TEXT_MODEL = 'gemini-flash-latest';
 // ~2k truncate JSON responses mid-string on thinking models.
 const NO_THINKING_DISABLE_MAX_TOKENS = 8192;
 const DEFAULT_IMAGE_MODEL = 'imagen-4.0-generate-001';
+// Embeddings: gemini-embedding-001 is the current stable embedding model
+// (3072 dims default). Pinned (no -latest alias exists for embeddings);
+// stored vectors are useless across model swaps anyway — re-embed on change.
+const DEFAULT_EMBEDDING_MODEL = 'gemini-embedding-001';
 const IMAGE_TIMEOUT_MS = 45_000;
 const TEXT_TIMEOUT_MS = 30_000;
 const IMAGE_MIN_DELAY_MS = 8_000;
@@ -572,6 +576,58 @@ export class GeminiClient {
     });
 
     return text;
+  }
+
+  // ── Embeddings ──────────────────────────────────────────────────────
+
+  /**
+   * Embed a batch of texts (semantic retrieval). Returns one vector per
+   * input, in order. Batches of up to 100 texts per API call.
+   */
+  async embedContent(
+    texts: string[],
+    options?: { model?: string; timeoutMs?: number },
+  ): Promise<number[][]> {
+    if (!this.config.apiKey) {
+      throw new Error('Gemini API key not configured');
+    }
+    if (texts.length === 0) return [];
+
+    const model = options?.model ?? DEFAULT_EMBEDDING_MODEL;
+    const out: number[][] = [];
+    for (let i = 0; i < texts.length; i += 100) {
+      const batch = texts.slice(i, i + 100);
+      const response = await fetch(
+        `${API_BASE}/${model}:batchEmbedContents?key=${this.config.apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requests: batch.map((text) => ({
+              model: `models/${model}`,
+              content: { parts: [{ text }] },
+            })),
+          }),
+          signal: AbortSignal.timeout(options?.timeoutMs ?? TEXT_TIMEOUT_MS),
+        },
+      );
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Gemini embed error (${response.status}): ${error}`);
+      }
+      const data = (await response.json()) as {
+        embeddings?: Array<{ values?: number[] }>;
+      };
+      const vectors = (data.embeddings ?? []).map((e) => e.values ?? []);
+      if (vectors.length !== batch.length) {
+        throw new Error(
+          `Gemini embed returned ${vectors.length} vectors for ${batch.length} inputs`,
+        );
+      }
+      out.push(...vectors);
+    }
+    log.debug('Embedded content', { model, count: texts.length });
+    return out;
   }
 
   // ── Image Generation ──────────────────────────────────────────────
