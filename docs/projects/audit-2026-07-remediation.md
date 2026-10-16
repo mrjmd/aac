@@ -65,12 +65,12 @@ middleware/agent — run with `--force` until P2-1 lands.)
 | Deadline | What | Action | Phase |
 |---|---|---|---|
 | **PASSED (2026-06-19)** | Gemini rejects unrestricted standard API keys | Verify prod key has an API restriction in Cloud Console TODAY | 0 |
-| **2026-07-31** | Pipedrive v1 API hard shutdown | Migrate `pipedrive.ts` to v2 | 1 |
+| ~~2026-07-31~~ (v1 "out of support" since 2026-08-01, still functioning; NO announced removal date as of 2026-10-16) | Pipedrive v1 API shutdown | Migrate `pipedrive.ts` to v2 — schedulable, not deadline-driven | 1 |
 | **2026-07-31** | QB legacy webhook payload dies | ✅ NONE — `/api/qb-webhook` is already CloudEvents-only (built that way day one, see DECISIONS.md 2026-05-29) | — |
 | **2026-08-17** | `imagen-4.0-generate-001` shutdown | Rework `generateImage()` for `gemini-3.1-flash-image` (generateContent-style, NOT `:predict` — code change, not model-ID swap) | 6 |
 | **2026-09-30 (approx "September")** | ALL Gemini standard keys die → service-account-bound auth keys | Migrate key type; move key from `?key=` query param to `x-goog-api-key` header | 6 |
-| **2026-10-16** | `gemini-2.5-flash` shutdown | Bump `DEFAULT_TEXT_MODEL` to `gemini-3.5-flash`; re-verify `thinkingConfig: { thinkingBudget: 0 }` workaround still applies (see commit `3e06d7d` for why it exists) | 6 |
-| **~2026-11-01** | US DST ends — hardcoded `-04:00` offsets go wrong | Fix Eastern-time handling in cron/followup | 3 |
+| ~~2026-10-16~~ ☑ | `gemini-2.5-flash` shutdown | Superseded: clients use `gemini-flash-latest` alias; marketing vision libs migrated 2026-10-16 (quality-gate + crop, thinkingBudget 0) | 6 |
+| ~~**~2026-11-01**~~ ☑ 2026-10-16 | US DST ends — hardcoded `-04:00` offsets go wrong | getDayRangeEastern now computes the real Eastern offset; followup noon anchors were already DST-safe | 3 |
 | No date | Google Maps Distance Matrix is Legacy (≥12 mo notice promised); QB `minorversion=70` silently ignored since 2025-08 (runs as 75) | Routes API migration at leisure; bump minorversion pin to 75 as housekeeping | 6 |
 
 **No action needed (verified current as of 2026-07-02):** Quo/OpenPhone API
@@ -82,7 +82,7 @@ GA4 Data API v1beta, Calendar v3, Drive v3, Search Console v1.
 
 ## Phase 0 — Security fires (do first; ~1 day total)
 
-### P0-1. Rotate the committed Gemini API key ☐
+### P0-1. Rotate the committed Gemini API key ☑ (2026-10-16: Google had auto-disabled the key — "reported as leaked"; hardcoded line replaced with env read. No rotation needed, prod uses a different key.)
 
 - **Where:** `tools/src/scratch/spike-imagen.ts:16` —
   `const GEMINI_API_KEY = 'AIzaSy…'` hardcoded, committed in `5c0b60e`.
@@ -103,7 +103,7 @@ GA4 Data API v1beta, Calendar v3, Drive v3, Search Console v1.
   since June 19.
 - **Requires Matt:** yes.
 
-### P0-3. Authenticate the Pipedrive webhook ☐ **[CRITICAL]**
+### P0-3. Authenticate the Pipedrive webhook ☑ **[CRITICAL]** (2026-10-16: Basic auth on subscription 1376577 + timing-safe check in handler, fails closed 503 in prod; creds in Vercel PIPEDRIVE_WEBHOOK_USER/PASS; verified live end-to-end.)
 
 - **Where:** `apps/middleware/api/webhooks/pipedrive.ts:122-137` — no signature,
   no Basic auth, no secret. Anyone who guesses the URL can POST forged
@@ -122,7 +122,7 @@ GA4 Data API v1beta, Calendar v3, Drive v3, Search Console v1.
 - **Requires Matt:** setting the credential on the PD subscription (or agent
   does it via PD API if token permits webhook admin).
 
-### P0-4. Gate `/api/enrich` behind auth ☐ **[HIGH]**
+### P0-4. Gate `/api/enrich` behind auth ☑ **[HIGH]** (2026-10-16: verifyCronAuth bearer required.)
 
 - **Where:** `apps/middleware/api/enrich.ts:11-12, 127-140` — comment says "No
   auth required"; returns extracted name/email/address for any sequential
@@ -153,7 +153,7 @@ GA4 Data API v1beta, Calendar v3, Drive v3, Search Console v1.
 - **Note:** command-center has no test script (see P2-2) — at minimum add a
   route-level auth test if a test harness is introduced in the same session.
 
-### P0-6. Add session validation to field-app read pages ☐ **[HIGH]**
+### P0-6. Add session validation to field-app read pages ☑ **[HIGH]** (2026-10-16: requireSession() on day + event-detail pages, deployed.)
 
 - **Where:** `apps/field/middleware.ts` is presence-only *by design* (Edge
   can't reach Redis; its comment says pages do the real lookup). The write
@@ -466,7 +466,7 @@ everything; `pnpm turbo test` after each item.
   refreshes again** until cold start. Validate the response shape; throw on
   malformed.
 
-### P4-2. `QuoClient.updateContact`: fallback must throw, not partial-PATCH ☐ **[HIGH]**
+### P4-2. `QuoClient.updateContact`: fallback must throw, not partial-PATCH ☑ **[HIGH]** (2026-10-16: throws on pre-merge read failure; test added.)
 
 - **Where:** `packages/api-clients/src/quo.ts:384-391`. The primary
   read-merge-write path is correct (encodes the "Quo PATCH is destructive"
@@ -479,7 +479,7 @@ everything; `pnpm turbo test` after each item.
 - **Fix:** throw when the pre-merge GET fails; callers already handle
   update failures (webhook soft-catch). Add a test for the GET-fails path.
 
-### P4-3. `QuickBooksClient.updateCustomer`: sparse update ☐ **[HIGH — one-liner]**
+### P4-3. `QuickBooksClient.updateCustomer`: sparse update ☑ **[HIGH — one-liner]** (verified already fixed in code, `sparse: true` present.)
 
 - **Where:** `quickbooks.ts:362-385` — POSTs `{ Id, ...updates }` WITHOUT
   `sparse: true`. QBO default POST-update semantics are FULL update: omitted
