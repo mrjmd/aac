@@ -86,6 +86,26 @@ customer who already has a Pending bot draft (detected via the
   the same thread); the ruleset pins crack pricing but masonry/odd work
   moves. The bot marker + review step is the control for this.
 
+## Photo layer (Phase 4 of photo-quote-training, 2026-10-16)
+
+When `analysis/data/photo-corpus/exemplar-library.jsonl` exists, a photo
+**pre-pass** runs before the draft prompt: the photos are segmented into
+distinct physical AREAS (same crack from two angles = one area; different
+structures = separate areas), each area's situation text is embedded and
+the 3 most similar historical areas are retrieved from the exemplar
+library (what was actually quoted — or deliberately NOT quoted — in that
+situation), and the result is injected into the draft prompt. Section V
+(`section-v-draft.md`, DRAFT until owner sign-off) rides along as the
+visual ruleset. scope_accounting must then cover every photo area as well
+as every textual ask. Exemplars teach scope reading only — Section 0
+remains the sole pricing authority. Everything degrades gracefully to v1
+behavior when the assets are absent or the pre-pass fails.
+
+Regression gate: Erin Tortorella's thread must segment into 3 areas
+(breezeway step / bulkhead door rim / flagstone front step) — passed
+2026-10-16 on the first grounded run, including a Best Bulkheads referral
+in the exclusion reply.
+
 ## Known gaps / next
 
 - **Guarantee variant selection**: the QBO Guarantee item template is the

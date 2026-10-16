@@ -114,6 +114,10 @@ export function buildQuoteDraftPrompt(args: {
   itemNames: string[];
   thread: DraftThreadMessage[];
   photoCount: number;
+  /** Rendered photo-prepass block (area analysis + retrieved exemplars). */
+  photoContext?: string;
+  /** Section V visual-indicators ruleset (draft until owner sign-off). */
+  visualRulesetText?: string;
 }): { systemPrompt: string; userPrompt: string } {
   const systemPrompt = `You draft quotes for Attack A Crack, a foundation-repair company in Quincy MA. Matt is the owner. You are given a customer SMS thread (OUT = Matt, IN = customer)${args.photoCount > 0 ? ` and ${args.photoCount} photos the customer texted in` : ''}. Today is ${args.today}.
 
@@ -121,7 +125,7 @@ Draft the estimate Matt would write, as line items. PRICING AUTHORITY is SECTION
 
 RULESET:
 ${args.rulesetText}
-
+${args.visualRulesetText ? `\nVISUAL SCOPE RULESET (how to read photos into scope — item selection and indication thresholds; prices in it are historical, Section 0 wins):\n${args.visualRulesetText}\n` : ''}
 Each line's "item" MUST be one of these QBO item names (exact spelling):
 ${args.itemNames.join(' | ')}
 
@@ -144,7 +148,7 @@ Respond with ONLY a JSON object:
     .join('\n');
 
   const userPrompt = `CUSTOMER: ${args.customerName} (${args.phone})
-${args.photoCount > 0 ? `PHOTOS: ${args.photoCount} attached (oldest first)\n` : ''}THREAD:
+${args.photoCount > 0 ? `PHOTOS: ${args.photoCount} attached (oldest first)\n` : ''}${args.photoContext ? `${args.photoContext}\n\n` : ''}THREAD:
 ${digest}`;
 
   return { systemPrompt, userPrompt };

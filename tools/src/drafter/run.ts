@@ -28,15 +28,21 @@ import { keys, ttl } from '@aac/shared-utils/redis';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import {
   assembleEstimateLines,
+  buildAreaAnalysisPrompt,
   buildDescriptionLibrary,
   buildDraftPrivateNote,
   buildQuoteDraftPrompt,
+  areaSituationText,
   draftTotal,
+  formatPhotoContext,
   isBotDraft,
+  parseAreaAnalysis,
   parseQuoteDraftResponse,
+  retrieveSimilar,
   selectComparables,
   validateQuoteDraft,
   type DraftThreadMessage,
+  type ExemplarLibraryEntry,
 } from '@aac/quoting';
 import type { Finding, FindingsFile } from '../triage/analyze.ts';
 import type { Snapshot } from '../triage/collect.ts';
@@ -47,6 +53,11 @@ const FINDINGS_PATH = 'analysis/data/triage/findings.json';
 const SNAPSHOT_PATH = 'analysis/data/triage/snapshot.json';
 const RULESET_PATH = 'analysis/data/quoting-spike/llm-ruleset.md';
 const RUNLOG_PATH = 'analysis/data/triage/drafts.json';
+// Photo→quote training layer (Phase 4) — both optional; the drafter
+// degrades to v1 behavior when they're absent.
+const SECTION_V_PATH = 'analysis/data/photo-corpus/section-v-draft.md';
+const EXEMPLAR_LIBRARY_PATH = 'analysis/data/photo-corpus/exemplar-library.jsonl';
+const EXEMPLARS_PER_AREA = 3;
 const MAX_PHOTOS = 6;
 const MAX_THREAD_MESSAGES = 100;
 
@@ -162,6 +173,18 @@ async function main(): Promise<void> {
         .filter((n) => Number.isFinite(n) && n > 0),
     ) + 1;
 
+  // Photo-training assets (optional — Section V is a DRAFT until owner
+  // sign-off; exemplars teach scope reading, Section 0 owns prices).
+  const sectionVText = fs.existsSync(SECTION_V_PATH)
+    ? fs.readFileSync(SECTION_V_PATH, 'utf8')
+    : undefined;
+  const exemplarLibrary: ExemplarLibraryEntry[] = fs.existsSync(EXEMPLAR_LIBRARY_PATH)
+    ? fs.readFileSync(EXEMPLAR_LIBRARY_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as ExemplarLibraryEntry)
+    : [];
+  console.log(
+    `photo layer: Section V ${sectionVText ? 'loaded' : 'ABSENT'}, exemplar library ${exemplarLibrary.length} areas\n`,
+  );
+
   const today = new Date().toISOString().slice(0, 10);
   const records: DraftRunRecord[] = [];
 
@@ -169,7 +192,7 @@ async function main(): Promise<void> {
     const label = `${finding.customer ?? 'unknown'} (${finding.phone})`;
     console.log(`── ${label}: ${finding.title}`);
     try {
-      const record = await draftOne({ finding, qb, quo, gemini, snapshot, rulesetText, itemNames, items, library, recentEstimates, today, dryRun, docNumber: String(nextDocNumber) });
+      const record = await draftOne({ finding, qb, quo, gemini, snapshot, rulesetText, itemNames, items, library, recentEstimates, today, dryRun, docNumber: String(nextDocNumber), sectionVText, exemplarLibrary });
       if (record.outcome === 'created') nextDocNumber++;
       records.push(record);
     } catch (err) {
@@ -194,6 +217,38 @@ async function main(): Promise<void> {
   }
 }
 
+async function generateWithRetry(
+  gemini: GeminiClient,
+  prompt: string,
+  opts: {
+    systemPrompt?: string;
+    imageParts?: Array<{ mimeType: string; base64: string }>;
+  },
+): Promise<string> {
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await gemini.generateContent(prompt, {
+        systemPrompt: opts.systemPrompt,
+        temperature: 0,
+        maxOutputTokens: 8192,
+        thinkingBudget: 4096,
+        timeoutMs: 120_000,
+        imageParts: opts.imageParts?.length ? opts.imageParts : undefined,
+      });
+    } catch (err) {
+      lastErr = err as Error;
+      const msg = lastErr.message;
+      if (attempt < 2 && /429|500|503|timeout|aborted/i.test(msg)) {
+        await new Promise((r) => setTimeout(r, msg.includes('429') ? 65_000 : 5_000 * (attempt + 1)));
+        continue;
+      }
+      throw lastErr;
+    }
+  }
+  throw lastErr ?? new Error('Gemini returned nothing after retries');
+}
+
 async function draftOne(ctx: {
   finding: Finding & { phone: string };
   qb: QuickBooksClient;
@@ -208,6 +263,8 @@ async function draftOne(ctx: {
   today: string;
   dryRun: boolean;
   docNumber: string;
+  sectionVText?: string;
+  exemplarLibrary: ExemplarLibraryEntry[];
 }): Promise<DraftRunRecord> {
   const { finding, qb, quo, gemini } = ctx;
   const phone = finding.phone;
@@ -230,8 +287,11 @@ async function draftOne(ctx: {
     const existing = await qb.getEstimatesByCustomer(customerId);
     const botPending = existing.find((e) => e.TxnStatus === 'Pending' && isBotDraft(e));
     if (botPending) {
-      console.log(`  ~ skipped: bot draft already pending (#${botPending.DocNumber})`);
-      return { phone, customer: resolvedName, outcome: 'skipped', detail: `bot draft #${botPending.DocNumber} already pending` };
+      if (!ctx.dryRun) {
+        console.log(`  ~ skipped: bot draft already pending (#${botPending.DocNumber})`);
+        return { phone, customer: resolvedName, outcome: 'skipped', detail: `bot draft #${botPending.DocNumber} already pending` };
+      }
+      console.log(`  ~ note: bot draft #${botPending.DocNumber} already pending — a live run would skip; continuing (dry-run)`);
     }
   }
 
@@ -263,6 +323,43 @@ async function draftOne(ctx: {
   }
   console.log(`  thread: ${thread.length} messages, ${imageParts.length} photo(s)`);
 
+  // ── photo pre-pass: segment areas, retrieve similar historical areas
+  // (degrades to v1 behavior on any failure — never blocks the draft)
+  let photoContext: string | undefined;
+  if (imageParts.length > 0 && ctx.exemplarLibrary.length > 0) {
+    try {
+      const areaRaw = await generateWithRetry(
+        gemini,
+        buildAreaAnalysisPrompt({ thread, photoCount: imageParts.length, itemNames: ctx.itemNames }),
+        { imageParts },
+      );
+      const analysis = parseAreaAnalysis(areaRaw);
+      if (analysis) {
+        const situations = analysis.areas.map((a) => areaSituationText(a, analysis.photoReads));
+        const vectors = await gemini.embedContent(situations, { timeoutMs: 60_000 });
+        const retrieved = analysis.areas.map((area, i) => ({
+          area,
+          exemplars: retrieveSimilar(vectors[i], ctx.exemplarLibrary, EXEMPLARS_PER_AREA),
+        }));
+        photoContext = formatPhotoContext({ analysis, retrieved });
+        console.log(`  areas: ${analysis.areas.length}`);
+        for (const { area, exemplars } of retrieved) {
+          console.log(`    [${area.area}] ${area.description.slice(0, 90)}`);
+          for (const { item, score } of exemplars.slice(0, 1)) {
+            const what = item.quotedItems.length
+              ? item.quotedItems.map((q) => q.item).join(' + ')
+              : 'NOT QUOTED';
+            console.log(`        ≈ #${item.docNumber} (${score.toFixed(2)}): ${what}`);
+          }
+        }
+      } else {
+        console.log('  ⚠ photo pre-pass unparseable — drafting without area analysis');
+      }
+    } catch (err) {
+      console.log(`  ⚠ photo pre-pass failed (${(err as Error).message.slice(0, 100)}) — drafting without it`);
+    }
+  }
+
   // ── draft with Gemini (retry transient failures like analyze.ts does)
   const { systemPrompt, userPrompt } = buildQuoteDraftPrompt({
     customerName: resolvedName,
@@ -272,30 +369,11 @@ async function draftOne(ctx: {
     itemNames: ctx.itemNames,
     thread,
     photoCount: imageParts.length,
+    photoContext,
+    visualRulesetText: ctx.sectionVText,
   });
 
-  let raw: string | null = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      raw = await gemini.generateContent(userPrompt, {
-        systemPrompt,
-        temperature: 0,
-        maxOutputTokens: 8192,
-        thinkingBudget: 4096,
-        timeoutMs: 120_000,
-        imageParts: imageParts.length > 0 ? imageParts : undefined,
-      });
-      break;
-    } catch (err) {
-      const msg = (err as Error).message;
-      if (attempt < 2 && /429|500|503|timeout|aborted/i.test(msg)) {
-        await new Promise((r) => setTimeout(r, msg.includes('429') ? 65_000 : 5_000 * (attempt + 1)));
-        continue;
-      }
-      throw err;
-    }
-  }
-  if (!raw) throw new Error('Gemini returned nothing after retries');
+  const raw = await generateWithRetry(gemini, userPrompt, { systemPrompt, imageParts });
 
   const parsed = parseQuoteDraftResponse(raw);
   if (!parsed) {

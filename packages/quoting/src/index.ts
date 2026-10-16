@@ -74,3 +74,15 @@ export {
   retrieveSimilar,
   type Scored,
 } from './retrieval.js';
+
+export {
+  buildAreaAnalysisPrompt,
+  parseAreaAnalysis,
+  areaSituationText,
+  formatPhotoContext,
+  threadDigest,
+  type AreaAnalysis,
+  type ExemplarLibraryEntry,
+  type PhotoArea,
+  type PhotoRead,
+} from './photo-prepass.js';
