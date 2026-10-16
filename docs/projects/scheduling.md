@@ -256,9 +256,11 @@ Each piece is independently shippable and visible from the command-center view (
 - 10 real customers run cleanly through propose-dialogue before unlocking Run
 - **Exit criterion:** zero wrong-slot writes, zero misdirected SMS, customer SMS quality passes Matt's gut check 10/10. Duration model error within tolerance on ≥80% of jobs.
 
-### Walk-#7 prerequisites (dedup + cleanup gaps surfaced 2026-05-30)
+### Walk-#7 prerequisites (dedup + cleanup gaps surfaced 2026-05-30) — ✅ ALL FOUR CLOSED 2026-10-16
 
-Shadow mode tolerates these gaps because nothing executes downstream. Before `executeDirective` (#7) ships and any directive auto-acts, the following must be addressed — otherwise the agent could double-book customers, send SMS for stale state, or attach callbacks to the wrong parent:
+Shipped in one commit (deployed, all suites green). Implementation notes: #1 uses upcoming-calendar name matching (`summaryMatchesCustomer`, 60d lookahead, reverse index stamped `manual-scheduled:{eventId}`) instead of the `[deal:D]` scan — the deal-spine the original fix assumed still does not exist. #2 lands in `dispatchSchedulingIntent` (claims most recent QB estimate in a 90d window; QB webhook got the mirror-image guard). #3 removes blob + both pending lists + reverse index when an estimate flips off Accepted (`removePendingDirective`). #4 hardens `resolveCallbackParent` to require ≥2 name tokens all present (single-token names return null for manual handling) rather than the phone/zip weighting idea.
+
+Original statement of the gaps follows. Shadow mode tolerates these gaps because nothing executes downstream. Before `executeDirective` (#7) ships and any directive auto-acts, the following must be addressed — otherwise the agent could double-book customers, send SMS for stale state, or attach callbacks to the wrong parent:
 
 1. **Reconcile dedup against manual schedules.** Today `qb-reconcile` only checks the Redis reverse index `scheduling:directive-by-qb-estimate:{id}` — populated only by `writePendingDirective`. If a QB webhook is missed AND Matt manually creates a calendar event for that customer before the next reconcile run, the cron will still emit a directive. Fix: in the reconcile loop, after the Redis miss, look up the PD deal that carries `qbEstimateId == estimate.Id`, then scan calendar for any future event with a matching `[deal:D]` marker. If one exists, treat as already-scheduled and skip. Backfill: stamp the reverse index when the calendar check succeeds so subsequent runs short-circuit cheaply.
 
