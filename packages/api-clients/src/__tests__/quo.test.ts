@@ -316,6 +316,24 @@ describe('QuoClient', () => {
       expect(patchBody.customFields).toEqual([{ key: 'addr-key', value: '1 Main St' }]);
     });
 
+    it('throws (and sends no PATCH) when the pre-merge read fails', async () => {
+      const client = makeClient();
+      // GET blows up (transient 500) — a partial PATCH here would wipe the
+      // contact document, so updateContact must refuse instead.
+      mockFetch.mockReturnValueOnce(
+        mockResponse({ message: 'internal error' }, 500),
+      );
+
+      await expect(
+        client.updateContact('c-9', { defaultFields: { firstName: 'X' } }),
+      ).rejects.toThrow(/refusing destructive partial PATCH/);
+
+      const patchCalls = mockFetch.mock.calls.filter(
+        (c) => (c[1] as { method?: string } | undefined)?.method === 'PATCH',
+      );
+      expect(patchCalls).toHaveLength(0);
+    });
+
     it('allows explicitly setting externalId via updates', async () => {
       const client = makeClient();
       mockGetThenPatch(

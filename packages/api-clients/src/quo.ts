@@ -474,12 +474,19 @@ export class QuoClient {
         body.source = nextSource;
       }
     } else {
-      log.warn('Cannot read contact for merge, sending partial update', { contactId: id });
-      body = {};
-      if (updates.defaultFields) body.defaultFields = updates.defaultFields;
-      if (updates.customFields) body.customFields = updates.customFields;
-      if (updates.externalId !== undefined) body.externalId = updates.externalId;
-      if (updates.source !== undefined && !isReservedSource(updates.source)) body.source = updates.source;
+      // Pre-merge read failed (transient Quo error or missing contact).
+      // Quo's PATCH replaces the whole document, so a partial body here
+      // wipes every field the caller didn't pass — the exact data loss the
+      // read-merge-write above exists to prevent. Refuse instead; callers
+      // already soft-catch update failures and the next sync retries.
+      log.error(
+        'Pre-merge contact read failed — refusing partial PATCH',
+        new Error('updateContact pre-merge read failed'),
+        { contactId: id }
+      );
+      throw new Error(
+        `updateContact(${id}): could not read contact for merge; refusing destructive partial PATCH`
+      );
     }
 
     const result = await this.request<{ data: QuoContact }>(`/contacts/${id}`, {
