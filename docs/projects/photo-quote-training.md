@@ -1,6 +1,10 @@
 # Photo→Quote Training Layer — Deep Plan
 
-**Status:** Phases 1–3 BUILT 2026-10-16 (same day as plan; owner green-lit).
+**Status:** Phases 1–5 BUILT & EVALUATED 2026-10-16 (same day as plan).
+**Holdout result: grounded pipeline 70% exact item-set / 77% family-level
+vs ungrounded 49% / 67% (79 never-seen cases; fixed 17, broke 1).**
+Self-reported confidence barely discriminates (71% vs 56%) — Phase 6's
+composite trigger signal is required, as designed.
 Corpus harvested (395/542 estimates, 1,854 photos), structured (blind
 baseline 43% exact / 65% family-level), Section V drafted, 685-area
 exemplar retrieval library embedded. **Awaiting owner review** (Section V
