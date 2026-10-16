@@ -47,15 +47,40 @@ export interface DraftThreadMessage {
 export interface QuoteDraftLine {
   /** QBO item name — must resolve against the live item menu. */
   item: string;
-  /** Scope-specific description; canonical library text fills gaps. */
+  /** Model fallback text — used only when no template exists anywhere. */
   description?: string;
+  /**
+   * 2–6 words naming the exact thing/location this line covers, rendered
+   * as a bracketed prefix ahead of the standard template (owner
+   * convention, e.g. "[bulkhead corner crack]").
+   */
+  scopeNote?: string;
   qty: number;
   unitPrice: number;
+}
+
+/**
+ * One customer ask and what the draft did with it. Every distinct
+ * requested repair must appear here, mapped to the line that covers it
+ * or explicitly excluded — silent omissions are the one unforgivable
+ * drafting error (the customer assumes the quote covers everything they
+ * asked about).
+ */
+export interface ScopeAccounting {
+  /** The ask, close to the customer's own words. */
+  request: string;
+  /** QBO item name of the line covering it, or null when excluded. */
+  quotedItem: string | null;
+  /** Exclusions: why it isn't quoted. */
+  reason?: string;
+  /** Exclusions: one sentence Matt can send the customer about it. */
+  suggestedReply?: string;
 }
 
 export interface QuoteDraft {
   scopeSummary: string;
   lines: QuoteDraftLine[];
+  scopeAccounting: ScopeAccounting[];
   needsSiteVisit: boolean;
   reasoning: string;
   openQuestions: string[];
@@ -101,17 +126,18 @@ Each line's "item" MUST be one of these QBO item names (exact spelling):
 ${args.itemNames.join(' | ')}
 
 Hard rules:
-- Draft ONLY repairs the thread or photos give concrete evidence for. NEVER infer a repair from the mere presence of a structure. Specifically: a bulkhead alone is NOT a reason for Bulkhead Injection — the indicators are water entry at the sides of the bulkhead-to-foundation seam, at the bolts into the basement, or at the bottom of the stairs. No indicator, no line.
+- ACCOUNT FOR EVERY ASK: scope_accounting MUST list every distinct repair the customer requested anywhere in the thread or photos, one entry each, in the customer's own words. Set quoted_item to the QBO item name of the line that covers it, or null when you are deliberately not quoting it — and then reason and suggested_reply (one sentence Matt can send the customer about why it isn't quoted / what happens next) are REQUIRED. If one line covers two asks, list both asks pointing at the same item. Never silently omit or merge a request — the customer will assume the quote covers it.
+- Draft ONLY repairs the thread or photos give concrete evidence for. NEVER infer a repair from the mere presence of a structure. Specifically: a bulkhead alone is NOT a reason for Bulkhead Injection — the indicators are water entry at the sides of the bulkhead-to-foundation seam, at the bolts into the basement, or at the bottom of the stairs. No indicator, no line (if the customer asked, exclude it in scope_accounting).
 - NEVER add a discount line on a job with fewer than ${DISCOUNT_MIN_INJECTIONS} injection units. At ${DISCOUNT_MIN_INJECTIONS}+, the Discount line is exactly -$${DISCOUNT_PER_INJECTION} per injection unit — never resized to hit a round total.
 - NEVER add a cash/check discount (payment method is unknown at draft time).
 - Do NOT include a Guarantee line — it is appended automatically.
 - One line per service with qty (e.g. 3 cracks = Crack Repair qty 3), not three separate lines.
-- Line descriptions are NOT used on the estimate — each item's standard QBO description template is inserted verbatim. You may omit "description"; anything scope-specific belongs in scope_summary/reasoning instead.
+- Line descriptions are NOT used on the estimate — each item's standard QBO description template is inserted verbatim. Instead give each line a "scope_note": 2-6 words naming the exact thing/location it covers (e.g. "bulkhead corner crack", "front flagstone landing"); it is prepended in brackets ahead of the template so the customer knows exactly what is included. You may omit "description".
 - If the thread/photos don't support a confident price (fieldstone, bowing walls, unclear scope, $4k+ complexity), set needs_site_visit true and list what's unknown in open_questions — still draft your best-guess lines.
 - If the thread mentions wall bowing over 1.5 inches, drainage/grading as the root cause, or work AAC doesn't do, say so in open_questions.
 
 Respond with ONLY a JSON object:
-{"scope_summary": "1-2 sentences", "lines": [{"item": "QBO item name", "description": "scope text", "qty": number, "unit_price": number}], "needs_site_visit": boolean, "reasoning": "which Section 0 rules you applied and why", "open_questions": ["..."], "confidence": "high"|"medium"|"low"}`;
+{"scope_summary": "1-2 sentences", "lines": [{"item": "QBO item name", "scope_note": "2-6 words", "qty": number, "unit_price": number}], "scope_accounting": [{"request": "what the customer asked for, their words", "quoted_item": "QBO item name" | null, "reason": "exclusions only: why not quoted", "suggested_reply": "exclusions only: one sentence to the customer"}], "needs_site_visit": boolean, "reasoning": "which Section 0 rules you applied and why", "open_questions": ["..."], "confidence": "high"|"medium"|"low"}`;
 
   const digest = args.thread
     .map((m) => `${m.direction === 'outgoing' ? 'OUT' : 'IN'} ${m.at.slice(0, 16)}: ${m.text}`)
@@ -154,16 +180,34 @@ export function parseQuoteDraftResponse(raw: string): QuoteDraft | null {
     lines.push({
       item,
       description: typeof rec.description === 'string' ? rec.description : undefined,
+      scopeNote: typeof rec.scope_note === 'string' && rec.scope_note.trim() ? rec.scope_note.trim() : undefined,
       qty,
       unitPrice,
     });
   }
   if (lines.length === 0) return null;
 
+  const scopeAccounting: ScopeAccounting[] = [];
+  if (Array.isArray(parsed.scope_accounting)) {
+    for (const e of parsed.scope_accounting) {
+      if (typeof e !== 'object' || e === null) continue;
+      const rec = e as Record<string, unknown>;
+      if (typeof rec.request !== 'string' || !rec.request.trim()) continue;
+      scopeAccounting.push({
+        request: rec.request.trim(),
+        quotedItem: typeof rec.quoted_item === 'string' && rec.quoted_item.trim() ? rec.quoted_item.trim() : null,
+        reason: typeof rec.reason === 'string' && rec.reason ? rec.reason : undefined,
+        suggestedReply:
+          typeof rec.suggested_reply === 'string' && rec.suggested_reply ? rec.suggested_reply : undefined,
+      });
+    }
+  }
+
   const confidence = parsed.confidence === 'high' || parsed.confidence === 'low' ? parsed.confidence : 'medium';
   return {
     scopeSummary: typeof parsed.scope_summary === 'string' ? parsed.scope_summary : '',
     lines,
+    scopeAccounting,
     needsSiteVisit: parsed.needs_site_visit === true,
     reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : '',
     openQuestions: Array.isArray(parsed.open_questions)
@@ -250,6 +294,21 @@ export function validateQuoteDraft(draft: QuoteDraft, itemNames: string[]): Draf
     errors.push('Draft has no sales lines after validation');
   }
 
+  // Completeness signals — can't verify against the thread here, but an
+  // empty or dangling accounting is always worth a review flag.
+  if (draft.scopeAccounting.length === 0) {
+    warnings.push('Model gave no scope accounting — verify every customer ask is covered');
+  }
+  const finalItemNames = new Set(finalLines.map((l) => l.item.toLowerCase()));
+  for (const a of draft.scopeAccounting) {
+    if (a.quotedItem && !finalItemNames.has(a.quotedItem.toLowerCase())) {
+      warnings.push(`Scope accounting references "${a.quotedItem}" for "${a.request}" but no such line exists`);
+    }
+    if (!a.quotedItem && !a.reason) {
+      warnings.push(`Excluded ask "${a.request}" has no reason — fill in before replying to the customer`);
+    }
+  }
+
   return { ok: errors.length === 0, errors, warnings, draft: { ...draft, lines: finalLines } };
 }
 
@@ -305,12 +364,15 @@ export function assembleEstimateLines(args: {
   for (const line of args.draft.lines) {
     const item = itemByLower.get(line.item.toLowerCase());
     if (!item) throw new Error(`assembleEstimateLines: unresolved item "${line.item}" — validate first`);
+    // Owner rule (2026-10-16): the standard QBO item template verbatim,
+    // never model-rewritten. Recent-estimate wording covers items with
+    // no template; model text is a last resort only. A short bracketed
+    // scope note ahead of the template is the sanctioned way to say
+    // exactly what the line covers.
+    const base = item.Description || args.descriptionLibrary.get(item.Name) || line.description;
     lines.push({
       DetailType: 'SalesItemLineDetail',
-      // Owner rule (2026-10-16): the standard QBO item template verbatim,
-      // never model-rewritten. Recent-estimate wording covers items with
-      // no template; model text is a last resort only.
-      Description: item.Description || args.descriptionLibrary.get(item.Name) || line.description,
+      Description: line.scopeNote ? `[${line.scopeNote}]\n\n${base ?? ''}`.trimEnd() : base,
       Amount: round2(line.qty * line.unitPrice),
       SalesItemLineDetail: {
         ItemRef: { value: item.Id, name: item.Name },
@@ -395,6 +457,18 @@ export function buildDraftPrivateNote(args: {
         (c) => `- #${c.docNumber} ${c.txnDate} ${c.txnStatus} $${c.total} — ${c.itemSummary}`,
       ),
     );
+  }
+  if (draft.scopeAccounting.length > 0) {
+    parts.push(
+      'Scope accounting (every customer ask → coverage):',
+      ...draft.scopeAccounting.map((e) =>
+        e.quotedItem
+          ? `- "${e.request}" → ${e.quotedItem}`
+          : `- "${e.request}" → EXCLUDED: ${e.reason ?? 'no reason given'}${e.suggestedReply ? ` | Say: "${e.suggestedReply}"` : ''}`,
+      ),
+    );
+  } else {
+    parts.push('⚠ Model gave no scope accounting — verify every customer ask is covered before sending.');
   }
   if (draft.openQuestions.length > 0) {
     parts.push('Open questions:', ...draft.openQuestions.map((q) => `- ${q}`));

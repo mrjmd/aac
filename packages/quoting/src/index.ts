@@ -54,6 +54,7 @@ export {
   type DraftThreadMessage,
   type QuoteDraftLine,
   type QuoteDraft,
+  type ScopeAccounting,
   type DraftValidation,
   type ComparableSummary,
 } from './draft-quote.js';

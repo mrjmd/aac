@@ -30,8 +30,16 @@ Every draft is unmistakably bot-marked:
 - Line descriptions are the **standard QBO item templates verbatim**
   (owner rule, 2026-10-16): `QBItem.Description` first, most recent real
   estimate's wording second, model text only when neither exists. The
-  model is told its descriptions are discarded. The Guarantee line is
-  appended automatically.
+  model is told its descriptions are discarded. Specificity goes in a
+  **bracketed scope note** prepended to the template (owner convention,
+  e.g. `[bulkhead corner crack]`). The Guarantee line is appended
+  automatically.
+- **Scope accounting is mandatory** (owner rule, 2026-10-16): every
+  distinct customer ask must be mapped to the line that covers it or
+  explicitly excluded with a reason + a one-sentence suggested customer
+  reply. The mapping renders in the PrivateNote ("every customer ask →
+  coverage"); the validator warns on missing/dangling/reason-less
+  entries. Silent omissions are the one unforgivable drafting error.
 - **Scope must be evidenced** (ruleset Section 0 rule 12 + prompt hard
   rule): never infer a repair from the mere presence of a structure.
   Bulkhead injection requires water signs at the seam sides, the bolts,

@@ -30,6 +30,9 @@ function makeDraft(overrides?: Partial<QuoteDraft>): QuoteDraft {
   return {
     scopeSummary: 'Two vertical cracks in poured foundation.',
     lines: [{ item: 'Crack Repair', description: 'Urethane injection.', qty: 2, unitPrice: 1175 }],
+    scopeAccounting: [
+      { request: 'two cracks in basement wall', quotedItem: 'Crack Repair' },
+    ],
     needsSiteVisit: false,
     reasoning: 'Section 0 rule 1-2.',
     openQuestions: [],
@@ -86,6 +89,22 @@ describe('parseQuoteDraftResponse', () => {
   it('returns null on prose or empty lines', () => {
     expect(parseQuoteDraftResponse('I cannot draft this quote.')).toBeNull();
     expect(parseQuoteDraftResponse('{"scope_summary": "x", "lines": []}')).toBeNull();
+  });
+
+  it('parses scope_note and scope_accounting', () => {
+    const draft = parseQuoteDraftResponse(JSON.stringify({
+      lines: [{ item: 'Concrete Corner Rebuilding', scope_note: 'bulkhead corner crack', qty: 1, unit_price: 975 }],
+      scope_accounting: [
+        { request: 'cracks around bulkhead', quoted_item: 'Concrete Corner Rebuilding' },
+        { request: 'breezeway step repair', quoted_item: null, reason: 'step has settled; not patchable', suggested_reply: 'The breezeway step has sunk and needs an on-site look before we can quote it.' },
+        { request: '', reason: 'dropped — empty request' },
+      ],
+    }));
+    expect(draft!.lines[0].scopeNote).toBe('bulkhead corner crack');
+    expect(draft!.scopeAccounting).toHaveLength(2);
+    expect(draft!.scopeAccounting[0].quotedItem).toBe('Concrete Corner Rebuilding');
+    expect(draft!.scopeAccounting[1].quotedItem).toBeNull();
+    expect(draft!.scopeAccounting[1].suggestedReply).toContain('on-site look');
   });
 
   it('drops malformed lines and defaults confidence to medium', () => {
@@ -163,6 +182,20 @@ describe('validateQuoteDraft', () => {
     expect(v.draft.lines.find((l) => l.item === 'Discount')!.unitPrice).toBe(-225);
   });
 
+  it('flags missing, dangling, and reason-less scope accounting', () => {
+    const noAccounting = validateQuoteDraft(makeDraft({ scopeAccounting: [] }), ITEM_NAMES);
+    expect(noAccounting.warnings.some((w) => w.includes('no scope accounting'))).toBe(true);
+
+    const dangling = validateQuoteDraft(makeDraft({
+      scopeAccounting: [
+        { request: 'bulkhead cracks', quotedItem: 'Bulkhead Injection' },
+        { request: 'sunken step', quotedItem: null },
+      ],
+    }), ITEM_NAMES);
+    expect(dangling.warnings.some((w) => w.includes('"Bulkhead Injection"') && w.includes('no such line'))).toBe(true);
+    expect(dangling.warnings.some((w) => w.includes('"sunken step"') && w.includes('no reason'))).toBe(true);
+  });
+
   it('drops model-authored guarantee lines and fails drafts with no sales lines', () => {
     const v = validateQuoteDraft(makeDraft({
       lines: [{ item: 'Guarantee', qty: 1, unitPrice: 0 }],
@@ -209,6 +242,20 @@ describe('assembleEstimateLines', () => {
       descriptionLibrary: new Map([['Crack Repair', 'Library wording.']]),
     });
     expect(lines[1].Description).toBe('Standard QBO template.');
+  });
+
+  it('prepends the bracketed scope note ahead of the template', () => {
+    const itemsWithTemplates = ITEMS.map((i) =>
+      i.Name === 'Crack Repair' ? { ...i, Description: 'Standard QBO template.' } : i,
+    );
+    const lines = assembleEstimateLines({
+      draft: makeDraft({
+        lines: [{ item: 'Crack Repair', scopeNote: 'bulkhead corner crack', qty: 1, unitPrice: 1175 }],
+      }),
+      items: itemsWithTemplates,
+      descriptionLibrary: new Map(),
+    });
+    expect(lines[1].Description).toBe('[bulkhead corner crack]\n\nStandard QBO template.');
   });
 
   it('falls back library → model text only when no template exists', () => {
@@ -278,6 +325,15 @@ describe('buildDraftPrivateNote + draftTotal', () => {
       ],
       needsSiteVisit: true,
       openQuestions: ['Confirm crack count from photos'],
+      scopeAccounting: [
+        { request: 'three basement cracks', quotedItem: 'Crack Repair' },
+        {
+          request: 'breezeway step repair',
+          quotedItem: null,
+          reason: 'settled step, scope unclear',
+          suggestedReply: 'The breezeway step looks settled — I want to see it in person before quoting.',
+        },
+      ],
     });
     expect(draftTotal(draft)).toBe(3300);
 
@@ -291,6 +347,9 @@ describe('buildDraftPrivateNote + draftTotal', () => {
     expect(note).toContain('Total: $3300');
     expect(note).toContain('SITE VISIT RECOMMENDED');
     expect(note).toContain('#1484 2026-08-12 Accepted $2350');
+    expect(note).toContain('Scope accounting');
+    expect(note).toContain('- "three basement cracks" → Crack Repair');
+    expect(note).toContain('- "breezeway step repair" → EXCLUDED: settled step, scope unclear | Say: "The breezeway step looks settled');
     expect(note).toContain('Confirm crack count');
     expect(note).toContain('Corrected discount');
   });

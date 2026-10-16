@@ -319,7 +319,14 @@ async function draftOne(ctx: {
 
   console.log(`  draft: $${draftTotal(draft)} (${draft.confidence}${draft.needsSiteVisit ? ', site visit' : ''})`);
   for (const l of draft.lines) {
-    console.log(`    ${l.item} ×${l.qty} @ $${l.unitPrice}`);
+    console.log(`    ${l.item}${l.scopeNote ? ` [${l.scopeNote}]` : ''} ×${l.qty} @ $${l.unitPrice}`);
+  }
+  for (const a of draft.scopeAccounting) {
+    console.log(
+      a.quotedItem
+        ? `    ✓ "${a.request}" → ${a.quotedItem}`
+        : `    ✗ "${a.request}" EXCLUDED: ${a.reason ?? '(no reason)'}`,
+    );
   }
   for (const w of validation.warnings) console.log(`    ⚠ ${w}`);
   for (const q of draft.openQuestions) console.log(`    ? ${q}`);
