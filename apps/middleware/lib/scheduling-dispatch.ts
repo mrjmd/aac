@@ -158,6 +158,19 @@ export interface SchedulingDispatchDeps {
   holds?: {
     enabled: boolean;
   };
+  /**
+   * Suggestion-note poster (quote accepted → suggestSlot + hold + Quo
+   * contact note). The webhook wires this to maybePostSuggestionNote,
+   * which is flag-gated (SCHEDULING_SUGGEST_NOTES) and fail-soft. Absent =
+   * no notes from the Quo path (pre-wiring behavior; the QB path posts its
+   * own). The at-most-once marker inside the implementation is keyed on
+   * qbEstimateId when present, so the Quo and QB paths can't double-post
+   * for the same acceptance.
+   */
+  postSuggestionNote?: (
+    directive: SchedulingDirective,
+    caller: string,
+  ) => Promise<{ status: string } | null>;
   now?: () => Date;
 }
 
@@ -170,6 +183,7 @@ export interface SchedulingDispatchSummary {
   crossPathDuplicates: number;
   stubsCreated: number;
   holdsCreated: number;
+  suggestionNotesPosted: number;
   errors: number;
 }
 
@@ -190,6 +204,7 @@ export async function dispatchSchedulingIntent(
     crossPathDuplicates: 0,
     stubsCreated: 0,
     holdsCreated: 0,
+    suggestionNotesPosted: 0,
     errors: 0,
   };
 
@@ -293,6 +308,23 @@ export async function dispatchSchedulingIntent(
           // Stamps the reverse index via writePendingDirective below, so
           // the QB webhook/reconcile dedups against THIS directive too.
           directive.qbEstimateId = estimateId;
+
+          // The normalizer scored this directive without knowing an
+          // estimate exists (the Quo path only looks it up here). Apply
+          // the scorer's open-estimate boost now: without it a 0.9
+          // classifier acceptance caps at 0.685 (0.9×0.65 + 0.1 PD match)
+          // and every Quo-path quote approval is structurally stuck below
+          // the 0.7 auto-propose gate — no stub, no suggestion note.
+          const signals = directive.confidence.signals;
+          const miss = signals.indexOf('no_open_qb_estimate');
+          if (miss >= 0) signals.splice(miss, 1);
+          if (!signals.includes('open_qb_estimate_for_customer')) {
+            signals.push('open_qb_estimate_for_customer');
+            directive.confidence.score = Math.min(
+              1,
+              Math.round((directive.confidence.score + 0.2) * 100) / 100,
+            );
+          }
         }
       }
 
@@ -336,6 +368,21 @@ export async function dispatchSchedulingIntent(
       ) {
         const created = await createHoldForDirective(deps, context, directive);
         if (created) summary.holdsCreated++;
+      }
+
+      // Suggestion note: a confident quote acceptance from a text or call
+      // posts the suggested-slot note (with its own hold) so Matt can text
+      // the offer from inside the conversation — same flow the QB path
+      // runs when an estimate flips to Accepted. Jack Ferrari call,
+      // 2026-10-16: "let's get something on the calendar" produced no note
+      // because only the QB path was wired.
+      if (
+        deps.postSuggestionNote
+        && directive.intent === 'quote_approved'
+        && queue === 'pending'
+      ) {
+        const noteResult = await deps.postSuggestionNote(directive, 'quo-dispatch');
+        if (noteResult?.status === 'posted') summary.suggestionNotesPosted++;
       }
     } catch (err) {
       summary.errors++;

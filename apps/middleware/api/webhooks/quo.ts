@@ -37,6 +37,7 @@ import {
   type SchedulingDispatchContext,
   type SchedulingEventType,
 } from '../../lib/scheduling-dispatch.js';
+import { maybePostSuggestionNote } from '../../lib/suggestion-note.js';
 
 const log = createLogger('quo-webhook');
 
@@ -586,6 +587,7 @@ export async function POST(request: Request): Promise<Response> {
             holds: {
               enabled: env.scheduling.holdEventsEnabled,
             },
+            postSuggestionNote: maybePostSuggestionNote,
           },
           dispatchCtx,
         );

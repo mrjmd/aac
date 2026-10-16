@@ -282,6 +282,102 @@ describe('dispatchSchedulingIntent', () => {
     });
   });
 
+  describe('suggestion-note wiring (Jack Ferrari gap, 2026-10-16)', () => {
+    const quoteApproved = (score = 0.9) =>
+      makeGemini([
+        makeClassification({ intent: 'quote_approved', score, confidence: 'high' }),
+      ]);
+    // Recent open estimate: the cross-path lookup finds it, stamps
+    // qbEstimateId, and applies the open-estimate confidence boost that
+    // lifts a 0.9-classifier acceptance over the 0.7 auto-propose gate.
+    const makeQb = () => ({
+      isConnected: vi.fn().mockResolvedValue(true),
+      getEstimatesByCustomer: vi.fn().mockResolvedValue([
+        { Id: 'est-2208', MetaData: { CreateTime: '2026-05-20T10:00:00Z' } },
+      ]),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any;
+    const deps = (overrides: Record<string, unknown> = {}) => ({
+      pd: makePd('Jack Ferrari', 'qb-cust-2208'),
+      cal: makeCal([]),
+      gemini: quoteApproved(),
+      quo: makeQuo(),
+      qb: makeQb(),
+      now: fixedNow,
+      ...overrides,
+    });
+
+    it('estimate lookup boosts confidence over the auto-propose gate', async () => {
+      const postSuggestionNote = vi.fn().mockResolvedValue({ status: 'posted' });
+      await dispatchSchedulingIntent(deps({ postSuggestionNote }), ctxMsg());
+      const written = mockWritePendingDirective.mock.calls[0][0];
+      // 0.9×0.65 + 0.1 (pd match) + 0.2 (open estimate) = 0.89
+      expect(written.confidence.score).toBeCloseTo(0.89, 2);
+      expect(written.confidence.signals).toContain('open_qb_estimate_for_customer');
+      expect(written.confidence.signals).not.toContain('no_open_qb_estimate');
+      expect(written.qbEstimateId).toBe('est-2208');
+    });
+
+    it('posts the suggestion note for a confident quote_approved', async () => {
+      const postSuggestionNote = vi.fn().mockResolvedValue({ status: 'posted' });
+      const summary = await dispatchSchedulingIntent(deps({ postSuggestionNote }), ctxMsg());
+      expect(postSuggestionNote).toHaveBeenCalledTimes(1);
+      const [directive, caller] = postSuggestionNote.mock.calls[0];
+      expect(directive.intent).toBe('quote_approved');
+      expect(caller).toBe('quo-dispatch');
+      expect(summary.suggestionNotesPosted).toBe(1);
+    });
+
+    it('fires from a call transcript, not just texts', async () => {
+      const postSuggestionNote = vi.fn().mockResolvedValue({ status: 'posted' });
+      const gemini = makeGemini([
+        makeClassification({ intent: 'quote_approved', score: 0.9, confidence: 'high' }),
+        makeClassification(), // matt side: no intent
+      ]);
+      const summary = await dispatchSchedulingIntent(
+        deps({ gemini, postSuggestionNote }),
+        ctxTranscript([
+          { content: 'Yeah, we can do that. Throw me some dates and we will go from there.', isMatt: false },
+          { content: 'I will get you an exact date and time for our next availability.', isMatt: true },
+        ]),
+      );
+      expect(postSuggestionNote).toHaveBeenCalledTimes(1);
+      expect(postSuggestionNote.mock.calls[0][0].source).toBe('quo_call');
+      expect(summary.suggestionNotesPosted).toBe(1);
+    });
+
+    it('skips the pending-review queue (below auto-propose threshold)', async () => {
+      const postSuggestionNote = vi.fn();
+      // low classifier (0.5×0.65 + 0.1 + 0.2 = 0.625) stays under the gate
+      await dispatchSchedulingIntent(
+        deps({ gemini: quoteApproved(0.5), postSuggestionNote }),
+        ctxMsg(),
+      );
+      expect(postSuggestionNote).not.toHaveBeenCalled();
+    });
+
+    it('skips non-quote intents', async () => {
+      const postSuggestionNote = vi.fn();
+      const gemini = makeGemini([
+        makeClassification({ intent: 'assessment_requested', score: 0.9, confidence: 'high' }),
+      ]);
+      await dispatchSchedulingIntent(
+        deps({ gemini, postSuggestionNote }),
+        ctxMsg({ text: 'Can you come look at my basement?' }),
+      );
+      expect(postSuggestionNote).not.toHaveBeenCalled();
+    });
+
+    it('a throwing note poster never loses the already-written directive', async () => {
+      const postSuggestionNote = vi.fn().mockRejectedValue(new Error('quo 500'));
+      const summary = await dispatchSchedulingIntent(deps({ postSuggestionNote }), ctxMsg());
+      expect(summary.directivesWritten).toBe(1);
+      expect(summary.suggestionNotesPosted).toBe(0);
+      expect(summary.errors).toBe(1);
+      expect(mockWritePendingDirective).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('writes an AssessmentRequestedDirective from an inbound inquiry', async () => {
     const gemini = makeGemini([
       makeClassification({

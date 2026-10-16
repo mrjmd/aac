@@ -761,6 +761,24 @@ describe('GeminiClient', () => {
       expect(promptText).toContain('Schedule me Tuesday');
     });
 
+    it('customer prompt teaches phone-call acceptance ("throw me some dates")', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockClassifierResponse({
+        intent: null, confidence: 'low', rationale: '', knownSlot: null, eventClass: null, scopeSummary: '',
+      }));
+
+      await client.classifySchedulingIntent('Yeah, we can do that. Throw me some dates.', {
+        speakerRole: 'customer',
+        now: fixedNow,
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      const promptText = body.contents[0].parts[0].text as string;
+      expect(promptText).toContain('Throw me some dates');
+      expect(promptText).toContain('IS quote_approved');
+      expect(promptText).toContain('does not cancel the acceptance');
+    });
+
     it('selects the Matt prompt when speakerRole is "matt"', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(mockClassifierResponse({

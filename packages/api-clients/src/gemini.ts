@@ -821,6 +821,8 @@ Return exactly one of:
    - "Looks good, when can you start?"
    - "Approved — we want to schedule"
    - "Yes, let's move forward with the proposal"
+   - "Yeah, we can do that" (on a call, agreeing when the business proposes getting the work scheduled)
+   - "Throw me some dates and we'll go from there"
 
 2. assessment_requested — The customer is asking for a NEW assessment, site visit, inspection, or estimate. No prior AAC quote for this work. Examples:
    - "Can you come out and look at my basement?"
@@ -853,6 +855,7 @@ Return ONLY a JSON object:
 
 Rules:
 - Acknowledgements ("ok", "got it", "sounds good") alone are NOT quote_approved unless the customer is clearly accepting the work.
+- Asking the business to SEND date options ("throw me some dates", "send me some times", "let me know your next availability") after agreeing to proceed IS quote_approved — the customer is initiating scheduling even though they will confirm the specific date later. A trailing "I'll get back to you" about WHICH date does not cancel the acceptance.
 - CRITICAL: an agreement ("Yes, that will work") given right after a specific date/time was offered is appointment_confirmed, NOT quote_approved — the customer is accepting the time slot, not necessarily the quote.
 - appointment_confirmed requires a concrete date (and ideally time) resolvable from the conversation context or the message itself. A bare "yes" with no offered slot in sight is NOT appointment_confirmed.
 - A pure pricing/info question with no schedule request is null.
