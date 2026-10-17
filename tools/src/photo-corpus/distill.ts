@@ -62,7 +62,9 @@ const PREAMBLE = `You are distilling quoting rules for Attack A Crack (AAC), a M
 
 Write terse, operational rules. Format each rule as:
 - **<rule name>** — WHEN <visual/textual indicators> → <item(s)>. (evidence: n≈<count>)
-Flag uncertainty explicitly ("UNCLEAR — owner to confirm: ..."). Never invent indicators not supported by the evidence. Prices are informational only (they drift over time) — rules are about WHAT to quote, not price.`;
+Flag uncertainty explicitly ("UNCLEAR — owner to confirm: ..."). Never invent indicators not supported by the evidence.
+
+PRICING: the owner ADOPTED A NEW PRICING POLICY (Section 0 of llm-ruleset.md) that deliberately changed several historical practices — so historical prices and discount behavior in the evidence MUST NOT be restated as rules. Never write a dollar amount, discount size, or discount trigger in any rule. If pairing/bundling behavior matters to scope (e.g., an item counts as an injection line), say so and cite "per Section 0" — the drafter always receives Section 0 alongside these rules. Known changed examples you must not echo: multi-crack discounts (historically −$100/crack from the 2nd crack; NOW only at 3+ injection lines, fixed −$75/line) and the crack anchor (historically drifted to $1,025–1,075; NOW $1,175). Rules are about WHAT to quote, never what it costs.`;
 
 async function synthesize(gemini: GeminiClient, title: string, prompt: string): Promise<string> {
   const text = await gemini.generateContent(`${PREAMBLE}\n\n${prompt}`, {
@@ -190,8 +192,11 @@ async function main(): Promise<void> {
 
 > Distilled ${new Date().toISOString().slice(0, 10)} from ${exemplars.length} photo-attributed estimates
 > (${lib.length} segmented areas, 2024-09 → 2026-10) by ${MODEL}.
-> NOT canonical until reviewed. Prices shown anywhere are historical — SECTION 0
-> of llm-ruleset.md is the only pricing authority.
+> NOT canonical until reviewed. These rules carry NO pricing: the corpus
+> predates the pricing policy adopted 2026-10-16, so historical prices and
+> discounts were deliberately stripped. SECTION 0 of llm-ruleset.md is the
+> only pricing authority (anchor \\$1,175/crack; multi-injection discount
+> only at 3+ injection lines, fixed −\\$75/line — never on 1–2 crack jobs).
 
 ## V.1 Variant selection
 
