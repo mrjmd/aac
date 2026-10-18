@@ -219,14 +219,12 @@ describe('assembleEstimateLines', () => {
       descriptionLibrary: library,
     });
 
-    expect(lines[0]).toEqual({
-      DetailType: 'DescriptionOnly',
-      Description: BOT_DRAFT_TOP_LINE,
-      DescriptionLineDetail: {},
-    });
-    expect(lines[1].Amount).toBe(2350);
-    expect(lines[1].Description).toBe('Canonical crack description.');
-    expect(lines[1].SalesItemLineDetail!.ItemRef).toEqual({ value: '7', name: 'Crack Repair' });
+    // Send-ready (owner 2026-10-18): NO customer-visible bot marking —
+    // the first line is real scope, identification lives in PrivateNote.
+    expect(lines.every((l) => !l.Description?.includes(BOT_DRAFT_MARKER))).toBe(true);
+    expect(lines[0].Amount).toBe(2350);
+    expect(lines[0].Description).toBe('Canonical crack description.');
+    expect(lines[0].SalesItemLineDetail!.ItemRef).toEqual({ value: '7', name: 'Crack Repair' });
     const last = lines[lines.length - 1];
     expect(last.SalesItemLineDetail!.ItemRef!.name).toBe('Guarantee');
     expect(last.Amount).toBe(0);
@@ -241,7 +239,7 @@ describe('assembleEstimateLines', () => {
       items: itemsWithTemplates,
       descriptionLibrary: new Map([['Crack Repair', 'Library wording.']]),
     });
-    expect(lines[1].Description).toBe('Standard QBO template.');
+    expect(lines[0].Description).toBe('Standard QBO template.');
   });
 
   it('prepends the bracketed scope note ahead of the template', () => {
@@ -255,7 +253,7 @@ describe('assembleEstimateLines', () => {
       items: itemsWithTemplates,
       descriptionLibrary: new Map(),
     });
-    expect(lines[1].Description).toBe('[bulkhead corner crack]\n\nStandard QBO template.');
+    expect(lines[0].Description).toBe('[bulkhead corner crack]\n\nStandard QBO template.');
   });
 
   it('falls back library → model text only when no template exists', () => {
@@ -264,14 +262,14 @@ describe('assembleEstimateLines', () => {
       items: ITEMS,
       descriptionLibrary: new Map([['Crack Repair', 'Library wording.']]),
     });
-    expect(withLibrary[1].Description).toBe('Library wording.');
+    expect(withLibrary[0].Description).toBe('Library wording.');
 
     const modelOnly = assembleEstimateLines({
       draft: makeDraft(),
       items: ITEMS,
       descriptionLibrary: new Map(),
     });
-    expect(modelOnly[1].Description).toBe('Urethane injection.');
+    expect(modelOnly[0].Description).toBe('Urethane injection.');
   });
 });
 

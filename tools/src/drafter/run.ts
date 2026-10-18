@@ -210,7 +210,7 @@ function requireEnv(name: string): string {
 interface DraftRunRecord {
   phone: string;
   customer: string;
-  outcome: 'created' | 'dry-run' | 'skipped' | 'failed';
+  outcome: 'created' | 'updated' | 'dry-run' | 'skipped' | 'failed';
   detail: string;
   estimateId?: string;
   docNumber?: string;
@@ -360,7 +360,7 @@ async function main(): Promise<void> {
     const label = `${finding.customer ?? 'unknown'} (${finding.phone})`;
     console.log(`── ${label}: ${finding.title}`);
     try {
-      const record = await draftOne({ finding, qb, quo, gemini, snapshot, rulesetText, itemNames, items, library, recentEstimates, today, dryRun, docNumber: String(nextDocNumber), sectionVText, exemplarLibrary, fieldChannel, skipIfRecentEstimateDays: skipRecentArg });
+      const record = await draftOne({ finding, qb, quo, gemini, redis, snapshot, rulesetText, itemNames, items, library, recentEstimates, today, dryRun, docNumber: String(nextDocNumber), sectionVText, exemplarLibrary, fieldChannel, skipIfRecentEstimateDays: skipRecentArg });
       if (record.outcome === 'created') nextDocNumber++;
       records.push(record);
     } catch (err) {
@@ -433,6 +433,7 @@ async function draftOne(ctx: {
   docNumber: string;
   sectionVText?: string;
   exemplarLibrary: ExemplarLibraryEntry[];
+  redis: Redis;
   fieldChannel: FieldChannel | null;
   skipIfRecentEstimateDays?: number;
 }): Promise<DraftRunRecord> {
@@ -452,24 +453,35 @@ async function draftOne(ctx: {
     }
   }
 
-  // ── idempotency: never stack bot drafts on the same customer
+  // ── ownership & idempotency (SyncToken one-way door, owner 2026-10-18)
+  // Existing BOT-OWNED pending draft → regenerate in place with the merged
+  // context. Any foreign SyncToken bump = HUMAN-OWNED forever: never write.
+  // No bot draft → the recent-estimate gate decides whether to create.
+  let updateTarget: QBEstimate | null = null;
   if (customerId) {
     const existing = await qb.getEstimatesByCustomer(customerId);
-    if (ctx.skipIfRecentEstimateDays) {
+    const botPending = existing.find((e) => e.TxnStatus === 'Pending' && isBotDraft(e));
+    if (botPending) {
+      const stored = await ctx.redis.get(keys.quoteDraftSyncToken(botPending.Id));
+      const botOwned = stored !== null && stored !== undefined && String(stored) === String(botPending.SyncToken);
+      if (botOwned) {
+        updateTarget = botPending;
+        console.log(`  ~ bot-owned draft #${botPending.DocNumber} — will regenerate in place`);
+      } else {
+        const msg = `bot draft #${botPending.DocNumber} is human-owned (owner edited, or pre-ownership era) — never touching it`;
+        if (!ctx.dryRun) {
+          console.log(`  ~ skipped: ${msg}`);
+          return { phone, customer: resolvedName, outcome: 'skipped', detail: msg };
+        }
+        console.log(`  ~ note: ${msg} — a live run would skip; continuing (dry-run)`);
+      }
+    } else if (ctx.skipIfRecentEstimateDays) {
       const cutoff = new Date(Date.now() - ctx.skipIfRecentEstimateDays * 86_400_000).toISOString().slice(0, 10);
       const recent = existing.find((e) => (e.TxnDate ?? '') >= cutoff);
       if (recent) {
         console.log(`  ~ skipped: estimate #${recent.DocNumber} (${recent.TxnDate}) within ${ctx.skipIfRecentEstimateDays}d — not stacking`);
         return { phone, customer: resolvedName, outcome: 'skipped', detail: `recent estimate #${recent.DocNumber} (${recent.TxnDate})` };
       }
-    }
-    const botPending = existing.find((e) => e.TxnStatus === 'Pending' && isBotDraft(e));
-    if (botPending) {
-      if (!ctx.dryRun) {
-        console.log(`  ~ skipped: bot draft already pending (#${botPending.DocNumber})`);
-        return { phone, customer: resolvedName, outcome: 'skipped', detail: `bot draft #${botPending.DocNumber} already pending` };
-      }
-      console.log(`  ~ note: bot draft #${botPending.DocNumber} already pending — a live run would skip; continuing (dry-run)`);
     }
   }
 
@@ -612,9 +624,39 @@ async function draftOne(ctx: {
   for (const q of draft.openQuestions) console.log(`    ? ${q}`);
 
   if (ctx.dryRun) {
-    console.log('  [dry-run] would create Pending estimate; PrivateNote:');
+    console.log(`  [dry-run] would ${updateTarget ? `regenerate #${updateTarget.DocNumber} in place` : 'create Pending estimate'}; PrivateNote:`);
     console.log(privateNote.split('\n').map((l) => `    | ${l}`).join('\n'));
     return { phone, customer: resolvedName, outcome: 'dry-run', detail: `$${draftTotal(draft)}`, total: draftTotal(draft) };
+  }
+
+  if (updateTarget) {
+    // Regenerate in place. Compare-and-swap on the SyncToken we verified
+    // ownership against — if the owner touched the draft between the check
+    // and this write, QBO rejects it and the draft becomes human-owned.
+    try {
+      const revised = await qb.replaceEstimateLines({
+        estimateId: updateTarget.Id,
+        syncToken: updateTarget.SyncToken,
+        customerId: customerId!,
+        lines,
+        privateNote: `REV ${ctx.today} — regenerated on new info (was $${updateTarget.TotalAmt}).\n${privateNote}`,
+        docNumber: updateTarget.DocNumber,
+      });
+      await ctx.redis.set(keys.quoteDraftSyncToken(revised.Id), String(revised.SyncToken));
+      console.log(`  ✓ regenerated Pending estimate #${revised.DocNumber} — $${revised.TotalAmt} (was $${updateTarget.TotalAmt})`);
+      return {
+        phone, customer: resolvedName, outcome: 'updated',
+        detail: `#${revised.DocNumber} regenerated`,
+        estimateId: revised.Id, docNumber: revised.DocNumber, total: revised.TotalAmt,
+      };
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (/stale|5010/i.test(msg)) {
+        console.log(`  ~ skipped: owner edited #${updateTarget.DocNumber} mid-flight — now human-owned, not touching`);
+        return { phone, customer: resolvedName, outcome: 'skipped', detail: `#${updateTarget.DocNumber} edited concurrently — human-owned` };
+      }
+      throw err;
+    }
   }
 
   if (!customerId) {
@@ -624,6 +666,7 @@ async function draftOne(ctx: {
   }
 
   const estimate = await qb.createEstimate({ customerId, lines, privateNote, docNumber: ctx.docNumber });
+  await ctx.redis.set(keys.quoteDraftSyncToken(estimate.Id), String(estimate.SyncToken));
   console.log(`  ✓ created Pending estimate #${estimate.DocNumber} — $${estimate.TotalAmt}`);
   return {
     phone,

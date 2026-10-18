@@ -161,7 +161,8 @@ async function main(): Promise<void> {
     const needsVisit = /needs?[_ ]site[_ ]visit|site visit recommended/i.test(output);
     const confidence = draftLine?.[2] ?? null;
     const wouldAutoCreate = !failed && simpleInjection && confidence === 'high' && !needsVisit;
-    const createdDoc = output.match(/created Pending estimate #(\S+)/)?.[1] ?? null;
+    const createdDoc = output.match(/(?:created|regenerated) Pending estimate #(\S+)/)?.[1] ?? null;
+    const regenerated = /regenerated Pending estimate #/.test(output);
     const skipped = /~ skipped:/.test(output);
 
     log.write(JSON.stringify({
@@ -172,7 +173,7 @@ async function main(): Promise<void> {
       why: verdict.why,
       events: events.length,
       createdDoc,
-      outcome: failed ? 'draft-failed' : createdDoc ? 'created' : skipped ? 'skipped' : 'drafted',
+      outcome: failed ? 'draft-failed' : regenerated ? 'updated' : createdDoc ? 'created' : skipped ? 'skipped' : 'drafted',
       total: draftLine ? Number(draftLine[1].replace(/,/g, '')) : null,
       confidence,
       scopeItems,

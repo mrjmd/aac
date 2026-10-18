@@ -605,6 +605,45 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('replaceEstimateLines', () => {
+    it('full-POSTs with the CALLER-SUPPLIED SyncToken (never refetches)', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: 'est-9', SyncToken: '8', TxnStatus: 'Pending', CustomerRef: { value: 'c-1' }, Line: [] },
+      }));
+
+      const result = await client.replaceEstimateLines({
+        estimateId: 'est-9',
+        syncToken: '7',
+        customerId: 'c-1',
+        lines: [{ DetailType: 'SalesItemLineDetail', Amount: 1175, SalesItemLineDetail: { ItemRef: { value: '7' }, Qty: 1, UnitPrice: 1175 } }],
+        privateNote: 'BOT DRAFT rev 2',
+        docNumber: '1562',
+      });
+
+      expect(result.SyncToken).toBe('8');
+      expect(mockFetch).toHaveBeenCalledTimes(1); // no ownership-breaking refetch
+      const body = JSON.parse((mockFetch.mock.calls[0][1] as { body: string }).body);
+      expect(body.Id).toBe('est-9');
+      expect(body.SyncToken).toBe('7');
+      expect(body.sparse).toBeUndefined(); // full update — lines replaced
+      expect(body.TxnStatus).toBe('Pending');
+      expect(body.Line).toHaveLength(1);
+      expect(body.PrivateNote).toBe('BOT DRAFT rev 2');
+    });
+
+    it('propagates QBO stale-token rejection (the concurrency safety)', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse(
+        { Fault: { Error: [{ Message: 'Stale Object Error', code: '5010' }] } },
+        400,
+      ));
+      await expect(client.replaceEstimateLines({
+        estimateId: 'est-9', syncToken: '2', customerId: 'c-1', lines: [],
+      })).rejects.toThrow(/5010|Stale|400/i);
+    });
+  });
+
   describe('sendInvoice', () => {
     it('POSTs to /invoice/{id}/send and passes sendTo when email given', async () => {
       const client = makeClient();

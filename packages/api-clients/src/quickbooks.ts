@@ -623,6 +623,50 @@ export class QuickBooksClient {
   }
 
   /**
+   * Replace an estimate's full line set — the quote drafter's regenerate-
+   * in-place path for BOT-OWNED drafts only. Compare-and-swap semantics:
+   * the caller passes the SyncToken it verified ownership against, and QBO
+   * rejects the write (stale-object error) if ANYTHING touched the
+   * estimate since — so a concurrent owner edit can never be clobbered.
+   * Never fetches a fresh token; staleness is the safety feature.
+   */
+  async replaceEstimateLines(args: {
+    estimateId: string;
+    /** The SyncToken ownership was verified against — NOT refetched. */
+    syncToken: string;
+    customerId: string;
+    lines: QBEstimateCreateLine[];
+    privateNote?: string;
+    docNumber?: string;
+    txnDate?: string;
+  }): Promise<QBEstimate> {
+    const body: Record<string, unknown> = {
+      Id: args.estimateId,
+      SyncToken: args.syncToken,
+      CustomerRef: { value: args.customerId },
+      TxnStatus: 'Pending',
+      Line: args.lines,
+    };
+    if (args.privateNote) body.PrivateNote = args.privateNote.slice(0, 4000);
+    if (args.docNumber) body.DocNumber = args.docNumber;
+    if (args.txnDate) body.TxnDate = args.txnDate;
+
+    log.info('Replacing QuickBooks estimate lines (bot-owned regenerate)', {
+      estimateId: args.estimateId,
+      lineCount: args.lines.length,
+    });
+
+    const result = await this.request<{ Estimate?: QBEstimate }>(
+      '/estimate?minorversion=70',
+      { method: 'POST', body: JSON.stringify(body) },
+    );
+    if (!result.Estimate) {
+      throw new Error('QuickBooks did not return estimate after line replace');
+    }
+    return result.Estimate;
+  }
+
+  /**
    * Create a new estimate. Used by the quote drafter — drafts are always
    * TxnStatus 'Pending' unless the caller says otherwise, and nothing here
    * emails the customer (no BillEmail, no send).
