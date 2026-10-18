@@ -22,8 +22,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Redis } from '@upstash/redis';
 import { QuickBooksClient, type QBEstimate } from '@aac/api-clients/quickbooks';
-import { QuoClient } from '@aac/api-clients/quo';
+import { QuoClient, type QuoMessage, type QuoCall } from '@aac/api-clients/quo';
 import { GeminiClient } from '@aac/api-clients/gemini';
+import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import {
@@ -41,8 +43,14 @@ import {
   retrieveSimilar,
   selectComparables,
   validateQuoteDraft,
+  matchEventsToCustomer,
+  inDebriefWindow,
+  buildFieldExtractionPrompt,
+  parseFieldExtraction,
+  formatFieldContext,
   type DraftThreadMessage,
   type ExemplarLibraryEntry,
+  type FieldEvidence,
 } from '@aac/quoting';
 import type { Finding, FindingsFile } from '../triage/analyze.ts';
 import type { Snapshot } from '../triage/collect.ts';
@@ -61,6 +69,117 @@ const SECTION_V_PATH = 'analysis/data/photo-corpus/section-v-draft-v2.md';
 const EXEMPLAR_LIBRARY_PATH = 'analysis/data/photo-corpus/exemplar-library-v2.jsonl';
 const EXEMPLARS_PER_AREA = 3;
 const MAX_PHOTOS = 6;
+// Runtime field context (owner process rule 2026-10-18): recover the
+// assessment chain live — calendar event + Matt↔Mike debrief + photos Mike
+// attached to the event. Holdout-validated: assessment-sourced cases went
+// 60% → 80% exact with this supplied.
+const MIKE_PHONE = '+18573126761';
+const MIKE_EMAILS = new Set(['mike@attackacrack.com', 'harrringtonm@gmail.com']);
+const FIELD_LOOKBACK_DAYS = 60;
+const MAX_TECH_PHOTOS = 4;
+const MAX_DEBRIEF_CALLS = 3;
+const MAX_TRANSCRIPT_CHARS = 8_000;
+
+interface FieldChannel {
+  events: Array<{
+    id: string;
+    summary?: string;
+    location?: string;
+    description?: string;
+    colorId?: string;
+    startMs: number;
+    attachments: Array<{ fileId?: string; title: string; mimeType?: string }>;
+  }>;
+  mikeTexts: QuoMessage[];
+  mikeCalls: QuoCall[];
+  drive: GoogleDriveClient;
+}
+
+/**
+ * Recover the assessment chain for one customer: matched calendar events,
+ * debrief texts/call-transcripts, Mike-attached event photos (Drive owner
+ * check — Matt also attaches customer duplicates, which are excluded), and
+ * an LLM extraction of the field findings. Never throws; empty on no match.
+ */
+async function fetchFieldContext(input: {
+  channel: FieldChannel;
+  quo: QuoClient;
+  gemini: GeminiClient;
+  customerName: string;
+  customerPhotoCount: number;
+}): Promise<{ fieldBlock: string; techParts: Array<{ mimeType: string; base64: string }>; eventCount: number }> {
+  const { channel, quo, gemini, customerName } = input;
+  const none = { fieldBlock: '', techParts: [], eventCount: 0 };
+  const matches = matchEventsToCustomer(channel.events, customerName);
+  if (!matches.length) return none;
+  const visitTimes = matches.map((m) => m.startMs);
+
+  // debrief texts: name mention anywhere recent, or anything near a visit
+  const tokens = customerName.toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= 4);
+  const texts = channel.mikeTexts
+    .filter((m) => {
+      const at = new Date(m.createdAt).getTime();
+      const nearVisit = visitTimes.some((v) => inDebriefWindow(at, v));
+      const mention = tokens.some((t) => (m.text ?? '').toLowerCase().includes(t));
+      return nearVisit || mention;
+    })
+    .map((m) => ({ at: m.createdAt, fromOwner: m.direction === 'outgoing', text: m.text ?? '' }))
+    .filter((t) => t.text.trim());
+
+  // debrief calls near a visit → transcripts
+  const calls = channel.mikeCalls
+    .filter((c) => c.status === 'completed' && (c.duration ?? 0) >= 40)
+    .filter((c) => visitTimes.some((v) => inDebriefWindow(new Date(c.createdAt).getTime(), v)))
+    .slice(0, MAX_DEBRIEF_CALLS);
+  const callTranscripts: Array<{ at: string; durationMin: number; dialogue: string }> = [];
+  for (const c of calls) {
+    const t = await quo.getCallTranscript(c.id).catch(() => null);
+    if (!t?.dialogue?.length) continue;
+    let dialogue = t.dialogue
+      .map((d) => `${d.identifier === MIKE_PHONE ? 'MIKE' : 'MATT'}: ${d.content}`)
+      .join('\n');
+    if (dialogue.length > MAX_TRANSCRIPT_CHARS) {
+      dialogue = dialogue.slice(0, MAX_TRANSCRIPT_CHARS / 2) + '\n…\n' + dialogue.slice(-MAX_TRANSCRIPT_CHARS / 2);
+    }
+    callTranscripts.push({ at: c.createdAt, durationMin: Math.round((c.duration ?? 0) / 60), dialogue });
+  }
+
+  // technician photos attached to the matched events (owner = Mike only)
+  const techParts: Array<{ mimeType: string; base64: string }> = [];
+  for (const ev of matches) {
+    const raw = channel.events.find((e) => e.id === ev.id);
+    for (const a of raw?.attachments ?? []) {
+      if (techParts.length >= MAX_TECH_PHOTOS) break;
+      if (!a.fileId) continue;
+      if (a.mimeType && !a.mimeType.startsWith('image/')) continue;
+      const info = await channel.drive.getFileInfo(a.fileId);
+      const owner = (info?.ownerEmail ?? info?.lastModifiedByEmail ?? '').toLowerCase();
+      if (!MIKE_EMAILS.has(owner)) continue;
+      const dl = await channel.drive.downloadFile(a.fileId);
+      if (!dl || !dl.mimeType.startsWith('image/')) continue;
+      techParts.push({ mimeType: dl.mimeType, base64: Buffer.from(dl.data).toString('base64') });
+    }
+  }
+
+  if (!texts.length && !callTranscripts.length && !techParts.length) return none;
+
+  let extraction = null;
+  if (texts.length || callTranscripts.length) {
+    const evidence: FieldEvidence = { events: matches, texts, callTranscripts };
+    const raw = await generateWithRetry(gemini, buildFieldExtractionPrompt({ customerName, evidence }), {});
+    extraction = parseFieldExtraction(raw);
+  }
+
+  return {
+    fieldBlock: formatFieldContext({
+      extraction,
+      techPhotoCount: techParts.length,
+      customerPhotoCount: input.customerPhotoCount,
+    }),
+    techParts,
+    eventCount: matches.length,
+  };
+}
 const MAX_THREAD_MESSAGES = 100;
 
 function loadEnv(): void {
@@ -103,8 +222,9 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const dryRun = argv.includes('--dry-run');
   const phoneArg = argv.includes('--phone') ? argv[argv.indexOf('--phone') + 1] : undefined;
+  const findingsArg = argv.includes('--findings') ? argv[argv.indexOf('--findings') + 1] : undefined;
 
-  const findingsFile = JSON.parse(fs.readFileSync(FINDINGS_PATH, 'utf8')) as FindingsFile;
+  const findingsFile = JSON.parse(fs.readFileSync(findingsArg ?? FINDINGS_PATH, 'utf8')) as FindingsFile;
   const snapshot = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8')) as Snapshot;
   const rulesetText = fs.readFileSync(RULESET_PATH, 'utf8');
 
@@ -187,6 +307,46 @@ async function main(): Promise<void> {
     `photo layer: Section V ${sectionVText ? 'loaded' : 'ABSENT'}, exemplar library ${exemplarLibrary.length} areas\n`,
   );
 
+  // Field channel (one fetch per run): recent calendar events + the
+  // Matt↔Mike thread/calls. Optional — missing Google env just disables it.
+  let fieldChannel: FieldChannel | null = null;
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN) {
+    try {
+      const oauth = {
+        clientId: requireEnv('GOOGLE_CLIENT_ID'),
+        clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),
+        refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
+      };
+      const calendar = new GoogleCalendarClient({
+        calendarId: process.env.GOOGLE_CALENDAR_ID || 'matt@attackacrack.com',
+        oauth,
+      });
+      const drive = new GoogleDriveClient({ oauth });
+      const now = Date.now();
+      const rawEvents = await calendar.listEvents({
+        timeMin: new Date(now - FIELD_LOOKBACK_DAYS * 86_400_000).toISOString(),
+        timeMax: new Date(now + 86_400_000).toISOString(),
+      });
+      const events = rawEvents.map((e) => ({
+        id: e.id,
+        summary: e.summary,
+        location: e.location,
+        description: e.description,
+        colorId: e.colorId,
+        startMs: new Date(e.start).getTime(),
+        attachments: e.attachments,
+      }));
+      const mikeTexts = (await quo.listMessages({ participantE164: MIKE_PHONE, maxResults: 100 })).data;
+      const mikeCalls = (await quo.listCalls({ participantE164: MIKE_PHONE, maxResults: 100 })).data;
+      fieldChannel = { events, mikeTexts, mikeCalls, drive };
+      console.log(
+        `field channel: ${events.length} events (${FIELD_LOOKBACK_DAYS}d), ${mikeTexts.length} Mike texts, ${mikeCalls.length} Mike calls\n`,
+      );
+    } catch (err) {
+      console.log(`field channel unavailable (${(err as Error).message.slice(0, 100)}) — drafting without it\n`);
+    }
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const records: DraftRunRecord[] = [];
 
@@ -194,7 +354,7 @@ async function main(): Promise<void> {
     const label = `${finding.customer ?? 'unknown'} (${finding.phone})`;
     console.log(`── ${label}: ${finding.title}`);
     try {
-      const record = await draftOne({ finding, qb, quo, gemini, snapshot, rulesetText, itemNames, items, library, recentEstimates, today, dryRun, docNumber: String(nextDocNumber), sectionVText, exemplarLibrary });
+      const record = await draftOne({ finding, qb, quo, gemini, snapshot, rulesetText, itemNames, items, library, recentEstimates, today, dryRun, docNumber: String(nextDocNumber), sectionVText, exemplarLibrary, fieldChannel });
       if (record.outcome === 'created') nextDocNumber++;
       records.push(record);
     } catch (err) {
@@ -267,6 +427,7 @@ async function draftOne(ctx: {
   docNumber: string;
   sectionVText?: string;
   exemplarLibrary: ExemplarLibraryEntry[];
+  fieldChannel: FieldChannel | null;
 }): Promise<DraftRunRecord> {
   const { finding, qb, quo, gemini } = ctx;
   const phone = finding.phone;
@@ -362,6 +523,30 @@ async function draftOne(ctx: {
     }
   }
 
+  // ── runtime field context: the assessment chain, fetched live
+  // (never blocks the draft — degrades to photos+thread only)
+  let techParts: Array<{ mimeType: string; base64: string }> = [];
+  if (ctx.fieldChannel) {
+    try {
+      const field = await fetchFieldContext({
+        channel: ctx.fieldChannel,
+        quo,
+        gemini,
+        customerName: resolvedName,
+        customerPhotoCount: imageParts.length,
+      });
+      if (field.fieldBlock) {
+        photoContext = `${photoContext ?? ''}${field.fieldBlock}`;
+        techParts = field.techParts;
+        console.log(
+          `  field context: ${field.eventCount} matched event(s), ${techParts.length} technician photo(s)`,
+        );
+      }
+    } catch (err) {
+      console.log(`  ⚠ field context failed (${(err as Error).message.slice(0, 100)}) — drafting without it`);
+    }
+  }
+
   // ── draft with Gemini (retry transient failures like analyze.ts does)
   const { systemPrompt, userPrompt } = buildQuoteDraftPrompt({
     customerName: resolvedName,
@@ -375,7 +560,7 @@ async function draftOne(ctx: {
     visualRulesetText: ctx.sectionVText,
   });
 
-  const raw = await generateWithRetry(gemini, userPrompt, { systemPrompt, imageParts });
+  const raw = await generateWithRetry(gemini, userPrompt, { systemPrompt, imageParts: [...imageParts, ...techParts] });
 
   const parsed = parseQuoteDraftResponse(raw);
   if (!parsed) {

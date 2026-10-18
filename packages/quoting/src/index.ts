@@ -86,3 +86,4 @@ export {
   type PhotoArea,
   type PhotoRead,
 } from './photo-prepass.js';
+export * from './field-context';
