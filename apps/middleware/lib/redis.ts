@@ -219,6 +219,8 @@ export interface QuoteTriggerEvent {
   at: string;
   hasMedia: boolean;
   snippet: string;
+  /** 'mike-debrief' = technician call transcript completed (T2 moment). */
+  kind?: 'message' | 'mike-debrief';
 }
 
 export async function enqueueQuoteTrigger(event: QuoteTriggerEvent): Promise<void> {

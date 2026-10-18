@@ -37,6 +37,20 @@ describe('enqueueQuoteTrigger', () => {
     expect(mockRedis.ltrim).toHaveBeenCalledWith('quote-trigger:queue', 0, 999);
   });
 
+  it('carries the mike-debrief kind for T2 events', async () => {
+    const event = {
+      phone: '+18573126761',
+      direction: 'incoming' as const,
+      at: '2026-10-18T16:00:00.000Z',
+      hasMedia: false,
+      snippet: '',
+      kind: 'mike-debrief' as const,
+    };
+    await enqueueQuoteTrigger(event);
+    const pushed = JSON.parse(mockRedis.lpush.mock.calls[0][1] as string);
+    expect(pushed.kind).toBe('mike-debrief');
+  });
+
   it('never throws — webhook processing must not be affected', async () => {
     mockRedis.lpush.mockRejectedValueOnce(new Error('redis down'));
     await expect(

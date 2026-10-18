@@ -59,6 +59,14 @@ interface TranscriptDialogueEntry {
   userId?: string; // Present if from internal user, absent if from external caller
 }
 
+/**
+ * Technician phones whose completed call transcripts mark the T2 debrief
+ * moment (quote-trigger). Mirrors TECHNICIAN_EMAILS; env-overridable.
+ */
+const TECHNICIAN_PHONES = new Set(
+  (process.env.TECHNICIAN_PHONES || '+18573126761').split(',').map((p) => p.trim()),
+);
+
 // Quo webhook payload structure (API v3)
 // Wrapped in "object" with nested "data.object"
 interface QuoWebhookPayload {
@@ -353,6 +361,20 @@ export async function POST(request: Request): Promise<Response> {
         at: eventData.createdAt || event.createdAt || new Date().toISOString(),
         hasMedia: Boolean(eventData.media?.length),
         snippet: (eventData.body ?? '').slice(0, 300),
+        kind: 'message',
+      });
+    }
+    // T2: the technician debrief moment — a Matt↔Mike call transcript is
+    // ready right after they hang up. The runner matches it to the day's
+    // site visits and drafts post-assessment quotes.
+    if (event.type === 'call.transcript.completed' && TECHNICIAN_PHONES.has(e164Phone)) {
+      await enqueueQuoteTrigger({
+        phone: e164Phone,
+        direction: 'incoming',
+        at: eventData.createdAt || event.createdAt || new Date().toISOString(),
+        hasMedia: false,
+        snippet: '',
+        kind: 'mike-debrief',
       });
     }
 

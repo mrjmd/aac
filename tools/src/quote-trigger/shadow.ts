@@ -25,6 +25,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
+import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import { nameTokens } from '@aac/quoting';
 
 const STATE_DIR = 'analysis/data/quote-trigger';
 const PENDING_PATH = path.join(STATE_DIR, 'pending.json');
@@ -48,6 +50,33 @@ interface TriggerEvent {
   at: string;
   hasMedia: boolean;
   snippet: string;
+  kind?: 'message' | 'mike-debrief';
+}
+
+/** T2: a Mike call transcript just completed — find whose site he visited
+ *  in the last 36h and draft their post-assessment quotes. */
+const T2_VISIT_LOOKBACK_H = 36;
+const T2_DEDUPE_H = 24;
+
+function resolveVisitCustomers(
+  events: Array<{ summary: string; colorId?: string; startMs: number }>,
+  snapshotCustomers: Array<{ name: string; phones: string[] }>,
+): Array<{ name: string; phone: string; eventSummary: string }> {
+  const out: Array<{ name: string; phone: string; eventSummary: string }> = [];
+  const seen = new Set<string>();
+  for (const e of events) {
+    const hay = e.summary.toLowerCase();
+    for (const c of snapshotCustomers) {
+      const { last } = nameTokens(c.name);
+      if (!last.length || !c.phones.length) continue;
+      if (!last.some((t) => hay.includes(t))) continue;
+      const phone = c.phones[0];
+      if (seen.has(phone) || INTERNAL.has(phone)) continue;
+      seen.add(phone);
+      out.push({ name: c.name, phone, eventSummary: e.summary });
+    }
+  }
+  return out;
 }
 
 function loadEnv(): void {
@@ -96,46 +125,39 @@ async function main(): Promise<void> {
     token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
   });
 
-  // ── drain queue into per-phone pending state ──────────────────────────
-  const pending: Record<string, TriggerEvent[]> = fs.existsSync(PENDING_PATH)
-    ? JSON.parse(fs.readFileSync(PENDING_PATH, 'utf8'))
-    : {};
+  // ── state (with legacy flat-map migration) ───────────────────────────
+  interface RunnerState { phones: Record<string, TriggerEvent[]>; t2Done: Record<string, string> }
+  let state: RunnerState = { phones: {}, t2Done: {} };
+  if (fs.existsSync(PENDING_PATH)) {
+    const raw = JSON.parse(fs.readFileSync(PENDING_PATH, 'utf8'));
+    state = raw.phones ? raw : { phones: raw, t2Done: {} };
+  }
+  const pending = state.phones;
+
+  // ── drain queue ───────────────────────────────────────────────────────
   let drained = 0;
+  let debriefAt: string | null = null;
   for (;;) {
     const raw = await redis.rpop<string | TriggerEvent>(keys.quoteTriggerQueue);
     if (raw === null || raw === undefined) break;
     const ev: TriggerEvent = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    drained++;
+    if (ev.kind === 'mike-debrief') { debriefAt = ev.at; continue; }
     if (INTERNAL.has(ev.phone)) continue;
     (pending[ev.phone] ??= []).push(ev);
-    drained++;
     if (drained >= 500) break; // safety valve per run
   }
 
-  // ── evaluate each phone: debounce → classify → shadow-draft ──────────
   const now = Date.now();
   const log = fs.createWriteStream(LOG_PATH, { flags: 'a' });
   let acted = 0;
-  for (const [phone, events] of Object.entries(pending)) {
-    const newest = Math.max(...events.map((e) => new Date(e.at).getTime()));
-    if (now - newest < DEBOUNCE_MS) continue; // still settling — next run
-    delete pending[phone]; // consumed either way below
 
-    const verdict = classify(events);
-    if (!verdict) {
-      log.write(JSON.stringify({ at: new Date().toISOString(), phone, outcome: 'no-trigger', events: events.length }) + '\n');
-      continue;
-    }
-
-    if (acted >= MAX_DRAFTS_PER_RUN) {
-      // leave the rest pending for the next run (10 min away)
-      pending[phone] = events;
-      continue;
-    }
+  const executeDraft = (phone: string, trigger: string, why: string, eventsCount: number): void => {
     acted++;
-    console.log(`→ ${phone}: ${verdict.trigger} (${verdict.why}) — ${shadow ? 'shadow' : 'LIVE'} drafting`);
+    console.log(`→ ${phone}: ${trigger} (${why}) — ${shadow ? 'shadow' : 'LIVE'} drafting`);
     const findingsPath = path.join(STATE_DIR, `finding-${phone.replace(/\D/g, '')}.json`);
     fs.writeFileSync(findingsPath, JSON.stringify({
-      findings: [{ section: 'quote_promised', customer: null, phone, title: `TRIGGER ${verdict.trigger}: ${verdict.why}` }],
+      findings: [{ section: 'quote_promised', customer: null, phone, title: `TRIGGER ${trigger}: ${why}` }],
     }));
     let output = '';
     let failed = false;
@@ -153,7 +175,6 @@ async function main(): Promise<void> {
     }
     fs.rmSync(findingsPath, { force: true });
 
-    // parse the dry-run output for the shadow record
     const draftLine = output.match(/draft: \$(\d[\d,]*) \((\w+)\)/);
     const items = [...output.matchAll(/^\s{4}(.+?) \[/gm)].map((m) => m[1].toLowerCase().trim());
     const scopeItems = items.filter((i) => !NON_SCOPE.test(i));
@@ -169,9 +190,9 @@ async function main(): Promise<void> {
       at: new Date().toISOString(),
       mode: shadow ? 'shadow' : 'live',
       phone,
-      trigger: verdict.trigger,
-      why: verdict.why,
-      events: events.length,
+      trigger,
+      why,
+      events: eventsCount,
       createdDoc,
       outcome: failed ? 'draft-failed' : regenerated ? 'updated' : createdDoc ? 'created' : skipped ? 'skipped' : 'drafted',
       total: draftLine ? Number(draftLine[1].replace(/,/g, '')) : null,
@@ -181,11 +202,64 @@ async function main(): Promise<void> {
       outputTail: output.split('\n').slice(-25).join('\n'),
     }) + '\n');
     console.log(`  gate: ${wouldAutoCreate ? 'WOULD AUTO-CREATE' : 'review-label'} (${scopeItems.join(', ') || 'no scope'})`);
+  };
+
+  // ── T1/T3: per-phone debounce → classify → draft ──────────────────────
+  for (const [phone, events] of Object.entries(pending)) {
+    const newest = Math.max(...events.map((e) => new Date(e.at).getTime()));
+    if (now - newest < DEBOUNCE_MS) continue; // still settling — next run
+    delete pending[phone];
+
+    const verdict = classify(events);
+    if (!verdict) {
+      log.write(JSON.stringify({ at: new Date().toISOString(), phone, outcome: 'no-trigger', events: events.length }) + '\n');
+      continue;
+    }
+    if (acted >= MAX_DRAFTS_PER_RUN) {
+      pending[phone] = events; // next run, 10 min away
+      continue;
+    }
+    executeDraft(phone, verdict.trigger, verdict.why, events.length);
+  }
+
+  // ── T2: Mike debrief completed → draft the day's visited customers ───
+  if (debriefAt && process.env.GOOGLE_CLIENT_ID) {
+    try {
+      const calendar = new GoogleCalendarClient({
+        calendarId: process.env.GOOGLE_CALENDAR_ID || 'matt@attackacrack.com',
+        oauth: {
+          clientId: requireEnv('GOOGLE_CLIENT_ID'),
+          clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),
+          refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
+        },
+      });
+      const raw = await calendar.listEvents({
+        timeMin: new Date(now - T2_VISIT_LOOKBACK_H * 3_600_000).toISOString(),
+        timeMax: new Date(now).toISOString(),
+      });
+      const visits = raw.map((e) => ({ summary: e.summary, colorId: e.colorId, startMs: new Date(e.start).getTime() }));
+      const snapshot = JSON.parse(fs.readFileSync('analysis/data/triage/snapshot.json', 'utf8'));
+      const customers = resolveVisitCustomers(visits, snapshot.customers ?? []);
+      console.log(`T2 debrief at ${debriefAt}: ${visits.length} visit(s) in ${T2_VISIT_LOOKBACK_H}h window → ${customers.length} matched customer(s)`);
+      for (const c of customers) {
+        const last = state.t2Done[c.phone];
+        if (last && now - new Date(last).getTime() < T2_DEDUPE_H * 3_600_000) continue;
+        if (acted >= MAX_DRAFTS_PER_RUN) break;
+        state.t2Done[c.phone] = new Date().toISOString();
+        executeDraft(c.phone, 'T2', `Mike debrief after visit "${c.eventSummary}"`, 1);
+      }
+    } catch (err) {
+      console.log(`T2 handling failed: ${(err as Error).message.slice(0, 120)}`);
+    }
   }
   log.end();
 
-  fs.writeFileSync(PENDING_PATH, JSON.stringify(pending, null, 1));
-  console.log(`drained ${drained} event(s); ${Object.keys(pending).length} phone(s) still settling; ${acted} shadow draft(s)`);
+  // prune old t2Done entries
+  for (const [p, at] of Object.entries(state.t2Done)) {
+    if (now - new Date(at).getTime() > 7 * 86_400_000) delete state.t2Done[p];
+  }
+  fs.writeFileSync(PENDING_PATH, JSON.stringify(state, null, 1));
+  console.log(`drained ${drained} event(s); ${Object.keys(pending).length} phone(s) still settling; ${acted} draft run(s)`);
 }
 
 main().catch((err) => {
