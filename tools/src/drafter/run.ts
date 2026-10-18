@@ -54,9 +54,11 @@ const SNAPSHOT_PATH = 'analysis/data/triage/snapshot.json';
 const RULESET_PATH = 'analysis/data/quoting-spike/llm-ruleset.md';
 const RUNLOG_PATH = 'analysis/data/triage/drafts.json';
 // Photo→quote training layer (Phase 4) — both optional; the drafter
-// degrades to v1 behavior when they're absent.
-const SECTION_V_PATH = 'analysis/data/photo-corpus/section-v-draft.md';
-const EXEMPLAR_LIBRARY_PATH = 'analysis/data/photo-corpus/exemplar-library.jsonl';
+// degrades to v1 behavior when they're absent. v2 artifacts carry the
+// owner's 2026-10-18 review corrections + Mike field-context joins
+// (holdout: 68% exact / 80% on assessment-sourced cases vs blind 49%).
+const SECTION_V_PATH = 'analysis/data/photo-corpus/section-v-draft-v2.md';
+const EXEMPLAR_LIBRARY_PATH = 'analysis/data/photo-corpus/exemplar-library-v2.jsonl';
 const EXEMPLARS_PER_AREA = 3;
 const MAX_PHOTOS = 6;
 const MAX_THREAD_MESSAGES = 100;
