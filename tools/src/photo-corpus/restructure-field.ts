@@ -56,7 +56,12 @@ function readJsonl(p: string): any[] {
 
 function smallPathFor(dir: string, file: string): string {
   // customer photos: "photos/<custId>/<name>.<ext>" → "<custId>__<name>.jpg"
-  // (same mapping as structure.ts); Mike photos are flat filenames.
+  // (same mapping as structure.ts); Mike photos are flat filenames;
+  // "cal__<fileId>.<ext>" = calendar-attachment photos in photos-cal-small.
+  if (file.startsWith('cal__')) {
+    const stem = file.slice('cal__'.length).replace(/\.[a-zA-Z0-9]+$/, '');
+    return path.join(path.dirname(dir), 'photos-cal-small', stem + '.jpg');
+  }
   const stem = file.replace('photos/', '').replace('/', '__');
   return path.join(dir, stem.replace(/\.[a-zA-Z0-9]+$/, '') + '.jpg');
 }

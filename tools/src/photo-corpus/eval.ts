@@ -207,7 +207,9 @@ async function main(): Promise<void> {
       // v2: technician photos (unambiguous first) + blind debrief findings
       const fb = fieldBlind.get(id);
       const mikeSmall = (file: string) =>
-        path.join(OUT_DIR, 'photos-mike-small', path.basename(file).replace(/\.[a-zA-Z0-9]+$/, '') + '.jpg');
+        file.startsWith('cal__')
+          ? path.join(OUT_DIR, 'photos-cal-small', file.slice('cal__'.length).replace(/\.[a-zA-Z0-9]+$/, '') + '.jpg')
+          : path.join(OUT_DIR, 'photos-mike-small', path.basename(file).replace(/\.[a-zA-Z0-9]+$/, '') + '.jpg');
       const techPhotos = (mikePhotosByEst.get(id) ?? [])
         .sort((a, b) => (a.ambiguousWith?.length ?? 0) - (b.ambiguousWith?.length ?? 0))
         .slice(0, 6)
