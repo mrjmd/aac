@@ -85,6 +85,27 @@ describe('GoogleDriveClient', () => {
       const info = await makeClient().getFileInfo('F1');
       expect(info).toBeNull();
     });
+  });
+
+  describe('downloadFile', () => {
+    it('returns bytes and mimeType on success', async () => {
+      const buf = new ArrayBuffer(8);
+      mocks.mockFilesGet
+        .mockResolvedValueOnce({ data: { mimeType: 'image/jpeg' } })
+        .mockResolvedValueOnce({ data: buf });
+      const res = await makeClient().downloadFile('F1');
+      expect(res).toEqual({ data: buf, mimeType: 'image/jpeg' });
+      expect(mocks.mockFilesGet).toHaveBeenCalledWith(
+        expect.objectContaining({ fileId: 'F1', alt: 'media' }),
+        expect.objectContaining({ responseType: 'arraybuffer' }),
+      );
+    });
+
+    it('returns null when the file is gone or inaccessible', async () => {
+      mocks.mockFilesGet.mockRejectedValueOnce(new Error('404'));
+      const res = await makeClient().downloadFile('F1');
+      expect(res).toBeNull();
+    });
 
     it('requests the correct fields', async () => {
       mocks.mockFilesGet.mockResolvedValueOnce({ data: { id: 'F1', name: 'x' } });

@@ -101,6 +101,28 @@ export class GoogleDriveClient {
   }
 
   /**
+   * Download a file's bytes (alt=media). Returns null when the file is
+   * gone or inaccessible (404/403) so callers can degrade gracefully.
+   */
+  async downloadFile(fileId: string): Promise<{ data: ArrayBuffer; mimeType: string } | null> {
+    const client = await this.getClient();
+    try {
+      const meta = await client.files.get({ fileId, fields: 'mimeType', supportsAllDrives: true });
+      const resp = await client.files.get(
+        { fileId, alt: 'media', supportsAllDrives: true },
+        { responseType: 'arraybuffer' },
+      );
+      return {
+        data: resp.data as ArrayBuffer,
+        mimeType: meta.data.mimeType || 'application/octet-stream',
+      };
+    } catch (err) {
+      log.warn('Drive file download failed', { fileId, error: (err as Error).message });
+      return null;
+    }
+  }
+
+  /**
    * Resize a Drive thumbnail link to a different pixel size. Drive's
    * thumbnailLink ends in `=s{N}` where N is the longest-edge size.
    */
