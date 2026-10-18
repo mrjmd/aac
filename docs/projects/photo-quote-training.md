@@ -203,13 +203,44 @@ every ask and photo area accounted; validator clean. Complex scope
 auto-drafts: it routes to triage with the analysis attached as prepared
 context (the high-touch path).
 
+**Draft everything, label honestly** (owner directive 2026-10-18): the
+gate controls CONFIDENCE LABELING, not whether to draft. Complex scope
+(resurfacing/masonry, 3+ lines, $4k+) also gets a Pending draft — its
+PrivateNote states "COMPLEX SCOPE — expect edits" with the measured
+accuracy for its class and any site-visit flag. Simple-injection drafts
+carry the high-confidence marking.
+
+**Ownership & update model** (owner directive 2026-10-18 — "the
+automation must never step on my edits"):
+
+- Every bot write records the resulting QBO `SyncToken` (Redis, per
+  estimate). **Bot-owned** = bot created it AND current SyncToken still
+  matches the bot's last write. **Human-owned** = any foreign token bump
+  (owner edited anything), status left Pending (sent), or the BOT DRAFT
+  marker was removed. **The door is one-way: once human-owned, the bot
+  never writes to that estimate again.** No heuristics about which edits
+  "matter" — any foreign fingerprint ends bot ownership.
+- **New information arriving** (debrief after a photo-only draft, more
+  photos, corrected scope):
+  - bot-owned → regenerate IN PLACE with the full merged context;
+    replace lines; log the revision diff in the run log. One bot draft
+    per customer, always current, never stacked.
+  - human-owned → write NOTHING to QBO. Surface a suggestion
+    out-of-band (triage dashboard, optionally a Quo contact note):
+    "new debrief suggests adding X to #NNNN — your copy untouched."
+    Suggestions avoid even PrivateNote writes (any write bumps the
+    token and could race an in-progress owner edit).
+- Per-customer Redis lock serializes racing triggers (photo burst +
+  debrief minutes apart); the later trigger regenerates off merged
+  context.
+
 - **Shadow mode first:** the runner goes live on real triggers but
   dry-run — logs trigger moment, gate verdict, and the would-be draft to
   a triage dashboard section. 2–3 weeks; the owner's accept/reject per
   shadow draft becomes the next label set.
-- **Flip:** gate-passing triggers auto-create Pending bot drafts.
-  Review in QBO remains; nothing is ever auto-sent. Auto-send is a
-  separate, later, owner-only decision.
+- **Flip:** triggers auto-create Pending bot drafts (all strata,
+  confidence-labeled). Review in QBO remains; nothing is ever auto-sent.
+  Auto-send is a separate, later, owner-only decision.
 
 ## Total level of effort
 
