@@ -223,6 +223,12 @@ async function main(): Promise<void> {
   const dryRun = argv.includes('--dry-run');
   const phoneArg = argv.includes('--phone') ? argv[argv.indexOf('--phone') + 1] : undefined;
   const findingsArg = argv.includes('--findings') ? argv[argv.indexOf('--findings') + 1] : undefined;
+  // Trigger-runner guard: skip customers with ANY estimate newer than N
+  // days (bot or human) — automated runs must not stack next to a quote
+  // that already exists. Manual runs omit the flag and keep full control.
+  const skipRecentArg = argv.includes('--skip-if-recent-estimate')
+    ? Number(argv[argv.indexOf('--skip-if-recent-estimate') + 1])
+    : undefined;
 
   const findingsFile = JSON.parse(fs.readFileSync(findingsArg ?? FINDINGS_PATH, 'utf8')) as FindingsFile;
   const snapshot = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8')) as Snapshot;
@@ -354,7 +360,7 @@ async function main(): Promise<void> {
     const label = `${finding.customer ?? 'unknown'} (${finding.phone})`;
     console.log(`── ${label}: ${finding.title}`);
     try {
-      const record = await draftOne({ finding, qb, quo, gemini, snapshot, rulesetText, itemNames, items, library, recentEstimates, today, dryRun, docNumber: String(nextDocNumber), sectionVText, exemplarLibrary, fieldChannel });
+      const record = await draftOne({ finding, qb, quo, gemini, snapshot, rulesetText, itemNames, items, library, recentEstimates, today, dryRun, docNumber: String(nextDocNumber), sectionVText, exemplarLibrary, fieldChannel, skipIfRecentEstimateDays: skipRecentArg });
       if (record.outcome === 'created') nextDocNumber++;
       records.push(record);
     } catch (err) {
@@ -428,6 +434,7 @@ async function draftOne(ctx: {
   sectionVText?: string;
   exemplarLibrary: ExemplarLibraryEntry[];
   fieldChannel: FieldChannel | null;
+  skipIfRecentEstimateDays?: number;
 }): Promise<DraftRunRecord> {
   const { finding, qb, quo, gemini } = ctx;
   const phone = finding.phone;
@@ -448,6 +455,14 @@ async function draftOne(ctx: {
   // ── idempotency: never stack bot drafts on the same customer
   if (customerId) {
     const existing = await qb.getEstimatesByCustomer(customerId);
+    if (ctx.skipIfRecentEstimateDays) {
+      const cutoff = new Date(Date.now() - ctx.skipIfRecentEstimateDays * 86_400_000).toISOString().slice(0, 10);
+      const recent = existing.find((e) => (e.TxnDate ?? '') >= cutoff);
+      if (recent) {
+        console.log(`  ~ skipped: estimate #${recent.DocNumber} (${recent.TxnDate}) within ${ctx.skipIfRecentEstimateDays}d — not stacking`);
+        return { phone, customer: resolvedName, outcome: 'skipped', detail: `recent estimate #${recent.DocNumber} (${recent.TxnDate})` };
+      }
+    }
     const botPending = existing.find((e) => e.TxnStatus === 'Pending' && isBotDraft(e));
     if (botPending) {
       if (!ctx.dryRun) {

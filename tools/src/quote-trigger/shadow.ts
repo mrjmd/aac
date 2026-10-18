@@ -1,13 +1,20 @@
 #!/usr/bin/env npx tsx
 /**
- * Quote-trigger SHADOW runner (photo-quote-training Phase 6).
+ * Quote-trigger runner (photo-quote-training Phase 6).
  *
  * Drains the middleware-fed trigger queue (keys.quoteTriggerQueue), applies
  * debounce + trigger classification (T1 photo-burst, T3 quote-promised),
- * runs the drafter in DRY-RUN for triggered customers, and logs what the
- * gate WOULD have done. Writes nothing to QBO. Runs every 10 min via
- * launchd (com.aac.quote-shadow) — the schedule is the executor, the
- * queue events are the trigger.
+ * runs the drafter for triggered customers, and logs the gate verdict.
+ * Runs every 10 min via launchd (com.aac.quote-shadow) — the schedule is
+ * the executor, the queue events are the trigger.
+ *
+ * Modes (owner go-live 2026-10-18):
+ *   default        — LIVE: creates bot-marked Pending QBO drafts.
+ *                    CREATE-ONCE-ONLY: the drafter's idempotency skips any
+ *                    customer with a bot draft already pending, and the
+ *                    runner never updates an existing estimate — so it can
+ *                    never step on owner edits. Nothing is ever sent.
+ *   --shadow       — dry-run, log-only (the original shadow mode).
  *
  * State: analysis/data/quote-trigger/pending.json (per-phone event buffer,
  * survives across runs for debounce), shadow-log.jsonl (the record the
@@ -77,8 +84,12 @@ function classify(events: TriggerEvent[]): { trigger: 'T1' | 'T3'; why: string }
   return null;
 }
 
+/** Cap live drafts per run — a backlog flood should trickle, not burst. */
+const MAX_DRAFTS_PER_RUN = 5;
+
 async function main(): Promise<void> {
   loadEnv();
+  const shadow = process.argv.includes('--shadow');
   fs.mkdirSync(STATE_DIR, { recursive: true });
   const redis = new Redis({
     url: requireEnv('UPSTASH_REDIS_REST_URL'),
@@ -115,16 +126,23 @@ async function main(): Promise<void> {
       continue;
     }
 
+    if (acted >= MAX_DRAFTS_PER_RUN) {
+      // leave the rest pending for the next run (10 min away)
+      pending[phone] = events;
+      continue;
+    }
     acted++;
-    console.log(`→ ${phone}: ${verdict.trigger} (${verdict.why}) — shadow drafting`);
+    console.log(`→ ${phone}: ${verdict.trigger} (${verdict.why}) — ${shadow ? 'shadow' : 'LIVE'} drafting`);
     const findingsPath = path.join(STATE_DIR, `finding-${phone.replace(/\D/g, '')}.json`);
     fs.writeFileSync(findingsPath, JSON.stringify({
-      findings: [{ section: 'quote_promised', customer: null, phone, title: `SHADOW ${verdict.trigger}: ${verdict.why}` }],
+      findings: [{ section: 'quote_promised', customer: null, phone, title: `TRIGGER ${verdict.trigger}: ${verdict.why}` }],
     }));
     let output = '';
     let failed = false;
     try {
-      output = execFileSync('npx', ['tsx', 'tools/src/drafter/run.ts', '--dry-run', '--phone', phone, '--findings', findingsPath], {
+      const args = ['tsx', 'tools/src/drafter/run.ts', '--phone', phone, '--findings', findingsPath, '--skip-if-recent-estimate', '30'];
+      if (shadow) args.splice(2, 0, '--dry-run');
+      output = execFileSync('npx', args, {
         encoding: 'utf8',
         timeout: 420_000,
         maxBuffer: 10 * 1024 * 1024,
@@ -143,14 +161,18 @@ async function main(): Promise<void> {
     const needsVisit = /needs?[_ ]site[_ ]visit|site visit recommended/i.test(output);
     const confidence = draftLine?.[2] ?? null;
     const wouldAutoCreate = !failed && simpleInjection && confidence === 'high' && !needsVisit;
+    const createdDoc = output.match(/created Pending estimate #(\S+)/)?.[1] ?? null;
+    const skipped = /~ skipped:/.test(output);
 
     log.write(JSON.stringify({
       at: new Date().toISOString(),
+      mode: shadow ? 'shadow' : 'live',
       phone,
       trigger: verdict.trigger,
       why: verdict.why,
       events: events.length,
-      outcome: failed ? 'draft-failed' : 'drafted',
+      createdDoc,
+      outcome: failed ? 'draft-failed' : createdDoc ? 'created' : skipped ? 'skipped' : 'drafted',
       total: draftLine ? Number(draftLine[1].replace(/,/g, '')) : null,
       confidence,
       scopeItems,
