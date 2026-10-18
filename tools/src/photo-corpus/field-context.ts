@@ -17,6 +17,12 @@
  *
  * Resumable: skips estimateIds already present in the output file.
  * Usage: npx tsx tools/src/photo-corpus/field-context.ts [--limit N]
+ *   [--blind]           omit the actual quote lines from the extraction
+ *                       prompt — REQUIRED for holdout-eval inputs (the
+ *                       default prompt sees the labels; feeding that into
+ *                       an eval would leak)
+ *   [--only holdout.json] restrict to those estimateIds
+ *   [--out file.jsonl]    alternate output (default field-context.jsonl)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -79,20 +85,28 @@ async function main(): Promise<void> {
   loadEnv();
   const limitArg = process.argv.indexOf('--limit');
   const limit = limitArg >= 0 ? Number(process.argv[limitArg + 1]) : Infinity;
+  const blind = process.argv.includes('--blind');
+  const onlyArg = process.argv.indexOf('--only');
+  const onlyIds: Set<string> | null = onlyArg >= 0
+    ? new Set(JSON.parse(fs.readFileSync(process.argv[onlyArg + 1], 'utf8')).holdoutEstimateIds)
+    : null;
+  const outArg = process.argv.indexOf('--out');
+  const outPath = outArg >= 0 ? path.join(OUT_DIR, process.argv[outArg + 1]) : OUT_PATH;
 
   const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY') });
   const manifest = readJsonl('manifest.jsonl');
   const mikeTexts = readJsonl('mike-thread.jsonl');
   const transcripts = readJsonl('mike-call-transcripts.jsonl').filter((t) => t.hasTranscript);
   const events = readJsonl('calendar-events.jsonl');
-  const done = new Set(readJsonl('field-context.jsonl').map((r) => r.estimateId));
-  console.log(`manifest ${manifest.length} | mike texts ${mikeTexts.length} | transcripts ${transcripts.length} | events ${events.length} | done ${done.size}`);
+  const done = new Set(readJsonl(path.basename(outPath)).map((r) => r.estimateId));
+  console.log(`manifest ${manifest.length} | mike texts ${mikeTexts.length} | transcripts ${transcripts.length} | events ${events.length} | done ${done.size}${blind ? ' | BLIND (labels hidden)' : ''}`);
 
-  const out = fs.createWriteStream(OUT_PATH, { flags: 'a' });
+  const out = fs.createWriteStream(outPath, { flags: 'a' });
   let processed = 0;
   let relevant = 0;
 
   for (const est of manifest) {
+    if (onlyIds && !onlyIds.has(est.estimateId)) continue;
     if (done.has(est.estimateId)) continue;
     if (processed >= limit) break;
 
@@ -173,7 +187,7 @@ async function main(): Promise<void> {
 
 CUSTOMER: ${est.customerName}
 QUOTE DATE: ${est.txnDate}
-QUOTE LINES (what was actually quoted): ${(est.lines ?? []).map((l: any) => `${l.item} ×${l.qty}`).join('; ')}
+${blind ? '' : `QUOTE LINES (what was actually quoted): ${(est.lines ?? []).map((l: any) => `${l.item} ×${l.qty}`).join('; ')}\n`}
 
 Below are calendar events and Matt↔Mike (owner↔technician) texts/call-transcript excerpts from the weeks before the quote. Mike visits sites and reports back; Matt writes the quotes. Much of this traffic is about OTHER customers — only extract what is about ${est.customerName} (or clearly about their job/address).
 

@@ -59,7 +59,9 @@ interface AreaEntry {
 
 async function main(): Promise<void> {
   loadEnv();
-  const exemplars = fs.readFileSync(EXEMPLARS_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const argvIn = process.argv.indexOf('--in');
+  const exemplarsPath = argvIn >= 0 ? process.argv[argvIn + 1] : EXEMPLARS_PATH;
+  const exemplars = fs.readFileSync(exemplarsPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const man = new Map(
     fs.readFileSync(MANIFEST_PATH, 'utf8').split('\n').filter(Boolean).map((l) => {
       const m = JSON.parse(l);

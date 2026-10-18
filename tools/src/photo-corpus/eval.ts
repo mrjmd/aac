@@ -113,6 +113,14 @@ async function main(): Promise<void> {
   loadEnv();
   const argv = process.argv.slice(2);
   const limit = argv.includes('--limit') ? Number(argv[argv.indexOf('--limit') + 1]) : Infinity;
+  // --v2: enriched round — owner-corrected Section V, v2 exemplars/library,
+  // and (label-)blind field context + technician photos as DRAFT INPUTS for
+  // assessment-sourced cases, exactly as the runtime drafter would have them.
+  const v2 = argv.includes('--v2');
+  const exemplarsPath = v2 ? path.join(OUT_DIR, 'exemplars-v2.jsonl') : EXEMPLARS_PATH;
+  const libraryPath = v2 ? path.join(OUT_DIR, 'exemplar-library-v2.jsonl') : LIBRARY_PATH;
+  const sectionVPath = v2 ? path.join(OUT_DIR, 'section-v-train-v2.md') : SECTION_V_TRAIN_PATH;
+  const resultsPath = v2 ? path.join(OUT_DIR, 'eval-results-v2.jsonl') : RESULTS_PATH;
 
   const holdout: string[] = JSON.parse(fs.readFileSync(HOLDOUT_PATH, 'utf8')).holdoutEstimateIds;
   const holdoutSet = new Set(holdout);
@@ -123,19 +131,41 @@ async function main(): Promise<void> {
     }),
   );
   const exemplars = new Map(
-    fs.readFileSync(EXEMPLARS_PATH, 'utf8').split('\n').filter(Boolean).map((l) => {
+    fs.readFileSync(exemplarsPath, 'utf8').split('\n').filter(Boolean).map((l) => {
       const e = JSON.parse(l);
       return [e.estimateId as string, e] as const;
     }),
   );
   const trainLibrary: ExemplarLibraryEntry[] = fs
-    .readFileSync(LIBRARY_PATH, 'utf8')
+    .readFileSync(libraryPath, 'utf8')
     .split('\n')
     .filter(Boolean)
     .map((l) => JSON.parse(l))
     .filter((e: { estimateId: string }) => !holdoutSet.has(e.estimateId));
-  const sectionVTrain = fs.readFileSync(SECTION_V_TRAIN_PATH, 'utf8');
+  const sectionVTrain = fs.readFileSync(sectionVPath, 'utf8');
   const section0 = fs.readFileSync(SECTION_0_PATH, 'utf8');
+
+  // v2 draft inputs: LABEL-BLIND field context (field-context.ts --blind) and
+  // deterministically attributed technician photos.
+  const fieldBlind = new Map<string, { findings?: string; mikeQuotes?: string[]; relevant?: boolean }>();
+  const mikePhotosByEst = new Map<string, Array<{ file: string; ambiguousWith?: string[] }>>();
+  if (v2) {
+    const fbPath = path.join(OUT_DIR, 'field-context-blind.jsonl');
+    if (fs.existsSync(fbPath)) {
+      for (const line of fs.readFileSync(fbPath, 'utf8').split('\n').filter(Boolean)) {
+        const r = JSON.parse(line);
+        if (r.relevant) fieldBlind.set(r.estimateId, r);
+      }
+    }
+    const mpPath = path.join(OUT_DIR, 'mike-photo-attribution.jsonl');
+    if (fs.existsSync(mpPath)) {
+      for (const line of fs.readFileSync(mpPath, 'utf8').split('\n').filter(Boolean)) {
+        const r = JSON.parse(line);
+        mikePhotosByEst.set(r.estimateId, r.photos ?? []);
+      }
+    }
+    console.log(`v2 inputs: ${fieldBlind.size} blind field contexts, ${mikePhotosByEst.size} cases with technician photos`);
+  }
 
   // Item vocabulary = the real corpus menu.
   const itemNames = [...new Set(
@@ -143,8 +173,8 @@ async function main(): Promise<void> {
   )].sort();
 
   const done = new Set<string>(
-    fs.existsSync(RESULTS_PATH)
-      ? fs.readFileSync(RESULTS_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).estimateId as string)
+    fs.existsSync(resultsPath)
+      ? fs.readFileSync(resultsPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).estimateId as string)
       : [],
   );
   const targets = holdout.filter((id) => !done.has(id)).slice(0, limit);
@@ -173,6 +203,27 @@ async function main(): Promise<void> {
         mimeType: 'image/jpeg',
         base64: fs.readFileSync(smallPathFor(p.file)).toString('base64'),
       }));
+
+      // v2: technician photos (unambiguous first) + blind debrief findings
+      const fb = fieldBlind.get(id);
+      const mikeSmall = (file: string) =>
+        path.join(OUT_DIR, 'photos-mike-small', path.basename(file).replace(/\.[a-zA-Z0-9]+$/, '') + '.jpg');
+      const techPhotos = (mikePhotosByEst.get(id) ?? [])
+        .sort((a, b) => (a.ambiguousWith?.length ?? 0) - (b.ambiguousWith?.length ?? 0))
+        .slice(0, 6)
+        .filter((p) => fs.existsSync(mikeSmall(p.file)));
+      const techParts = techPhotos.map((p) => ({
+        mimeType: 'image/jpeg',
+        base64: fs.readFileSync(mikeSmall(p.file)).toString('base64'),
+      }));
+      let fieldBlock = '';
+      if (fb?.findings) {
+        fieldBlock += `\n\nFIELD CONTEXT (technician assessment debrief — owner↔technician channel):\n${fb.findings}`;
+        if (fb.mikeQuotes?.length) fieldBlock += `\nVerbatim: ${fb.mikeQuotes.map((q) => `"${q}"`).join(' | ')}`;
+      }
+      if (techParts.length) {
+        fieldBlock += `\n\nTECHNICIAN PHOTOS: the last ${techParts.length} image(s) were taken by the technician on site (appended after the ${imageParts.length} customer photos).`;
+      }
 
       // ── pre-pass ──
       let photoContext: string | undefined;
@@ -205,10 +256,10 @@ async function main(): Promise<void> {
         itemNames,
         thread,
         photoCount: imageParts.length,
-        photoContext,
+        photoContext: fieldBlock ? `${photoContext ?? ''}${fieldBlock}` : photoContext,
         visualRulesetText: sectionVTrain,
       });
-      const raw = await callWithRetry(gemini, userPrompt, { systemPrompt, imageParts });
+      const raw = await callWithRetry(gemini, userPrompt, { systemPrompt, imageParts: [...imageParts, ...techParts] });
       const draft = parseQuoteDraftResponse(raw);
       if (!draft) throw new Error('unparseable draft');
 
@@ -243,8 +294,10 @@ async function main(): Promise<void> {
         groundedTotal,
         needsSiteVisit: draft.needsSiteVisit,
         confidence: draft.confidence,
+        usedFieldContext: Boolean(fb?.findings) || techPhotos.length > 0,
+        techPhotoCount: techPhotos.length,
       };
-      fs.appendFileSync(RESULTS_PATH, JSON.stringify(row) + '\n');
+      fs.appendFileSync(resultsPath, JSON.stringify(row) + '\n');
       console.log(
         `${tag}: grounded ${row.groundedExact ? 'EXACT' : row.groundedFamily ? 'family' : 'MISS'} | blind ${row.blindExact ? 'EXACT' : row.blindFamily ? 'family' : 'MISS'} | $${groundedTotal} vs $${m.totalAmt}`,
       );
@@ -255,11 +308,17 @@ async function main(): Promise<void> {
   }
 
   // ── summary over everything evaluated so far ──
-  const rows = fs.readFileSync(RESULTS_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  const pct = (k: string) => `${rows.filter((r) => r[k]).length}/${rows.length} (${Math.round((rows.filter((r) => r[k]).length / rows.length) * 100)}%)`;
-  console.log(`\n=== HOLDOUT SUMMARY (${rows.length} cases) ===`);
+  const rows = fs.readFileSync(resultsPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const pct = (k: string, set: any[] = rows) => `${set.filter((r) => r[k]).length}/${set.length} (${set.length ? Math.round((set.filter((r) => r[k]).length / set.length) * 100) : 0}%)`;
+  console.log(`\n=== HOLDOUT SUMMARY (${rows.length} cases${v2 ? ', v2' : ''}) ===`);
   console.log(`exact item-set:  grounded ${pct('groundedExact')}  vs blind ${pct('blindExact')}`);
   console.log(`family-level:    grounded ${pct('groundedFamily')} vs blind ${pct('blindFamily')}`);
+  if (v2) {
+    const withCtx = rows.filter((r) => r.usedFieldContext);
+    const noCtx = rows.filter((r) => !r.usedFieldContext);
+    console.log(`— assessment population (field context supplied): exact ${pct('groundedExact', withCtx)}, family ${pct('groundedFamily', withCtx)}`);
+    console.log(`— photo-only population:                          exact ${pct('groundedExact', noCtx)}, family ${pct('groundedFamily', noCtx)}`);
+  }
   const errs = rows
     .filter((r) => r.actualTotal > 0 && r.groundedTotal > 0)
     .map((r) => Math.abs(r.groundedTotal - r.actualTotal) / r.actualTotal)

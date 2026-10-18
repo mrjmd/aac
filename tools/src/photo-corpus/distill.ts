@@ -27,6 +27,7 @@ import { GeminiClient } from '@aac/api-clients/gemini';
 const OUT_DIR = 'analysis/data/photo-corpus';
 const LIBRARY_PATH = path.join(OUT_DIR, 'exemplar-library.jsonl');
 const EXEMPLARS_PATH = path.join(OUT_DIR, 'exemplars.jsonl');
+const OWNER_NOTES_PATH = path.join(OUT_DIR, 'owner-notes.jsonl');
 const DRAFT_PATH = path.join(OUT_DIR, 'section-v-draft.md');
 const MODEL = 'gemini-3.6-flash';
 const SAMPLES_PER_ITEM = 12;
@@ -66,8 +67,12 @@ Flag uncertainty explicitly ("UNCLEAR — owner to confirm: ..."). Never invent 
 
 PRICING: the owner ADOPTED A NEW PRICING POLICY (Section 0 of llm-ruleset.md) that deliberately changed several historical practices — so historical prices and discount behavior in the evidence MUST NOT be restated as rules. Never write a dollar amount, discount size, or discount trigger in any rule. If pairing/bundling behavior matters to scope (e.g., an item counts as an injection line), say so and cite "per Section 0" — the drafter always receives Section 0 alongside these rules. Known changed examples you must not echo: multi-crack discounts (historically −$100/crack from the 2nd crack; NOW only at 3+ injection lines, fixed −$75/line) and the crack anchor (historically drifted to $1,025–1,075; NOW $1,175). Rules are about WHAT to quote, never what it costs.`;
 
+/** Owner corrections from the 2026-10 packet review — highest-authority
+ *  evidence, injected into every synthesis call. Set in main(). */
+let OWNER_CORRECTIONS = '';
+
 async function synthesize(gemini: GeminiClient, title: string, prompt: string): Promise<string> {
-  const text = await gemini.generateContent(`${PREAMBLE}\n\n${prompt}`, {
+  const text = await gemini.generateContent(`${PREAMBLE}\n\n${OWNER_CORRECTIONS}${prompt}`, {
     temperature: 0,
     maxOutputTokens: 8192,
     thinkingBudget: 4096,
@@ -98,8 +103,27 @@ async function main(): Promise<void> {
     excludePath ? (JSON.parse(fs.readFileSync(excludePath, 'utf8')).holdoutEstimateIds as string[]) : [],
   );
 
-  let lib: LibEntry[] = fs.readFileSync(LIBRARY_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  let exemplars = fs.readFileSync(EXEMPLARS_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const libArg = argv.indexOf('--library');
+  const exArg = argv.indexOf('--exemplars');
+  const libraryPath = libArg >= 0 ? argv[libArg + 1] : LIBRARY_PATH;
+  const exemplarsPath = exArg >= 0 ? argv[exArg + 1] : EXEMPLARS_PATH;
+  let lib: LibEntry[] = fs.readFileSync(libraryPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  let exemplars = fs.readFileSync(exemplarsPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+  // Owner review corrections (2026-10): verbatim notes outrank corpus
+  // patterns; downweighted cases leave the evidence pool entirely.
+  if (fs.existsSync(OWNER_NOTES_PATH)) {
+    const notes = fs.readFileSync(OWNER_NOTES_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const downweighted = new Set(
+      notes.filter((n) => (n.labels ?? []).includes('bad_quote_downweight')).map((n) => String(n.docNumber)),
+    );
+    lib = lib.filter((e) => !downweighted.has(String(e.docNumber)));
+    exemplars = exemplars.filter((e) => !downweighted.has(String(e.docNumber)));
+    OWNER_CORRECTIONS = `OWNER CORRECTIONS (from the owner's case-by-case review — these OUTRANK any pattern you find in the evidence; if evidence conflicts with a correction, the correction wins):\n` +
+      notes.map((n) => `- ${n.docNumber ? `[#${n.docNumber}] ` : '[GLOBAL] '}${n.note}`).join('\n') + '\n\n';
+    console.log(`owner corrections: ${notes.length} notes loaded, ${downweighted.size} cases downweighted out of evidence`);
+  }
+
   if (excluded.size > 0) {
     lib = lib.filter((e: LibEntry & { estimateId?: string }) => !excluded.has((e as { estimateId?: string }).estimateId ?? ''));
     exemplars = exemplars.filter((e) => !excluded.has(e.estimateId));
