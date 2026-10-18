@@ -27,6 +27,7 @@ import {
   storePhoneMapping,
   trackWebhookProcessed,
   logHealthError,
+  enqueueQuoteTrigger,
 } from '../../lib/redis.js';
 import { getEnv } from '../../lib/env.js';
 import { getCalendar, getDrive, getGmail, getPipedrive, getGemini, getQuickBooks, getQuo } from '../../lib/clients.js';
@@ -338,6 +339,21 @@ export async function POST(request: Request): Promise<Response> {
     if (!e164Phone) {
       log.warn('Invalid phone number', { rawPhone });
       return json({ status: 'skipped', reason: 'invalid_phone' });
+    }
+
+    // ============================================
+    // QUOTE TRIGGER ENQUEUE (photo-quote-training Phase 6)
+    // Enqueue-only — all filtering/debounce/classification happens in the
+    // out-of-band runner. Fire-safe: never affects webhook processing.
+    // ============================================
+    if (event.type === 'message.received' || event.type === 'message.delivered') {
+      await enqueueQuoteTrigger({
+        phone: e164Phone,
+        direction: event.type === 'message.received' ? 'incoming' : 'outgoing',
+        at: eventData.createdAt || event.createdAt || new Date().toISOString(),
+        hasMedia: Boolean(eventData.media?.length),
+        snippet: (eventData.body ?? '').slice(0, 300),
+      });
     }
 
     // ============================================

@@ -207,6 +207,30 @@ export async function releaseQBRefreshLock(): Promise<void> {
 
 // ── Health & Observability ───────────────────────────────────────────
 
+/**
+ * Quote-trigger enqueue (photo-quote-training Phase 6). Pushes a compact
+ * message event onto the trigger queue for the out-of-band runner; the
+ * runner owns all filtering/debounce/classification. Never throws —
+ * drafting is best-effort and must not affect webhook processing.
+ */
+export interface QuoteTriggerEvent {
+  phone: string;
+  direction: 'incoming' | 'outgoing';
+  at: string;
+  hasMedia: boolean;
+  snippet: string;
+}
+
+export async function enqueueQuoteTrigger(event: QuoteTriggerEvent): Promise<void> {
+  try {
+    const redis = getRedis();
+    await redis.lpush(keys.quoteTriggerQueue, JSON.stringify(event));
+    await redis.ltrim(keys.quoteTriggerQueue, 0, 999);
+  } catch (err) {
+    log.warn('quote-trigger enqueue failed', { error: (err as Error).message });
+  }
+}
+
 export async function trackWebhookProcessed(
   source: 'pipedrive' | 'quo' | 'google-ads' | 'qb'
 ): Promise<void> {

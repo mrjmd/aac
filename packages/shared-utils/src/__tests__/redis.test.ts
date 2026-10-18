@@ -102,6 +102,20 @@ describe('keys', () => {
       expect(keys.agentAuditStream).toBe('agent:audit:stream');
     });
   });
+
+  describe('quote trigger', () => {
+    it('exposes the trigger queue key', () => {
+      expect(keys.quoteTriggerQueue).toBe('quote-trigger:queue');
+    });
+
+    it('builds the per-customer trigger lock key', () => {
+      expect(keys.quoteTriggerLock('+16175551234')).toBe('quote-trigger:lock:+16175551234');
+    });
+
+    it('builds the draft ownership sync-token key', () => {
+      expect(keys.quoteDraftSyncToken('1562')).toBe('quote-draft:sync:1562');
+    });
+  });
 });
 
 describe('ttl', () => {

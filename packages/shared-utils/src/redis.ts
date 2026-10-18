@@ -77,6 +77,24 @@ export const keys = {
   /** Sorted set of all to-do IDs, scored by due date (epoch ms) */
   todoList: 'todo:list' as const,
 
+  // ── Quote Trigger (event-keyed drafting, photo-quote-training Phase 6) ─
+
+  /**
+   * Queue of message events that may warrant a quote analysis (LIST,
+   * LPUSH by middleware webhook, drained by the trigger runner; capped
+   * via LTRIM to 1000).
+   */
+  quoteTriggerQueue: 'quote-trigger:queue' as const,
+
+  /** Per-customer lock serializing racing triggers — 300s TTL */
+  quoteTriggerLock: (phone: string) => `quote-trigger:lock:${phone}` as const,
+
+  /**
+   * SyncToken of the bot's last write to a QBO estimate — the ownership
+   * fingerprint. Current token ≠ stored token ⇒ human-owned forever.
+   */
+  quoteDraftSyncToken: (estimateId: string) => `quote-draft:sync:${estimateId}` as const,
+
   // ── Campaign State ─────────────────────────────────────────────────
 
   /** Campaign state — 90d TTL */
