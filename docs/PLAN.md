@@ -1,7 +1,6 @@
 # AAC Plan — Current State and Roadmap
 
-**Last updated:** 2026-05-30 (Walks #2 + #3 + #4 deployed `dpl_EZfkctJz8gszP2LRkZM7DraDmWpf`; Walk #5 `buildEventDescription` package-only; Walk #6 propose-dialogue shipped + both apps deployed 2026-05-30 + smoke-tested end-to-end with Margie's directive (mw `aac-middleware-monorepo-2k46niw6p`, ag `agent-a9c6bqjd5` after the `\n`-in-env infra patch). **Walk #6.5 shipped 2026-05-30 (single commit):** (1) `defaultAssessmentHours: 1 → 0.5`, (2) travel-aware `suggestSlot` (now async) with 15-min `travelBufferMinutes`, 5:30 PM `homeReturnDeadlineHour` anchor at `30 Randlett Street, Quincy, MA 02170`, travel-time primitive extracted to `packages/scheduling/src/travel-time.ts` + `apps/field/lib/travel-time.ts` migrated to consume it, fail-closed on Maps null, (3) confidence gate at 0.7 in `writePendingDirective` routing low-confidence directives to new `scheduling:pending-review:list` rendered as a separate "Needs review" section on command-center `/scheduling`. New env: `GOOGLE_MAPS_API_KEY` on middleware (absent → algorithm runs no-travel + warns). Test counts post-#6.5: scheduling 104 (+6), middleware 215, agent 102, api-clients 234. Classifier semantic surgery remains a deferred separate spike — confidence gate is the safety net. 4 known shadow-tolerable dedup/cleanup gaps documented as Walk-#7 prerequisites in `docs/projects/scheduling.md`. Next: **deploy preview → prod + smoke-test re-run (Margie + Matt Davis fixture)**, then Walk #7 (`executeDirective`) — must clear the four prereqs first.)
-**Scheduling addendum 2026-09-30:** Walk #7-lite (stub calendar events) built + fully tested, NOT yet deployed. Classifier surgery done (conversation context via Quo history, `appointment_confirmed` intent, `slotCommitment` booked/offered on manual_schedule — the Margie A+B bugs are fixed). `executeStubEvent` in `@aac/scheduling` creates `STUB — {Name}` events (colors 10/3/5, durations 0.5h/3.5h/3.5h, PD address, silent Mike attendee, ±24h duplicate guard) when Matt declares a booking or a customer confirms an offered time, gated on new middleware env flag `SCHEDULING_STUB_EVENTS=true` (default off → deploy is inert) + the 0.7 confidence gate. Full Walk #7 (suggestSlot-driven autonomy) still behind the four dedup prereqs. Details: `projects/scheduling.md` §Walk #7-lite.
+**Last updated:** 2026-10-18 (full rewrite — the 2026-05-30 version predated the triage dashboard, the quoting go-live, and the scheduling queue closeout; see git history for the old text)
 **Supersedes:** `_archive/2026-05-27/MASTER-PLAN.md` and `_archive/2026-05-27/middleware-phase-2.5-deal-spine.md`
 **Entry point for:** anyone (Matt, future Claude sessions) trying to understand "what are we doing and why" without re-deriving from scratch.
 
@@ -9,57 +8,107 @@
 
 ## What this doc is
 
-A short, current-state-only roadmap. It is intentionally LIGHTER than the old `MASTER-PLAN.md`, which tried to capture every detail in one place. This doc:
-
-- Names the current four-priority sequence
-- Names what's actively deferred and why
-- Points at the project specs where detail lives
-- Links to the durable strategic docs (charter, diagnostic, funnels) that remain valid
-
+A short, current-state-only roadmap. It names the priority sequence, what's
+actively deferred and why, and points at project specs where detail lives.
 When this doc gets long, the answer is more project specs, not more sections here.
 
 ---
 
 ## Current state in one paragraph
 
-AAC is a foundation repair business in Massachusetts (~21 months old). Spring 2026 revenue is 1.7–2.4× spring 2025 — the trajectory plausibly clears the May-2027 floor (\$50k/mo avg Mar–May 2027). The binding constraint is demand: calendar books 1–2 weeks out, needs 2–3. Close rate is ~60% (above industry). No debt; cash buffer \~\$40–125k. Edward (outside salesperson, hired Dec 2025) is the open bet — attribution instrumentation has been live since mid-March 2026, with a signal check at end of July 2026 and a final keep/cut decision at end of November 2026. Matt is the sole technician + sole developer; the operational frame for the next 6 months is **maximally automate Matt's day-to-day so that demand-gen work has room to compound.**
+AAC is a foundation repair business in Massachusetts (~26 months old). The
+binding constraint is demand: calendar books 1–2 weeks out, needs 2–3. Close
+rate ~60% (above industry). No debt. Edward (outside salesperson, hired Dec
+2025) faces a final keep/cut decision at **end of November 2026** — attribution
+instrumentation has been live since March. Matt is the sole technician-manager +
+sole developer; Mike is the field tech. The operational frame remains
+**maximally automate Matt's day-to-day so demand-gen work has room to
+compound** — and as of October 2026 that automation has substantially landed:
+morning triage dashboard, automatic stub/HOLD calendar events, quote-accepted
+slot suggestions, and live event-triggered quote drafting. The next phase
+shifts from building automation to (a) harvesting its feedback loops,
+(b) making the Edward decision from data, and (c) re-opening demand-side work
+(marketing automation) over the winter.
 
 ---
 
 ## The sequencing principle (the load-bearing rule)
 
-**Category 2 (subtractive) work precedes Category 3 (additive) work.** Reducing existing operational surface frees deep-work capacity; adding new channels consumes it (even when they succeed). Don't take on new ops surface until you've reduced existing ops surface.
+**Category 2 (subtractive) work precedes Category 3 (additive) work.**
+Reducing existing operational surface frees deep-work capacity; adding new
+channels consumes it. See [DECISIONS.md](DECISIONS.md) entry #1.
 
-This is why automation of Matt-and-Mike's existing daily flow comes before opening new demand channels. See [DECISIONS.md](DECISIONS.md) entry #1 for the full reasoning.
-
----
-
-## The four active priorities (in dependency order)
-
-| # | Project | Goal | Status | Spec |
-|---|---|---|---|---|
-| 1 | **apps/field** | Tech-facing mobile web app for job completion (photos + payment status + auto-invoice) | Shipped to production 2026-05-28 | `projects/apps-field.md` |
-| 2 | **`@aac/scheduling` pipeline + middleware webhook integration** | SchedulingDirective pipeline (slot suggestion + event creation + PD deal updates + callback child-deal logic) called from middleware Quo webhook (intent extraction) + new QB Estimate webhook + daily QB reconciliation backstop cron | **Active — Crawl complete + duration heuristic shipped + Walks 1–6 shipped + smoke-tested 2026-05-30 (surfaced 3 algorithm/dispatch gaps → Walk #6.5 ahead of Walk #7); Walk #6.5 (~half day) is next: assessment-default 0.5h + travel-time feasibility w/ return-home anchor + confidence gate ≥0.7. Then Walk #7 (`executeDirective`), still blocked on the 4 dedup prereqs.** ✅ SchedulingDirective type + 4 normalizers + 98 tests in `@aac/scheduling`. ✅ `/api/qb-webhook` live in prod, e2e-verified 2026-05-29. ✅ Duration heuristic codified (`@aac/quoting/{classify-scope,estimate-duration}` + reference JSON + 34 tests); directives carry full `durationPrediction`. ✅ Command-center `/scheduling` view live. ✅ `@aac/scheduling/suggestSlot` v0 — 16 tests; soft 2 jobs/day, two-pass cap relaxation, 21-day lookahead, DST-correct. ✅ `/api/cron/qb-reconcile` daily 15:00 UTC backstop (8 tests). ✅ `GeminiClient.classifySchedulingIntent` (19 tests) — role-based prompts, role-guard parser. ✅ Walk #4b (2026-05-30): Quo-path normalizers + dispatch helper + Quo webhook wire-up, all live. ✅ Walk #5 (2026-05-30): `buildEventDescription` pure function with four post-LLM quality gates (address-present, line-item-referenced, no hallucinated phone/email/money, ≤1200 chars), up to 2 retries with gate-failure feedback, deterministic template fallback — 15 tests. Pipeline covers all six trigger paths through to shadow queue: QB Estimate.Update + daily reconciliation + Quo `message.received` (customer classifier) + Quo `message.delivered` (matt classifier) + Quo `call.transcript.completed` (both speakers in parallel). Callback parent resolution via calendar Color ID 10 lookup + `parseDealMarker`; PD-field migration path noted. New `/api/health.schedulingClassifier.byEventType` exposes 48h volume per event type (live, zeroed counters waiting for events). Middleware test suite: 188. **4 known shadow-tolerable dedup/cleanup gaps documented as Walk-#7 prerequisites in `docs/projects/scheduling.md` — must be addressed before `executeDirective` ships.** **Walk build order:** (1) ✅ command-center view, (2) ✅ `suggestSlot` v0, (3) ✅ daily reconciliation cron, (4a) ✅ Gemini classifier method, (4b) ✅ classifier wire-up + Quo-path normalizers, (5) ✅ `buildEventDescription`, (6) ✅ propose-dialogue endpoint + smoke-test, (6.5) **assessment-default 0.5h + travel-feasibility w/ return-home anchor + confidence gate at 0.7 — next**, (7) `executeDirective` (blocked on dedup prereqs), (future spike) classifier semantic surgery: context-aware intent + `appointment_confirmed` + slot extraction. | `projects/scheduling.md`, `projects/duration-heuristic-design.md` |
-| 3 | **`@aac/quoting` pipeline** | Photo analysis + business-rules-informed quote drafting + QB Estimate creation; handoff to `@aac/scheduling` on acceptance | First slice shipped 2026-05-29: `classifyScope` + `estimateDuration` + reference dataset. Photo-analysis / quote-drafting slices still TBD. Future reusable surface for apps/website instant-quote + apps/partner-app realtor/inspector entry. | `projects/quoting.md` (TBD), `projects/duration-heuristic-design.md` |
-| 4 | **apps/agent (paused at Walk 2)** | Matt-facing dialogue on agent comms line: propose-dialogue, strategic-partner mode, voice cloning, self-reflection. NOT the operational listening surface (that's middleware). | **Paused.** Walk 1 (comms inbound webhook) LIVE in prod; Walk 2 (tool surface) shipped + migrated to `@aac/agent-tools` 2026-05-29. Walk 3+ as originally scoped (intent classification, action proposals, stub event creation, stale-deal nudges) **moved to middleware + `@aac/scheduling`** per the 2026-05-29 realignment. Apps/agent resumes when Layer 1/3/4 work begins (voice fidelity, strategic mode, self-reflection — see `docs/projects/agent-vision.md`). | `projects/apps-agent.md` |
-
-**Opportunistic sidecar:** `projects/middleware-cleanup.md` — cleanup items surfaced during the apps/agent stack analysis. Do during the middleware extensions for #2 when middleware is already unfrozen; don't break SACROSANCT for janitorial work alone.
-
-**⚠️ Urgent insert (2026-07-02):** `projects/audit-2026-07-remediation.md` — full five-track audit (middleware, shared packages, repo architecture, security, external-API currency). Headlines: **Pipedrive API v1 hard shutdown 2026-07-31** (PipedriveClient is all-v1 — migration required within the month); a committed Gemini key needing rotation; unauthenticated Pipedrive webhook; command-center auth not actually verifying sessions; at-most-once event processing that silently drops failed invoices/reminders; QB token-refresh race across three apps. Sessions A+B of that doc precede any new feature work; sessions C+D (reliability + data-loss client bugs) gate Walk #7 `executeDirective`. That doc supersedes `middleware-cleanup.md` as the remediation tracking surface.
-
-**Build order:** #1 already shipped. #2 is the active priority. #3 (quoting) is scaffolded but not actively built — design spike + spec come before code. #4 (apps/agent) is paused; resumes when Matt-facing dialogue work starts.
-
-App names (`apps/field`, `apps/agent`) are working names; subject to confirmation before pillar CLAUDE.md files are written.
+As of October 2026 the Cat-2 program is largely shipped — which is precisely
+the condition that unlocks the deferred Cat-3 items (marketing automation
+first).
 
 ---
 
-## In-flight / shipped
+## The four pillars — where each actually stands
 
-- **Cron A (invoice-create)** — live since 2026-05-19. Auto-creates QB invoices from accepted estimates for jobs scheduled today. Working as designed (4 invoices in 8 days, all matched correct estimates).
-- **Existing crons:** `job-reminders`, `job-followups`. Both stable.
-- **Funnel A (dormant quote reactivation)** — Phase 1 cleanup pending; **now also gating apps/agent Crawl step 6** (deal backfill). Cleanup categorizes 77 Pending estimates (37 are 90+d) into keep / dead / forgot-to-mark-won / multi-quote orphan; only the keep set backfills as live deals. Phase 2 LLM agent build is the load-bearing stale-nudge automation downstream of `apps/agent`, designed in `analysis/02-strategy/funnel-a-dormant-reactivation.md`.
-- **Foundation Health Plan front-end** — pitch script + agreement doc to ship alongside current jobs. Back-end deferred.
-- **Part-time human inbound triage hire** — \~\$25/hr, 10–15 hr/wk ramp. Matt sources via friends + Facebook post.
+| # | Project | Status | Spec |
+|---|---|---|---|
+| 1 | **apps/field** | Shipped 2026-05-28; v2 photos/accountability live; field photos feed stub enrichment + quote drafting. Maintenance mode. | `projects/apps-field.md`, `projects/apps-field-v2-photos-and-accountability.md` |
+| 2 | **`@aac/scheduling` pipeline** | **Queue closed out 2026-10-15.** Live in prod: intent classification on all Quo/QB trigger paths; STUB auto-creation on booked/confirmed slots (create-first/enrich-after, Matt-voice descriptions, multi-source photos); HOLD placeholders for offered slots (`SCHEDULING_HOLD_EVENTS=true`, offer-supersedes-hold semantics); quote-accepted slot suggestions with banded arrival + Quo note + graphite hold (`SCHEDULING_SUGGEST_NOTES=true`); Mike-OOO busy filter; triage D13/D14 backstops. **All four Walk-#7 dedup prereqs closed 2026-10-16.** Remaining: full `executeDirective` autonomy (now unblocked — an owner decision, not an engineering blocker) and route-aware day clustering in `suggestSlot` (longer-term). | `projects/scheduling.md` |
+| 3 | **`@aac/quoting` pipeline** | **LIVE 2026-10-18 — event-triggered bot quote drafting in production.** Photo→quote training (6 phases) complete: Section V ruleset + exemplar retrieval, holdout 68% exact / 77% family (assessment population 80%; simple-injection stratum 86%/92%). Triggers: T1 photo-burst, T2 Mike-debrief transcript, T3 quote-promised (middleware enqueue → launchd runner, 10 min). Drafts are send-ready Pending QBO estimates; SyncToken ownership protects Matt's manual edits (one-way door); Quo conversation notes on create/update with line diffs. Flywheel live: owner edits/sends/deletes become training labels (`harvest-edits.ts` → triage "Bot quote drafts" section). **Now in observe/harvest mode.** Auto-send decision after weeks of gate-precision evidence. | `projects/photo-quote-training.md`, `projects/quote-drafter.md` |
+| 4 | **apps/agent** | Paused at Walk 2. Matt's call (2026-10-18): conversational agent layer (#5) and customer/partner-facing intake (#6) come **much later**. Near-term precursor instead: **message-pattern analysis** — identify Matt's most-repeated outbound message types (first-touch intake asks, post-quote follow-ups) and scope narrow, low-risk Matt-voice automations with explicit triggers. Analysis: `analysis/02-strategy/message-automation-analysis-2026-10.md`. | `projects/apps-agent.md`, `projects/agent-vision.md` |
+
+**Operational backbone (not a pillar, but load-bearing):** the **triage
+dashboard** (`analysis/triage.html`, launchd 08:15) — detectors D1–D14 + L1/L2
+across calendar, Quo, QBO, Gmail; solicitation check-off; bot-draft ownership
+states. This is the de-facto morning briefing and the proto–command-center.
+Spec: `projects/triage-dashboard.md`.
+
+---
+
+## Near-term sequence (October–December 2026)
+
+1. **Quoting flywheel: observe, don't build.** Watch the trigger log + edit
+   labels; fold owner corrections into the next Section V re-distill; make the
+   auto-send call when the simple-injection gate shows sustained precision.
+2. **Edward attribution readout — early November.** The keep/cut decision is
+   end of November; build the forensic readout (channel-attributed revenue vs
+   fully-loaded cost) so the decision is made from a document. The realtor
+   outreach program (`analysis/02-strategy/realtor-outreach-plan-2026-09.md`)
+   is an amplifier on this channel and hangs on the same decision.
+3. **Message automation analysis → narrow Matt-voice sends.** From the
+   analysis above: pick the lowest-risk, highest-frequency message types and
+   automate them with hard triggers + Matt-voice fidelity checks. (Drafts
+   first, auto-send only with the same evidence discipline as quoting.)
+4. **Marketing automation 4.1 — the winter build.** Spike 4.0 validated the
+   hybrid image pipeline (Puppeteer + Imagen). 4.1 prerequisites: BufferClient,
+   GeminiClient integration, image storage. Social post automation is the #1
+   marketing ROI item; building it over the winter means it's producing when
+   spring demand season opens. This is the first Cat-3 item unlocked by the
+   Cat-2 program landing.
+5. **Security: P4-1 QB OAuth lock** — the remaining big item from the audit
+   (see below). Close before more systems depend on QB writes.
+
+---
+
+## Audit status (2026-07 five-track audit)
+
+`projects/audit-2026-07-remediation.md`. As of the 2026-10-16 sweep: Pipedrive
+webhook auth live, the leaked Gemini key was auto-disabled by Google, PD API v1
+has no announced removal date (migration still queued, not urgent). **Open:
+P4-1 QB token-refresh race (OAuth lock)** — the big one; plus P4-5 QB
+pagination, P4-6 429/timeout handling. The legacy QB webhook payload format
+dies 2026-07-31 — already handled (`/api/qb-webhook` is CloudEvents-only).
+
+---
+
+## In-flight / shipped (stable systems)
+
+- **Crons:** `job-reminders`, `job-followups` (3 review-prompt variants),
+  invoice-create (Cron A), daily `qb-reconcile`, nightly Gemini canary. Stable.
+- **Ed commission report** (`tools/src/commissions/`) — 20% of paid invoices,
+  PD-closure attribution.
+- **Stub enrichment** — Matt-voice descriptions + multi-source photos (field
+  app + Quo MMS + email) live 2026-10-15.
+- **Quote drafter v1→v2** — see pillar #3; manual runs replaced by triggers.
+- **Pricing policy 2026-10** — canonical in
+  `analysis/data/quoting-spike/llm-ruleset.md` Section 0 (anchor \$1,175,
+  3+ cracks −\$75, slab LF equation).
 
 ---
 
@@ -67,82 +116,61 @@ App names (`apps/field`, `apps/agent`) are working names; subject to confirmatio
 
 | Item | Why deferred |
 |---|---|
-| **Cron B (invoice-send)** | Killed. Field app's "Not Yet Paid" branch replaces it at source. |
-| **FHP back-end** (recurring billing, winter clustering, photo reports) | Cat 3 — adds ops surface. Front-end pitch in current sprint; back-end after Cat 2 sprint demonstrates freed time. |
-| **Paid marketing rebuild** (~\$4.7k/mo Google Ads + Meta) | Funnels A + E (mostly Cat 2-leaning) carry the demand work. Revisit if Edward signal at end of July is weak. |
-| **Funnel B (neighborhood blitz)** | Cat 3. Held until Cat 2 sprint deliverables are shipping. |
-| **Funnel C (cold email via ZoomInfo)** | Cat 3. Highest setup cost; defer until inbound triage is solved. |
-| **Funnel D (website lead magnet)** | Cat 3. Lower priority. |
-| **Funnel F (partner portal)** | Cat 3. Amplifier on Edward's existing work — only useful if Edward's bet is renewed in November. |
-| **Virtual receptionist** | Brand value: humans answer. Part-time human hire instead. |
-| **2nd technician hire** | Downstream of demand consistently filling 2–3 weeks out. |
+| **Full `executeDirective` autonomy (Walk #7)** | Prereqs closed 2026-10-16; stubs/holds/notes cover most of the value. Widen autonomy deliberately, one decision at a time, as calibration data accumulates. |
+| **Quote auto-send** | Gate precision must be demonstrated on live triggers first (weeks, not days). |
+| **Agent layers 5–6** (conversational agent, customer/partner intake) | Matt, 2026-10-18: "come much later." Message-pattern automation is the near-term slice. |
+| **FHP back-end** (recurring billing, winter clustering) | Cat 3. Front-end pitch exists; back-end after marketing automation. |
+| **Funnel B (neighborhood blitz) / C (cold email) / D (lead magnet)** | Cat 3, held. Marketing automation (social) outranks all three. |
+| **Funnel F (partner portal)** | Only useful if Edward's bet is renewed in November. |
+| **Paid marketing rebuild** | 2026 spend cut ~80%; revisit after the Edward decision + social automation. |
+| **Virtual receptionist** | Brand value: humans answer. |
+| **2nd technician hire** | Planned Mar 1 2027, gated on winter 1.5× multiplier + \$60–70k vaulted (see `analysis/02-strategy/tech2-hiring-plan-2026-08.md`). |
+| **PD API v1→v2 migration** | No announced removal date; queued. |
 
 ---
 
-## Architecture (current + planned)
+## Architecture (current)
 
 ```
 apps/
   middleware/        Pillar 1: Operations Brain (Next.js 14) [SACROSANCT — minimal changes]
   website/           Pillar 2: Public Website (Astro 5)
-  marketing/         Pillar 3: Marketing Engine (Content Production)
-  command-center/    Pillar 4: Analytics/BI Dashboard (Next.js 15)
-  field/             Pillar 5: Tech-facing job-completion app (NEW — apps/field)
-  agent/             Pillar 6: Conversational agent platform + deal spine (NEW — apps/agent)
+  marketing/         Pillar 3: Marketing Engine (Spike 4.0 validated; 4.1 is the winter build)
+  command-center/    Pillar 4: Analytics/BI Dashboard (scheduling queues UI)
+  field/             Pillar 5: Tech-facing job-completion app (shipped)
+  agent/             Pillar 6: Conversational agent platform (paused at Walk 2)
 packages/
-  api-clients/       @aac/api-clients — Shared API clients
-  agent-tools/       @aac/agent-tools — LLM read-tool surface (added 2026-05-29 from apps/agent/lib/tools)
-  scheduling/        @aac/scheduling — SchedulingDirective pipeline (scaffolded 2026-05-29; impl TBD)
-  quoting/           @aac/quoting — Photo→quote→QB Estimate pipeline (scaffolded 2026-05-29; impl TBD)
-  shared-utils/      @aac/shared-utils — Phone, Redis, Logger, Types
+  api-clients/       @aac/api-clients — Shared API clients (Quo, QB, PD, Google, Gemini, SearchBug)
+  agent-tools/       @aac/agent-tools — LLM read-tool surface
+  scheduling/        @aac/scheduling — directive pipeline, stubs/holds, suggestSlot
+  quoting/           @aac/quoting — scope classification, duration, draft-quote, field-context
+  shared-utils/      @aac/shared-utils — Phone, Redis keys, Logger, Types
   tsconfig/          @aac/tsconfig — Shared TypeScript configs
-tools/               Operational scripts (thin wrappers)
-docs/                This directory — architecture specs and current plan
-analysis/            Strategic analysis (gitignored — see analysis/00-charter.md)
+tools/               Operational scripts (triage, quote-trigger runner, commissions, drafter)
+docs/                Architecture specs + project specs + this plan
+analysis/            Strategic analysis + generated dashboards/data (gitignored)
 ```
 
-Two new pillars (`apps/field`, `apps/agent`) reflect the 2026-05-27 architecture decisions.
+Local automation (launchd): `com.aac.triage` 08:15 (dashboard refresh +
+auto-open), `com.aac.quote-shadow` every 10 min (quote-trigger runner, LIVE).
 
 ---
 
 ## Surviving strategic docs (no changes needed)
 
-These remain valid; don't re-derive:
-
-- `analysis/00-charter.md` — objective function, kill criteria, decision date
-- `analysis/01-diagnostic/financials.md` — May 2026 financial baseline
-- `analysis/02-strategy/funnel-a-dormant-reactivation.md` — Phase 1 design complete
-- `analysis/02-strategy/funnel-b-neighborhood-blitz.md` — LettrLabs decided, deferred
-- `analysis/02-strategy/direct-mail-service-research.md` — service comparison memo
+- `analysis/00-charter.md` — objective function, kill criteria, decision date (May 2027)
 - `analysis/02-strategy/salesperson-strategy.md` — Edward instrumentation + decision window
-- `analysis/02-strategy/foundation-health-plan.md` — full design (with header note: front-end only in current sprint)
-- `analysis/02-strategy/new-funnels.md` — portfolio index
-
----
-
-## Updated strategic docs (Phase 3 of doc rewrite, pending)
-
-- `analysis/02-strategy/levers.md` — to be updated with Cat 2 vs Cat 3 framing and the new sequence
-- `analysis/02-strategy/foundation-health-plan.md` — header note: front-end only in current sprint
-- `docs/middleware.md` — prune Future State (items moving to `apps/agent` and `apps/field`)
-- `CLAUDE.md` — add `apps/field/` and `apps/agent/` to architecture diagram; point to this doc
-
----
-
-## Archived (history, not active reference)
-
-- `docs/_archive/2026-05-27/MASTER-PLAN.md` — superseded by this doc
-- `docs/_archive/2026-05-27/middleware-phase-2.5-deal-spine.md` — decomposed into `apps/agent` + project specs
-- `docs/_archive/2026-05-27/middleware-auto-invoicing.md` — Cron A documented in code; Cron B killed
-- `analysis/_archive/2026-05-27/marketing-strategy.md` — deprioritized in favor of funnel portfolio
+- `analysis/02-strategy/quoting-patterns-spike.md` — pricing forensics (GO verdict)
+- `analysis/02-strategy/tech2-hiring-plan-2026-08.md` — 2nd tech gates
+- `analysis/02-strategy/realtor-outreach-plan-2026-09.md` — Edward-channel amplifier
+- `analysis/02-strategy/funnel-a-dormant-reactivation.md` — design complete, Phase 1 cleanup pending
 
 ---
 
 ## When to update this doc
 
-- New decision shifts a priority → update the priority table + add entry to `DECISIONS.md`
-- Project ships or gets killed → move from "active" to "in-flight" or "deferred"
-- New pillar added → update Architecture section
-- Quarterly retro → check that the "current state" paragraph is still accurate
+- New decision shifts a priority → update the pillar table + add entry to `DECISIONS.md`
+- Project ships or gets killed → move between sections
+- Quarterly retro → check the "current state" paragraph is still accurate
 
-When this doc grows past \~5 pages, refactor into project specs, not more sections.
+When this doc grows past ~5 pages, refactor into project specs, not more sections.
