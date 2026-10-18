@@ -171,21 +171,45 @@ Hold out 60–80 corpus cases untouched by Phases 2–3. Metrics:
 This is where we learn whether the grounding actually moved the needle,
 and it defines the confidence threshold empirically rather than by feel.
 
-### Phase 6 — Confidence gating + auto-trigger (1–2 sessions + 2–3 weeks shadow)
+### Phase 6 — Confidence gating + event-keyed trigger (REVISED 2026-10-18)
 
-Confidence is **composite, never model self-report alone**: line-set
-agreement across k=3 runs (self-consistency — directly attacks the known
-run-to-run variance), retrieval similarity of nearest exemplars, zero
-validator warnings, zero open questions, every ask and area accounted, no
-site-visit/multi-day flags.
+**The trigger is event-keyed, not cron-keyed** (owner directive). The
+daily cron analyzes everything long after the moment has passed; the
+right design fires one analysis for one customer at the moment enough
+information exists. Four trigger moments, mapped to systems AAC already
+has:
 
-- **Shadow mode first:** the 08:15 cron runs the drafter in dry-run and
-  logs what it *would have* auto-created and at what confidence. 2–3
-  weeks of comparing shadow drafts against what actually got sent.
-- **Flip:** auto-create Pending bot drafts above threshold only;
-  below-threshold findings stay in triage for manual runs. Review in QBO
-  remains; nothing is ever auto-sent. Auto-send is a separate, later,
-  owner-only decision.
+| Moment | Signal source | Timing |
+|---|---|---|
+| T1 Photo burst settles | Quo inbound webhook (middleware already ingests) | 15-min debounce after the last inbound message in a thread with ≥1 photo or a concrete ask |
+| T2 Assessment debrief completes | Field-app flow completion, or first Matt↔Mike call/text ending after an assessment event's end time (transcript lands minutes later) | fire immediately — THE moment for post-assessment quotes, with runtime field context |
+| T3 Quote promised | Outbound "I'll get that quote to you" (today caught next-morning by triage L1 — moves to webhook-time) | immediate |
+| T4 Emailed photos | Gmail ingest | same debounce as T1 |
+
+**Execution architecture** (middleware stays sacrosanct-thin): webhook
+handlers only *enqueue* trigger events (Redis, key builder); a thin
+runner — natural home `apps/agent` — drains the queue, runs the full
+grounded pipeline (pre-pass → retrieval → runtime field context → draft
+→ validator), and applies the gate. A frequent drainer schedule is an
+implementation detail (executor), not the trigger (signal).
+
+**The gate is composite and population-aware** (holdout-calibrated
+2026-10-18): auto-create only when ALL hold — predicted scope is
+injection-family only AND ≤2 scope lines (that stratum runs 86% exact /
+92% family; its misses are small-dollar line edits); k=3 self-consistency
+agreement on the item set; no `needs_site_visit`; no open questions;
+every ask and photo area accounted; validator clean. Complex scope
+(resurfacing/masonry, 3+ lines, $4k+ — measured ~50-60% exact) NEVER
+auto-drafts: it routes to triage with the analysis attached as prepared
+context (the high-touch path).
+
+- **Shadow mode first:** the runner goes live on real triggers but
+  dry-run — logs trigger moment, gate verdict, and the would-be draft to
+  a triage dashboard section. 2–3 weeks; the owner's accept/reject per
+  shadow draft becomes the next label set.
+- **Flip:** gate-passing triggers auto-create Pending bot drafts.
+  Review in QBO remains; nothing is ever auto-sent. Auto-send is a
+  separate, later, owner-only decision.
 
 ## Total level of effort
 
