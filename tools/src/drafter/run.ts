@@ -218,6 +218,9 @@ interface DraftRunRecord {
   estimateId?: string;
   docNumber?: string;
   total?: number;
+  /** The bot's drafted lines — the baseline the edit-harvester diffs
+   *  owner changes against (the passive training-label loop). */
+  lines?: Array<{ item: string; qty: number; unitPrice: number }>;
 }
 
 async function main(): Promise<void> {
@@ -677,6 +680,7 @@ async function draftOne(ctx: {
         phone, customer: resolvedName, outcome: 'updated',
         detail: `#${revised.DocNumber} regenerated`,
         estimateId: revised.Id, docNumber: revised.DocNumber, total: revised.TotalAmt,
+        lines: draft.lines.map((l) => ({ item: l.item, qty: l.qty, unitPrice: l.unitPrice })),
       };
     } catch (err) {
       const msg = (err as Error).message;
@@ -713,6 +717,7 @@ async function draftOne(ctx: {
     estimateId: estimate.Id,
     docNumber: estimate.DocNumber,
     total: estimate.TotalAmt,
+    lines: draft.lines.map((l) => ({ item: l.item, qty: l.qty, unitPrice: l.unitPrice })),
   };
 }
 

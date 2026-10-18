@@ -42,6 +42,9 @@ retry() {
 
 retry npx tsx tools/src/triage/collect.ts
 retry npx tsx tools/src/triage/analyze.ts
+# refresh bot-draft edit labels so the dashboard section shows ownership
+# states (best-effort — the section renders fine without it)
+npx tsx tools/src/quote-trigger/harvest-edits.ts || true
 npx tsx tools/src/triage/render.ts
 echo "Open: analysis/triage.html"
 open_dashboard

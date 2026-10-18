@@ -14,6 +14,48 @@ import type { Finding, FindingsFile, Section } from './analyze.ts';
 
 const ET = 'America/New_York';
 
+/**
+ * Bot quote drafts section (photo-quote-training Phase 6): last 7 days of
+ * trigger-runner activity plus the edit-harvester's ownership states. Both
+ * files are optional — the section renders empty-safe when absent.
+ */
+function botDraftsSection(): string {
+  const logPath = 'analysis/data/quote-trigger/shadow-log.jsonl';
+  const labelsPath = 'analysis/data/quote-trigger/edit-labels.jsonl';
+  const weekAgo = Date.now() - 7 * 86_400_000;
+  const rows: Array<Record<string, unknown>> = fs.existsSync(logPath)
+    ? fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+        .filter((r) => new Date(String(r.at)).getTime() >= weekAgo && r.outcome !== 'no-trigger')
+    : [];
+  const labels = new Map<string, Record<string, unknown>>(
+    fs.existsSync(labelsPath)
+      ? fs.readFileSync(labelsPath, 'utf8').split('\n').filter(Boolean).map((l) => {
+          const d = JSON.parse(l);
+          return [String(d.docNumber ?? d.estimateId), d] as const;
+        })
+      : [],
+  );
+  const created = rows.filter((r) => r.outcome === 'created' || r.outcome === 'updated').length;
+  const cards = rows.slice(-25).reverse().map((r) => {
+    const gate = (r.gate ?? {}) as Record<string, unknown>;
+    const label = labels.get(String(r.createdDoc ?? ''));
+    const state = label ? ` · ${esc(String(label.state))}` : '';
+    const sev = r.outcome === 'draft-failed' ? 'sev-red' : gate.wouldAutoCreate ? '' : 'sev-yellow';
+    return `<div class="card ${sev}">
+<div class="card-head"><strong>${esc(String(r.trigger ?? ''))}</strong> ${telLink(String(r.phone ?? ''))}
+<span class="meta">${esc(String(r.at ?? '').slice(0, 16).replace('T', ' '))} · ${esc(String(r.outcome))}${r.createdDoc ? ` · #${esc(String(r.createdDoc))}` : ''}${state}</span>
+${r.total ? `<span class="amt">$${Number(r.total).toLocaleString()}</span>` : ''}
+<span class="src">${esc(String(gate.label ?? ''))}</span></div>
+<p class="detail">${esc(String(r.why ?? ''))}${Array.isArray(r.scopeItems) && r.scopeItems.length ? ` — ${esc((r.scopeItems as string[]).join(', '))}` : ''}</p>
+</div>`;
+  }).join('\n');
+  return `<section>
+<h2><span class="pill pill-${created > 0 ? 'yellow' : 'green'}">${rows.length}</span> Bot quote drafts (7d)</h2>
+<p class="blurb">Event-triggered drafts: T1 photos · T2 Mike debrief · T3 quote promised. Edit a draft in QBO and it becomes yours forever; deletes and edits feed training.</p>
+${cards || '<p class="empty">✓ No trigger activity this week.</p>'}
+</section>`;
+}
+
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -259,6 +301,7 @@ footer { color:#9aa4af; font-size:12px; margin:34px 0 20px; text-align:center; }
 ${pulseTiles}
 </div>
 ${sectionsHtml}
+${botDraftsSection()}
 <footer>
   Snapshot ${esc(data.snapshotAt)} · ${esc(String(data.stats.threads ?? 0))} threads + ${esc(String(data.stats.emailThreads ?? 0))} email threads swept, ${esc(String(data.stats.llmThreads ?? 0))} LLM-triaged (${esc(String(data.stats.llmErrors ?? 0))} errors) ·
   regen: <code>./tools/src/triage/refresh.sh</code> · doc: docs/projects/triage-dashboard.md
