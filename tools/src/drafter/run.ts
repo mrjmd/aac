@@ -48,6 +48,9 @@ import {
   buildFieldExtractionPrompt,
   parseFieldExtraction,
   formatFieldContext,
+  diffDraftLines,
+  buildDraftCreatedNote,
+  buildDraftUpdatedNote,
   type DraftThreadMessage,
   type ExemplarLibraryEntry,
   type FieldEvidence,
@@ -385,6 +388,25 @@ async function main(): Promise<void> {
   }
 }
 
+/**
+ * Post a conversation-panel note on the customer's Quo contact announcing
+ * the draft (owner request 2026-10-18). Fire-safe: note failures never
+ * affect the draft outcome.
+ */
+async function postDraftNote(quo: QuoClient, phone: string, text: string): Promise<void> {
+  try {
+    const contact = await quo.findContactByPhone(phone);
+    if (!contact) {
+      console.log('  ~ no Quo contact for note — skipped');
+      return;
+    }
+    await quo.createContactNote(contact.id, text);
+    console.log('  ✓ posted Quo note');
+  } catch (err) {
+    console.log(`  ⚠ Quo note failed (${(err as Error).message.slice(0, 80)}) — draft unaffected`);
+  }
+}
+
 async function generateWithRetry(
   gemini: GeminiClient,
   prompt: string,
@@ -644,6 +666,13 @@ async function draftOne(ctx: {
       });
       await ctx.redis.set(keys.quoteDraftSyncToken(revised.Id), String(revised.SyncToken));
       console.log(`  ✓ regenerated Pending estimate #${revised.DocNumber} — $${revised.TotalAmt} (was $${updateTarget.TotalAmt})`);
+      await postDraftNote(quo, phone, buildDraftUpdatedNote({
+        docNumber: revised.DocNumber ?? ctx.docNumber,
+        estimateId: revised.Id,
+        total: revised.TotalAmt ?? draftTotal(draft),
+        previousTotal: updateTarget.TotalAmt ?? 0,
+        changes: diffDraftLines(updateTarget, draft.lines),
+      }));
       return {
         phone, customer: resolvedName, outcome: 'updated',
         detail: `#${revised.DocNumber} regenerated`,
@@ -668,6 +697,14 @@ async function draftOne(ctx: {
   const estimate = await qb.createEstimate({ customerId, lines, privateNote, docNumber: ctx.docNumber });
   await ctx.redis.set(keys.quoteDraftSyncToken(estimate.Id), String(estimate.SyncToken));
   console.log(`  ✓ created Pending estimate #${estimate.DocNumber} — $${estimate.TotalAmt}`);
+  await postDraftNote(quo, phone, buildDraftCreatedNote({
+    docNumber: estimate.DocNumber ?? ctx.docNumber,
+    estimateId: estimate.Id,
+    total: estimate.TotalAmt ?? draftTotal(draft),
+    confidence: draft.confidence,
+    needsSiteVisit: draft.needsSiteVisit,
+    lines: draft.lines,
+  }));
   return {
     phone,
     customer: resolvedName,
