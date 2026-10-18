@@ -120,7 +120,10 @@ async function main(): Promise<void> {
     lib = lib.filter((e) => !downweighted.has(String(e.docNumber)));
     exemplars = exemplars.filter((e) => !downweighted.has(String(e.docNumber)));
     OWNER_CORRECTIONS = `OWNER CORRECTIONS (from the owner's case-by-case review — these OUTRANK any pattern you find in the evidence; if evidence conflicts with a correction, the correction wins):\n` +
-      notes.map((n) => `- ${n.docNumber ? `[#${n.docNumber}] ` : '[GLOBAL] '}${n.note}`).join('\n') + '\n\n';
+      notes.map((n) => `- ${n.docNumber ? `[#${n.docNumber}] ` : '[GLOBAL] '}${n.note}`).join('\n') +
+      `\n\nCALIBRATION (holdout-verified failure modes to avoid):\n` +
+      `- Every exclusion/"talk them out of it" rule MUST state its exceptions as hard overrides, and an EXPLICIT customer request always wins over an exclusion (e.g. a customer writing "40' of slab cracks" means floor cracks ARE quoted despite the floor-crack-aversion rule).\n` +
+      `- Add-on rules must not over-generalize beyond their trigger: an add-on that appears in ~2% of historical estimates must not be worded so it fires on most jobs. State the narrow trigger, not "always".\n\n`;
     console.log(`owner corrections: ${notes.length} notes loaded, ${downweighted.size} cases downweighted out of evidence`);
   }
 
