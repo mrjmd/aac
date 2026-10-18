@@ -141,9 +141,11 @@ async function main(): Promise<void> {
     timeoutMs: 120_000,
   });
 
+  const argvOut = process.argv.indexOf('--out');
+  const libraryOut = argvOut >= 0 ? process.argv[argvOut + 1] : LIBRARY_PATH;
   const out = entries.map((e, i) => ({ ...e, vector: vectors[i] }));
-  fs.writeFileSync(LIBRARY_PATH, out.map((e) => JSON.stringify(e)).join('\n') + '\n');
-  console.log(`Wrote ${out.length} entries (${vectors[0]?.length ?? 0} dims) → ${LIBRARY_PATH}`);
+  fs.writeFileSync(libraryOut, out.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  console.log(`Wrote ${out.length} entries (${vectors[0]?.length ?? 0} dims) → ${libraryOut}`);
 }
 
 main().catch((err) => {

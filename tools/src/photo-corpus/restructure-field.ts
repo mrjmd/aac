@@ -55,7 +55,9 @@ function readJsonl(p: string): any[] {
 }
 
 function smallPathFor(dir: string, file: string): string {
-  const stem = path.basename(file);
+  // customer photos: "photos/<custId>/<name>.<ext>" → "<custId>__<name>.jpg"
+  // (same mapping as structure.ts); Mike photos are flat filenames.
+  const stem = file.replace('photos/', '').replace('/', '__');
   return path.join(dir, stem.replace(/\.[a-zA-Z0-9]+$/, '') + '.jpg');
 }
 
