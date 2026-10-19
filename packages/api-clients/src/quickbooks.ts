@@ -123,6 +123,11 @@ export interface QBEstimate {
   BillEmail?: { Address: string };
   LinkedTxn?: QBLinkedTxn[];
   PrivateNote?: string;
+  /** Set to 'EmailSent' once the estimate has been emailed from QBO.
+   *  NOT queryable in QBO SQL — filter client-side. */
+  EmailStatus?: QBInvoiceEmailStatus;
+  /** Stamped by QBO when the estimate email is actually delivered. */
+  DeliveryInfo?: { DeliveryType?: string; DeliveryTime?: string };
   MetaData?: { CreateTime?: string; LastUpdatedTime?: string };
 }
 

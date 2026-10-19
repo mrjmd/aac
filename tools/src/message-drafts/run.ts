@@ -1,0 +1,484 @@
+#!/usr/bin/env npx tsx
+/**
+ * Message-drafts runner — Matt-voice draft texts delivered as Quo contact
+ * notes for copy/paste send. NOTHING is ever sent to a customer by this
+ * script; the note in the conversation panel IS the deliverable.
+ *
+ * Two draft types (design: analysis/02-strategy/message-automation-analysis-2026-10.md):
+ *
+ *  A) POST-QUOTE FOLLOW-UP — a QBO estimate was emailed (EmailStatus=
+ *     EmailSent, found by polling recently-updated estimates; EmailStatus is
+ *     not SQL-queryable so we filter client-side). If Matt hasn't already
+ *     texted the customer since the email went out, draft the "just sent
+ *     that quote over" text and post it as a contact note.
+ *
+ *  B) FIRST-TOUCH INTAKE ASK — a brand-new 1:1 conversation whose messages
+ *     are all inbound, oldest ≥10 min old (Matt's preemption window,
+ *     owner-set 2026-10-19), classified as a real lead (not solicitation).
+ *     Draft the intake reply asking only for what the customer hasn't
+ *     already provided.
+ *
+ * Voice: few-shot generation from Matt's own 2026 sends (exemplars extracted
+ * from the full-corpus harvest) + deterministic quality gates + canonical-
+ * skeleton fallback. Runs every 10 min via launchd com.aac.message-drafts.
+ * Flags: --dry-run (print drafts, no notes, no state writes);
+ *        --probe-estimate <doc#> (dry-run the follow-up generator against one
+ *        estimate, ignoring time window / done-state / already-texted check);
+ *        --probe-phone <E164> (dry-run the intake generator against one
+ *        thread, ignoring thread-age / reply / done-state checks).
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { Redis } from '@upstash/redis';
+import { QuickBooksClient, type QBEstimate } from '@aac/api-clients/quickbooks';
+import { QuoClient } from '@aac/api-clients/quo';
+import { GeminiClient } from '@aac/api-clients/gemini';
+import { keys, ttl } from '@aac/shared-utils/redis';
+import { quickNormalizePhone } from '@aac/shared-utils/phone';
+import type { QBOAuthTokens } from '@aac/shared-utils/types';
+
+const DATA_DIR = 'analysis/data/message-drafts';
+const STATE_PATH = path.join(DATA_DIR, 'state.json');
+const RUNLOG_PATH = path.join(DATA_DIR, 'runlog.jsonl');
+const EXEMPLAR_DIR = 'analysis/data/message-patterns';
+
+const OWN_LINE = '+16176681677';
+const INTERNAL = new Set(['+18573126761', '+16177660151', OWN_LINE]);
+
+const INTAKE_REPLY_WINDOW_MIN = 10; // Matt 2026-10-19 (was 15 in the analysis)
+const INTAKE_THREAD_MAX_AGE_H = 48; // conversation must be genuinely new
+const FOLLOWUP_LOOKBACK_H = 36;
+const MAX_NOTE_ATTEMPTS = 8; // ~80 min of retries waiting for a Quo contact
+const MAX_DRAFTS_PER_RUN = 6;
+
+const REAL_LEAD_RE = /crack|basement|foundation|leak|seep|water|bulkhead|quote|estimate|concrete|sump|repair|pool|patio|garage|wall|floor|cellar|slab/i;
+const SPAM_RE = /hey,? it.?s \w+\.|homeowners? (in your area|looking|needing|ready)|pay.?per.?(lead|booked)|no (setup|ad) fees|mold removal (jobs|work|quotes)|ranked on google|exclusive.{0,30}(estimates|leads)|appointments? booked|min to apply|book qualified|per booked estimate|trial, no contract|send (you )?\d+ (jobs|leads|homeowners)/i;
+const AUTO_RE = /apologies for missing your call|please send us a text with your name|reached out after hours|first thing when we open|this is a reminder from attack a crack|just checking back in to make sure everything/i;
+const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
+const ADDRESS_RE = /\d+\s+\w+.{0,30}(st|street|rd|road|ave|avenue|dr|drive|ln|lane|ct|court|way|cir|circle|ter|terrace|pl|place|blvd)\b/i;
+
+interface TState {
+  firstRunAt?: string;
+  followupDone: Record<string, string>; // estimateId → iso
+  intakeDone: Record<string, string>; // phone → iso
+  noteAttempts: Record<string, number>; // phone → failed findContact attempts
+}
+
+function loadEnv(): void {
+  const envPath = path.resolve(process.cwd(), '.env.diagnostic');
+  if (!fs.existsSync(envPath)) return;
+  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq < 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (!(key in process.env)) process.env[key] = value;
+  }
+}
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
+}
+
+function loadState(): TState {
+  if (!fs.existsSync(STATE_PATH)) return { followupDone: {}, intakeDone: {}, noteAttempts: {} };
+  return { followupDone: {}, intakeDone: {}, noteAttempts: {}, ...JSON.parse(fs.readFileSync(STATE_PATH, 'utf8')) };
+}
+function saveState(s: TState): void {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(STATE_PATH, JSON.stringify(s, null, 1));
+}
+
+function deepLink(phone: string, body: string): string {
+  return `openphone://message?number=${encodeURIComponent(phone)}&from=${encodeURIComponent(OWN_LINE)}&text=${encodeURIComponent(body)}`;
+}
+
+function pickExemplars<T>(all: T[], n: number, seed: number): T[] {
+  // deterministic rotation so consecutive runs vary their few-shot set
+  const out: T[] = [];
+  if (!all.length) return out;
+  for (let i = 0; i < Math.min(n, all.length); i++) out.push(all[(seed + i * 7) % all.length]);
+  return out;
+}
+
+function stripFences(text: string): string {
+  return text.replace(/^```(json)?\s*/i, '').replace(/```\s*$/, '').trim();
+}
+
+// ── draft generators ─────────────────────────────────────────────
+
+const VOICE_RULES = `You are drafting a text message AS Matt, owner of Attack A Crack (foundation crack repair, Massachusetts). Write EXACTLY as Matt writes — study the real examples provided. Hard rules:
+- Never include any dollar amount, price, or discount.
+- Never claim to have seen photos, visited, or spoken on the phone unless the context says so.
+- Never state how far out we are booking (no "booking about a month out" style claims).
+- Plain text only, no markdown. Keep Matt's warmth but his brevity too.
+- Output ONLY the message text, nothing else.`;
+
+async function draftFollowup(
+  gemini: GeminiClient,
+  args: { firstName: string | null; scopeLines: string[]; exemplars: Array<{ text: string }> },
+): Promise<string | null> {
+  const prompt = `${VOICE_RULES}
+
+REAL examples of Matt's post-quote follow-up texts (for voice and shape — do not copy verbatim):
+${args.exemplars.map((e, i) => `--- example ${i + 1} ---\n${e.text}`).join('\n')}
+
+Now draft the follow-up text for THIS customer. Matt just emailed them their quote from QuickBooks.
+Customer first name: ${args.firstName ?? '(unknown — use a greeting without a name)'}
+What the quote covers (from the estimate's own line items — restate the scope in ONE natural sentence, in Matt's words, no prices):
+${args.scopeLines.join('\n')}
+
+Required elements: greet by first name (if known); say the quote was just sent to their email; one sentence restating what it covers; invite questions once they've had a chance to review; mention that once the quote is approved we can get them on the schedule for repair; a warm sign-off.`;
+  try {
+    const out = await gemini.generateContent(prompt, { maxOutputTokens: 4096 });
+    return out.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function followupFallback(firstName: string | null, scopeSummary: string): string {
+  const greet = firstName ? `Hey ${firstName}, ` : 'Hi there, ';
+  return `${greet}I just sent that quote over to your email address. This is for ${scopeSummary}, and it does include our lifetime guarantee on the crack repair. Let me know if you have any questions once you've had a chance to review — as soon as the quote is approved, we can get you on the schedule for repair. Thanks, and I'll speak with you soon.`;
+}
+
+function gateFollowup(draft: string): string | null {
+  if (draft.length < 120 || draft.length > 900) return `length ${draft.length}`;
+  if (/\$\s?\d/.test(draft)) return 'contains a price';
+  if (!/quote|estimate/i.test(draft)) return 'missing quote mention';
+  if (!/email/i.test(draft)) return 'missing email mention';
+  if (!/review|questions/i.test(draft)) return 'missing review/questions invite';
+  return null;
+}
+
+interface IntakeResult {
+  classification: 'lead' | 'solicitation' | 'other';
+  provided: { name: boolean; address: boolean; email: boolean };
+  draft: string;
+}
+
+async function draftIntake(
+  gemini: GeminiClient,
+  args: { customerText: string; mediaCount: number; exemplars: Array<{ customer: string; text: string }> },
+): Promise<IntakeResult | null> {
+  const prompt = `${VOICE_RULES}
+
+REAL examples of Matt's first replies to new inquiries (customer message → Matt's reply):
+${args.exemplars.map((e, i) => `--- example ${i + 1} ---\nCUSTOMER: ${e.customer}\nMATT: ${e.text}`).join('\n')}
+
+A NEW inquiry just arrived on the business line. Analyze it, then draft Matt's first reply.
+
+THE NEW INQUIRY (first message(s) from an unknown number):
+${args.customerText || '(no text — photos only)'}
+${args.mediaCount > 0 ? `[customer attached ${args.mediaCount} photo(s)]` : '[no photos attached]'}
+
+Steps:
+1. Classify: "lead" (homeowner/property contact with a real issue we might service), "solicitation" (lead-gen spam, vendor pitch, marketing), or "other" (wrong number, unclear).
+2. Note which of these the customer ALREADY provided: full name, property address, email address.
+3. If classification is "lead": draft Matt's reply. Thank them / acknowledge what they sent specifically; confirm we can help (only if the issue is plausibly crack repair / concrete work — if it's clearly outside our services, say we don't do that work); then ask ONLY for the items they have NOT already provided (full name, address of the property, email address for the quote). If they sent photos of a crack, mention the lifetime guarantee naturally. If they sent NO photos, ask for photos of the issue. End with Matt's signature line: "-- Matt at Attack A Crack".
+4. If "solicitation" or "other": draft must be an empty string.
+
+Return ONLY JSON: {"classification": "...", "provided": {"name": bool, "address": bool, "email": bool}, "draft": "..."}`;
+  try {
+    const out = await gemini.generateContent(prompt, { maxOutputTokens: 4096 });
+    const parsed = JSON.parse(stripFences(out)) as IntakeResult;
+    if (!parsed || typeof parsed.draft !== 'string') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function gateIntake(draft: string, customerText: string, mediaCount: number): string | null {
+  if (draft.length < 80 || draft.length > 1100) return `length ${draft.length}`;
+  if (/\$\s?\d/.test(draft)) return 'contains a price';
+  if (/booking (about|around)|month out|weeks out/i.test(draft)) return 'lead-time claim';
+  if (mediaCount === 0 && /thanks? for (sending|the) (photos|pictures)/i.test(draft)) return 'thanks for photos without photos';
+  if (EMAIL_RE.test(customerText) && /email address where|an email address\b.{0,30}(quote|send)/i.test(draft) && !/that email|the email you/i.test(draft)) {
+    return 'asks for email already provided';
+  }
+  return null;
+}
+
+function intakeFallback(mediaCount: number): string {
+  const photoLine = mediaCount > 0
+    ? 'Thanks for sending photos as well. '
+    : 'Could you also send a few photos of the issue? ';
+  return `Hello, thanks for reaching out! We can definitely help get this taken care of. ${photoLine}To get a quote together for you, I will just need the following information: your full name, the address of the property, and an email address where I can send the quote. Then, once I send that over, we can go over the details and any questions that you may have. Thanks!\n\n-- Matt at Attack A Crack`;
+}
+
+// ── main ─────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  loadEnv();
+  const argAfter = (flag: string): string | null => {
+    const i = process.argv.indexOf(flag);
+    return i >= 0 ? (process.argv[i + 1] ?? null) : null;
+  };
+  const probeEstimate = argAfter('--probe-estimate');
+  const probePhone = argAfter('--probe-phone');
+  const dryRun = process.argv.includes('--dry-run') || !!probeEstimate || !!probePhone;
+  const now = Date.now();
+  const seed = Math.floor(now / 600_000); // rotates exemplar window per cycle
+
+  const redis = new Redis({
+    url: requireEnv('UPSTASH_REDIS_REST_URL'),
+    token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
+  });
+  const qb = new QuickBooksClient({
+    clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),
+    clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
+    realmId: requireEnv('QUICKBOOKS_REALM_ID'),
+    redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
+    getTokens: async () => (await redis.get<QBOAuthTokens>(keys.qbOAuthTokens)) ?? null,
+    saveTokens: async (tokens) => {
+      await redis.set(keys.qbOAuthTokens, tokens);
+    },
+    refreshLock: {
+      acquire: async () =>
+        (await redis.set(keys.qbRefreshLock, Date.now(), { nx: true, px: ttl.qbRefreshLock * 1000 })) === 'OK',
+      release: async () => {
+        await redis.del(keys.qbRefreshLock);
+      },
+    },
+  });
+  const quo = new QuoClient({
+    apiKey: requireEnv('QUO_API_KEY'),
+    phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
+  });
+  const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY') });
+
+  const followupExemplars = JSON.parse(
+    fs.readFileSync(path.join(EXEMPLAR_DIR, 'exemplars-followup.json'), 'utf8'),
+  ) as Array<{ text: string }>;
+  const intakeExemplars = JSON.parse(
+    fs.readFileSync(path.join(EXEMPLAR_DIR, 'exemplars-intake.json'), 'utf8'),
+  ) as Array<{ customer: string; text: string }>;
+
+  // ── probe modes (manual generator testing, never posts) ────────
+  if (probeEstimate) {
+    const res = await qb.query<{ QueryResponse: { Estimate?: QBEstimate[] } }>(
+      `SELECT * FROM Estimate WHERE DocNumber = '${probeEstimate.replace(/'/g, '')}'`,
+    );
+    const est = res.QueryResponse.Estimate?.[0];
+    if (!est) throw new Error(`estimate #${probeEstimate} not found`);
+    const customer = await qb.getCustomer(est.CustomerRef.value);
+    const firstName = customer?.GivenName ?? customer?.DisplayName?.split(' ')[0] ?? null;
+    const scopeLines = est.Line.filter((l) => l.SalesItemLineDetail?.ItemRef?.name)
+      .map((l) => `- ${l.SalesItemLineDetail!.ItemRef!.name}${l.Description ? `: ${l.Description.slice(0, 180)}` : ''}`);
+    const draft = await draftFollowup(gemini, { firstName, scopeLines, exemplars: pickExemplars(followupExemplars, 6, seed) });
+    const gateFail = draft ? gateFollowup(draft) : 'generation failed';
+    console.log(`\n── probe follow-up #${est.DocNumber} (${customer?.DisplayName}) ──`);
+    console.log(gateFail ? `[GATE FAIL: ${gateFail} — fallback would be used]\n` : '');
+    console.log(draft ?? '(no output)');
+    return;
+  }
+  if (probePhone) {
+    const msgs = (await quo.listMessages({ participantE164: probePhone, maxResults: 50 })).data ?? [];
+    const inbound = msgs.filter((m) => m.direction === 'incoming');
+    if (!inbound.length) throw new Error('no inbound messages on that thread');
+    const customerText = inbound.map((m) => m.text ?? '').join('\n').trim();
+    const mediaCount = inbound.reduce((n, m) => n + (m.media?.length ?? 0), 0);
+    const result = await draftIntake(gemini, { customerText, mediaCount, exemplars: pickExemplars(intakeExemplars, 6, seed) });
+    console.log(`\n── probe intake ${probePhone} (classification: ${result?.classification}, provided: ${JSON.stringify(result?.provided)}) ──`);
+    const gateFail = result?.draft ? gateIntake(result.draft, customerText, mediaCount) : null;
+    if (gateFail) console.log(`[GATE FAIL: ${gateFail} — fallback would be used]`);
+    console.log(result?.draft || '(no draft — non-lead or generation failed)');
+    return;
+  }
+
+  const state = loadState();
+  const firstRun = !state.firstRunAt;
+  if (firstRun) state.firstRunAt = new Date(now).toISOString();
+  const records: Array<Record<string, unknown>> = [];
+  let drafted = 0;
+
+  const postNote = async (phone: string, kind: string, body: string, extra: string): Promise<boolean> => {
+    const noteText = `🤖 ${kind} DRAFT — copy/paste to send (bot never sends):\n\n${body}\n\n———\n${extra}\nPrefill link (desktop): ${deepLink(phone, body)}`;
+    if (dryRun) {
+      console.log(`\n[dry-run] note for ${phone}:\n${noteText}\n`);
+      return true;
+    }
+    const contact = await quo.findContactByPhone(phone);
+    if (!contact) return false;
+    await quo.createContactNote(contact.id, noteText);
+    return true;
+  };
+
+  // ── A) post-quote follow-ups ───────────────────────────────────
+  try {
+    const sinceIso = new Date(now - FOLLOWUP_LOOKBACK_H * 3_600_000).toISOString();
+    const res = await qb.query<{ QueryResponse: { Estimate?: QBEstimate[] } }>(
+      `SELECT * FROM Estimate WHERE MetaData.LastUpdatedTime > '${sinceIso}' ORDERBY MetaData.LastUpdatedTime DESC MAXRESULTS 100`,
+    );
+    const candidates = (res.QueryResponse.Estimate ?? []).filter(
+      (e) =>
+        e.EmailStatus === 'EmailSent' &&
+        e.TxnStatus === 'Pending' &&
+        !state.followupDone[e.Id],
+    );
+    // first run: only pick up emails from the last 12h (no stale follow-ups)
+    const freshEnough = (e: QBEstimate): boolean => {
+      if (!firstRun) return true;
+      const at = e.DeliveryInfo?.DeliveryTime ?? e.MetaData?.LastUpdatedTime;
+      return !!at && now - new Date(at).getTime() < 12 * 3_600_000;
+    };
+    for (const est of candidates) {
+      if (drafted >= MAX_DRAFTS_PER_RUN) break;
+      if (!freshEnough(est)) {
+        state.followupDone[est.Id] = 'skipped:stale-at-first-run';
+        continue;
+      }
+      const customer = await qb.getCustomer(est.CustomerRef.value);
+      const phone = quickNormalizePhone(customer?.PrimaryPhone?.FreeFormNumber ?? null);
+      if (!phone || INTERNAL.has(phone)) {
+        state.followupDone[est.Id] = 'skipped:no-phone';
+        records.push({ type: 'followup', estimateId: est.Id, doc: est.DocNumber, outcome: 'no-phone' });
+        continue;
+      }
+      // if Matt already texted them since the email went out, he's got it
+      const emailedAt = new Date(est.DeliveryInfo?.DeliveryTime ?? est.MetaData?.LastUpdatedTime ?? now).getTime();
+      const recent = await quo.listMessages({ participantE164: phone, maxResults: 20 });
+      const mattAlready = (recent.data ?? []).some(
+        (m) => m.direction === 'outgoing' && !AUTO_RE.test(m.text ?? '') && new Date(m.createdAt).getTime() > emailedAt,
+      );
+      if (mattAlready) {
+        state.followupDone[est.Id] = 'skipped:matt-already-texted';
+        records.push({ type: 'followup', estimateId: est.Id, doc: est.DocNumber, outcome: 'matt-already-texted' });
+        continue;
+      }
+      const scopeLines = est.Line.filter((l) => l.SalesItemLineDetail?.ItemRef?.name)
+        .map((l) => `- ${l.SalesItemLineDetail!.ItemRef!.name}${l.Description ? `: ${l.Description.slice(0, 180)}` : ''}`);
+      const firstName = customer?.GivenName ?? customer?.DisplayName?.split(' ')[0] ?? null;
+      let draft = await draftFollowup(gemini, {
+        firstName,
+        scopeLines,
+        exemplars: pickExemplars(followupExemplars, 6, seed),
+      });
+      let gateFail = draft ? gateFollowup(draft) : 'generation failed';
+      if (gateFail) {
+        const summary = est.Line.filter((l) => l.SalesItemLineDetail?.ItemRef?.name)
+          .map((l) => l.SalesItemLineDetail!.ItemRef!.name!.toLowerCase()).join(' + ') || 'the repair work we discussed';
+        draft = followupFallback(firstName, summary);
+      }
+      const posted = await postNote(phone, 'POST-QUOTE FOLLOW-UP', draft!, `Quote #${est.DocNumber ?? est.Id} emailed ${new Date(emailedAt).toLocaleString('en-US', { timeZone: 'America/New_York' })}.${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}`);
+      if (posted) {
+        if (!dryRun) state.followupDone[est.Id] = new Date(now).toISOString();
+        drafted++;
+        records.push({ type: 'followup', estimateId: est.Id, doc: est.DocNumber, phone, outcome: 'drafted', fallback: gateFail ?? null, draft });
+        console.log(`followup drafted: #${est.DocNumber} → ${phone}${gateFail ? ` (fallback: ${gateFail})` : ''}`);
+      } else {
+        records.push({ type: 'followup', estimateId: est.Id, doc: est.DocNumber, phone, outcome: 'no-quo-contact' });
+      }
+    }
+  } catch (err) {
+    console.error('followup pass failed:', err);
+    records.push({ type: 'followup', outcome: 'pass-error', error: String(err) });
+  }
+
+  // ── B) first-touch intake asks ─────────────────────────────────
+  try {
+    const convs: Array<{ id: string; createdAt: string; participants: string[] }> = [];
+    let pageToken: string | undefined;
+    do {
+      const res = await quo.listConversations({
+        maxResults: 100,
+        pageToken,
+        updatedAfter: new Date(now - 6 * 3_600_000),
+      });
+      convs.push(...((res.data ?? []) as Array<{ id: string; createdAt: string; participants: string[] }>));
+      pageToken = res.nextPageToken ?? undefined;
+    } while (pageToken);
+
+    for (const c of convs) {
+      if (drafted >= MAX_DRAFTS_PER_RUN) break;
+      const external = (c.participants ?? []).filter((p) => !INTERNAL.has(p));
+      if (external.length !== 1 || (c.participants ?? []).length > 2) continue;
+      const phone = external[0];
+      if (!phone?.startsWith('+') || state.intakeDone[phone]) continue;
+      if (now - new Date(c.createdAt).getTime() > INTAKE_THREAD_MAX_AGE_H * 3_600_000) continue;
+
+      const msgs = (await quo.listMessages({ participantE164: phone, maxResults: 50 })).data ?? [];
+      if (!msgs.length) continue;
+      const inbound = msgs.filter((m) => m.direction === 'incoming');
+      const manualOut = msgs.filter((m) => m.direction === 'outgoing' && !AUTO_RE.test(m.text ?? ''));
+      if (!inbound.length || manualOut.length > 0) {
+        if (manualOut.length > 0) state.intakeDone[phone] = 'skipped:matt-replied';
+        continue;
+      }
+      const oldest = inbound.reduce((a, b) => (a.createdAt < b.createdAt ? a : b));
+      const ageMin = (now - new Date(oldest.createdAt).getTime()) / 60_000;
+      if (ageMin < INTAKE_REPLY_WINDOW_MIN) continue; // Matt's preemption window — check again next cycle
+
+      const customerText = inbound.map((m) => m.text ?? '').join('\n').trim();
+      const mediaCount = inbound.reduce((n, m) => n + (m.media?.length ?? 0), 0);
+      if (SPAM_RE.test(customerText)) {
+        state.intakeDone[phone] = 'skipped:spam-regex';
+        records.push({ type: 'intake', phone, outcome: 'spam-regex' });
+        continue;
+      }
+      if (mediaCount === 0 && !REAL_LEAD_RE.test(customerText)) {
+        state.intakeDone[phone] = 'skipped:not-a-lead-signal';
+        records.push({ type: 'intake', phone, outcome: 'no-lead-signal' });
+        continue;
+      }
+
+      const result = await draftIntake(gemini, {
+        customerText,
+        mediaCount,
+        exemplars: pickExemplars(intakeExemplars, 6, seed),
+      });
+      if (!result || result.classification !== 'lead' || !result.draft.trim()) {
+        state.intakeDone[phone] = `skipped:${result?.classification ?? 'generation-failed'}`;
+        records.push({ type: 'intake', phone, outcome: result?.classification ?? 'generation-failed' });
+        continue;
+      }
+      let draft = result.draft.trim();
+      const gateFail = gateIntake(draft, customerText, mediaCount);
+      if (gateFail) draft = intakeFallback(mediaCount);
+
+      const posted = await postNote(phone, 'FIRST-TOUCH INTAKE', draft, `New inquiry ${Math.round(ageMin)} min ago, no reply yet.${mediaCount ? ` ${mediaCount} photo(s) attached.` : ''}${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}`);
+      if (posted) {
+        if (!dryRun) {
+          state.intakeDone[phone] = new Date(now).toISOString();
+          delete state.noteAttempts[phone];
+        }
+        drafted++;
+        records.push({ type: 'intake', phone, outcome: 'drafted', fallback: gateFail ?? null, draft });
+        console.log(`intake drafted: ${phone} (inquiry ${Math.round(ageMin)}m old${mediaCount ? `, ${mediaCount} photos` : ''})${gateFail ? ` (fallback: ${gateFail})` : ''}`);
+      } else {
+        // no Quo contact yet (sync usually creates one within minutes) — retry
+        const attempts = (state.noteAttempts[phone] ?? 0) + 1;
+        if (!dryRun) state.noteAttempts[phone] = attempts;
+        if (attempts >= MAX_NOTE_ATTEMPTS) {
+          if (!dryRun) state.intakeDone[phone] = 'skipped:no-quo-contact';
+          records.push({ type: 'intake', phone, outcome: 'no-quo-contact-gave-up' });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('intake pass failed:', err);
+    records.push({ type: 'intake', outcome: 'pass-error', error: String(err) });
+  }
+
+  if (!dryRun) {
+    saveState(state);
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.appendFileSync(
+      RUNLOG_PATH,
+      JSON.stringify({ ranAt: new Date(now).toISOString(), dryRun, drafted, records }) + '\n',
+    );
+  }
+  console.log(`done — ${drafted} draft(s), ${records.length} record(s)${dryRun ? ' [dry-run]' : ''}`);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
