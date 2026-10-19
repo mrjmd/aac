@@ -10,6 +10,7 @@ vi.mock('../lib/redis.js', () => ({
   writePendingDirective: vi.fn().mockResolvedValue(undefined),
   getDirectiveIdByEstimate: vi.fn().mockResolvedValue(null),
   removePendingDirective: vi.fn().mockResolvedValue(true),
+  enqueueEmailedEstimate: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../lib/env.js', () => ({
@@ -37,6 +38,7 @@ vi.mock('../lib/clients.js', () => ({
 
 import { POST, verifyIntuitSignature } from '../api/qb-webhook.js';
 import {
+  enqueueEmailedEstimate,
   getDirectiveIdByEstimate,
   markEventProcessed,
   removePendingDirective,
@@ -262,5 +264,32 @@ describe('QB webhook POST', () => {
     const res = await POST(makeRequest({ events: [makeEvent()] }));
     expect(res.status).toBe(200);
     expect(writePendingDirective).not.toHaveBeenCalled();
+  });
+});
+
+describe('message-drafts fast-path enqueue', () => {
+  it('queues the estimate when its quote email went out (EmailSent + Pending)', async () => {
+    mockQb.getEstimate.mockResolvedValue(
+      makeAcceptedEstimate({ TxnStatus: 'Pending', EmailStatus: 'EmailSent' }),
+    );
+    const res = await POST(makeRequest([makeEvent()]));
+    expect(res.status).toBe(200);
+    expect(enqueueEmailedEstimate).toHaveBeenCalledWith('est-1234');
+  });
+
+  it('does not queue when the estimate is not Pending', async () => {
+    mockQb.getEstimate.mockResolvedValue(
+      makeAcceptedEstimate({ TxnStatus: 'Accepted', EmailStatus: 'EmailSent' }),
+    );
+    await POST(makeRequest([makeEvent()]));
+    expect(enqueueEmailedEstimate).not.toHaveBeenCalled();
+  });
+
+  it('does not queue when the quote email has not gone out', async () => {
+    mockQb.getEstimate.mockResolvedValue(
+      makeAcceptedEstimate({ TxnStatus: 'Pending', EmailStatus: 'NotSet' }),
+    );
+    await POST(makeRequest([makeEvent()]));
+    expect(enqueueEmailedEstimate).not.toHaveBeenCalled();
   });
 });

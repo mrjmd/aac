@@ -86,6 +86,13 @@ export const keys = {
    */
   quoteTriggerQueue: 'quote-trigger:queue' as const,
 
+  /**
+   * Queue of estimate IDs whose quote email just went out (LIST, LPUSH by
+   * the QB webhook on EmailSent+Pending, LPOP-drained by the message-drafts
+   * runner's fast path for near-instant follow-up drafts; capped via LTRIM).
+   */
+  messageDraftQueue: 'message-drafts:queue' as const,
+
   /** Per-customer lock serializing racing triggers — 300s TTL */
   quoteTriggerLock: (phone: string) => `quote-trigger:lock:${phone}` as const,
 

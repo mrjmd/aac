@@ -233,6 +233,23 @@ export async function enqueueQuoteTrigger(event: QuoteTriggerEvent): Promise<voi
   }
 }
 
+/**
+ * Message-drafts fast path: a quote email just went out (Estimate.Update
+ * with EmailSent + Pending) — queue the estimate so the out-of-band
+ * drafts runner picks it up within its fast-poll tick instead of the
+ * 10-minute sweep. Never throws — drafting is best-effort and must not
+ * affect webhook processing.
+ */
+export async function enqueueEmailedEstimate(estimateId: string): Promise<void> {
+  try {
+    const redis = getRedis();
+    await redis.lpush(keys.messageDraftQueue, JSON.stringify({ estimateId, at: new Date().toISOString() }));
+    await redis.ltrim(keys.messageDraftQueue, 0, 199);
+  } catch (err) {
+    log.warn('message-draft enqueue failed', { error: (err as Error).message });
+  }
+}
+
 export async function trackWebhookProcessed(
   source: 'pipedrive' | 'quo' | 'google-ads' | 'qb'
 ): Promise<void> {

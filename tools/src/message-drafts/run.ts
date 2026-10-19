@@ -46,6 +46,9 @@ const OWN_LINE = '+16176681677';
 const INTERNAL = new Set(['+18573126761', '+16177660151', OWN_LINE]);
 
 const INTAKE_REPLY_WINDOW_MIN = 10; // Matt 2026-10-19 (was 15 in the analysis)
+/** Full sweep cadence. launchd ticks every 60s; ticks between sweeps only
+ *  drain the webhook-fed fast queue (one Redis call, instant follow-ups). */
+const SWEEP_INTERVAL_MIN = 10;
 const INTAKE_THREAD_MAX_AGE_H = 48; // conversation must be genuinely new
 const FOLLOWUP_LOOKBACK_H = 36;
 const MAX_NOTE_ATTEMPTS = 8; // ~80 min of retries waiting for a Quo contact
@@ -59,6 +62,8 @@ const ADDRESS_RE = /\d+\s+\w+.{0,30}(st|street|rd|road|ave|avenue|dr|drive|ln|la
 
 interface TState {
   firstRunAt?: string;
+  /** Last FULL sweep (QBO 36h query + intake pass). Fast ticks don't bump it. */
+  lastSweepAt?: string;
   followupDone: Record<string, string>; // estimateId → iso
   intakeDone: Record<string, string>; // phone → iso
   noteAttempts: Record<string, number>; // phone → failed findContact attempts
@@ -296,6 +301,32 @@ async function main(): Promise<void> {
   const state = loadState();
   const firstRun = !state.firstRunAt;
   if (firstRun) state.firstRunAt = new Date(now).toISOString();
+
+  // ── fast path: quote-email events queued by the QB webhook ───────
+  // Drain message-drafts:queue (LPUSH'd by /api/qb-webhook on
+  // EmailSent+Pending). A tick with nothing queued and a fresh sweep
+  // exits here — one Redis call, no QBO/Quo/Gemini traffic.
+  const queuedRaw = (await redis.lpop<unknown>(keys.messageDraftQueue, 100)) ?? [];
+  const queuedIds = [
+    ...new Set(
+      (Array.isArray(queuedRaw) ? queuedRaw : [queuedRaw])
+        .map((q) => {
+          try {
+            const o = typeof q === 'string' ? JSON.parse(q) : q;
+            return String((o as { estimateId?: unknown })?.estimateId ?? '');
+          } catch {
+            return '';
+          }
+        })
+        .filter(Boolean),
+    ),
+  ];
+  const sweepDue =
+    !state.lastSweepAt || now - new Date(state.lastSweepAt).getTime() >= SWEEP_INTERVAL_MIN * 60_000;
+  if (queuedIds.length === 0 && !sweepDue && !dryRun) return; // quiet tick
+  if (sweepDue && !dryRun) state.lastSweepAt = new Date(now).toISOString();
+  if (queuedIds.length) console.log(`fast path: ${queuedIds.length} queued estimate(s)`);
+
   const records: Array<Record<string, unknown>> = [];
   let drafted = 0;
 
@@ -313,16 +344,27 @@ async function main(): Promise<void> {
 
   // ── A) post-quote follow-ups ───────────────────────────────────
   try {
-    const sinceIso = new Date(now - FOLLOWUP_LOOKBACK_H * 3_600_000).toISOString();
-    const res = await qb.query<{ QueryResponse: { Estimate?: QBEstimate[] } }>(
-      `SELECT * FROM Estimate WHERE MetaData.LastUpdatedTime > '${sinceIso}' ORDERBY MetaData.LastUpdatedTime DESC MAXRESULTS 100`,
-    );
-    const candidates = (res.QueryResponse.Estimate ?? []).filter(
-      (e) =>
-        e.EmailStatus === 'EmailSent' &&
-        e.TxnStatus === 'Pending' &&
-        !state.followupDone[e.Id],
-    );
+    // Fast-queued estimates first (fetched individually); the 36h QBO
+    // sweep only runs on sweep ticks, as the backstop.
+    const queuedEstimates: QBEstimate[] = [];
+    for (const id of queuedIds) {
+      const est = await qb.getEstimate(id).catch(() => null);
+      if (est) queuedEstimates.push(est);
+    }
+    let swept: QBEstimate[] = [];
+    if (sweepDue) {
+      const sinceIso = new Date(now - FOLLOWUP_LOOKBACK_H * 3_600_000).toISOString();
+      const res = await qb.query<{ QueryResponse: { Estimate?: QBEstimate[] } }>(
+        `SELECT * FROM Estimate WHERE MetaData.LastUpdatedTime > '${sinceIso}' ORDERBY MetaData.LastUpdatedTime DESC MAXRESULTS 100`,
+      );
+      swept = res.QueryResponse.Estimate ?? [];
+    }
+    const seen = new Set<string>();
+    const candidates = [...queuedEstimates, ...swept].filter((e) => {
+      if (seen.has(e.Id)) return false;
+      seen.add(e.Id);
+      return e.EmailStatus === 'EmailSent' && e.TxnStatus === 'Pending' && !state.followupDone[e.Id];
+    });
     // first run: only pick up emails from the last 12h (no stale follow-ups)
     const freshEnough = (e: QBEstimate): boolean => {
       if (!firstRun) return true;
@@ -382,8 +424,8 @@ async function main(): Promise<void> {
     records.push({ type: 'followup', outcome: 'pass-error', error: String(err) });
   }
 
-  // ── B) first-touch intake asks ─────────────────────────────────
-  try {
+  // ── B) first-touch intake asks (sweep ticks only) ───────────────
+  if (sweepDue) try {
     const convs: Array<{ id: string; createdAt: string; participants: string[] }> = [];
     let pageToken: string | undefined;
     do {

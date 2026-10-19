@@ -32,6 +32,7 @@ import {
   writePendingDirective,
   getDirectiveIdByEstimate,
   removePendingDirective,
+  enqueueEmailedEstimate,
 } from '../lib/redis.js';
 import { maybePostSuggestionNote } from '../lib/suggestion-note.js';
 
@@ -182,6 +183,16 @@ async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
     if (!estimate) {
       log.warn('Estimate not found in QB', { estimateId: evt.intuitentityid });
       return 'ignored';
+    }
+
+    // Quote email just went out → queue for the message-drafts fast path
+    // (runner dedupes per estimate, so repeat Update events are harmless).
+    if (estimate.EmailStatus === 'EmailSent' && estimate.TxnStatus === 'Pending') {
+      await enqueueEmailedEstimate(evt.intuitentityid);
+      log.info('Queued emailed estimate for follow-up draft', {
+        estimateId: evt.intuitentityid,
+        docNumber: estimate.DocNumber,
+      });
     }
 
     const directive = await normalizeQbApproval(
