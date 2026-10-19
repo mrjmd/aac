@@ -71,10 +71,22 @@ Spec: `projects/triage-dashboard.md`.
    fully-loaded cost) so the decision is made from a document. The realtor
    outreach program (`analysis/02-strategy/realtor-outreach-plan-2026-09.md`)
    is an amplifier on this channel and hangs on the same decision.
-3. **Message automation analysis → narrow Matt-voice sends.** From the
-   analysis above: pick the lowest-risk, highest-frequency message types and
-   automate them with hard triggers + Matt-voice fidelity checks. (Drafts
-   first, auto-send only with the same evidence discipline as quoting.)
+3. **Message automation — ACTIVE (Matt's go 2026-10-18, straight to draft
+   mode).** Analysis complete:
+   `analysis/02-strategy/message-automation-analysis-2026-10.md` (full-corpus,
+   11,006 threads). Tier-1 trio: post-quote follow-up (~40/mo, trigger =
+   estimate emailed), first-touch intake ask (~17/mo, trigger = real-lead
+   inbound + no manual reply in 15 min), CT→Luc routing (~3–5/mo). Key
+   evidence: median first reply 36 min but p75 9.2h/p90 28.7h; ~35 real leads
+   over 26 months never answered — first-touch latency + drops are the prize.
+   **Build steps:** (1) draft-mode runner for post-quote follow-up + intake
+   ask — generates Matt-voice drafts (few-shot from his own 572/198 real
+   exemplars + quality gates) and posts them as Quo contact notes for
+   copy/paste send (Quo has no draft API; the note IS the delivery). SKIPPING
+   shadow per Matt — notes are human-gated by design. (2) CT routing +
+   triage-dashboard drafts section. (3) Auto-send decision later, per-type,
+   with the same evidence discipline as quoting. Never automated: pricing,
+   complaints, tone-sensitive moments.
 4. **Marketing automation 4.1 — the winter build.** Spike 4.0 validated the
    hybrid image pipeline (Puppeteer + Imagen). 4.1 prerequisites: BufferClient,
    GeminiClient integration, image storage. Social post automation is the #1
