@@ -766,6 +766,32 @@ describe('QuoClient', () => {
     });
   });
 
+  describe('getCallVoicemail', () => {
+    it('fetches and unwraps a voicemail', async () => {
+      mockFetch.mockReturnValueOnce(mockResponse({
+        data: { callId: 'call-1', status: 'completed', transcript: 'Hi, call me back', duration: 12 },
+      }));
+
+      const vm = await makeClient().getCallVoicemail('call-1');
+
+      expect(mockFetch.mock.calls[0][0]).toContain('/call-voicemails/call-1');
+      expect(vm?.transcript).toBe('Hi, call me back');
+      expect(vm?.status).toBe('completed');
+    });
+
+    it('returns null on 404 (call rang out, no voicemail)', async () => {
+      mockFetch.mockReturnValueOnce(mockResponse({ message: 'not found' }, 404));
+
+      await expect(makeClient().getCallVoicemail('call-x')).resolves.toBeNull();
+    });
+
+    it('rethrows non-404 errors', async () => {
+      mockFetch.mockReturnValueOnce(mockResponse({ message: 'boom' }, 500));
+
+      await expect(makeClient().getCallVoicemail('call-x')).rejects.toThrow('500');
+    });
+  });
+
   describe('downloadMessageMedia', () => {
     const mediaUrl = 'https://share.quo.com/v1/resource/message-media/abc123.jpg?sig=xyz';
 

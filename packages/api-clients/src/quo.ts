@@ -156,6 +156,14 @@ export interface QuoCallTranscript {
   dialogue: QuoTranscriptDialogue[] | null;
 }
 
+export interface QuoCallVoicemail {
+  callId?: string;
+  status?: 'completed' | 'in-progress' | 'failed' | 'absent';
+  transcript?: string | null;
+  duration?: number;
+  url?: string;
+}
+
 export interface QuoConversation {
   id: string;
   name?: string | null;
@@ -732,6 +740,26 @@ export class QuoClient {
     try {
       const result = await this.request<{ data: QuoCallTranscript }>(
         `/call-transcripts/${callId}`,
+      );
+      return result.data ?? null;
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('Quo API error: 404')) return null;
+      throw err;
+    }
+  }
+
+  /**
+   * Fetch the voicemail left on a call. Returns null when the call carries
+   * no voicemail (404 — it rang out without a message). Any incoming
+   * 0-duration call may have one regardless of status (measured 2026-09-03:
+   * 30 of 31 real voicemails were status 'no-answer', not 'completed').
+   * A 200 whose voicemail status isn't 'completed' means transcription is
+   * still processing — callers should retry later.
+   */
+  async getCallVoicemail(callId: string): Promise<QuoCallVoicemail | null> {
+    try {
+      const result = await this.request<{ data: QuoCallVoicemail }>(
+        `/call-voicemails/${callId}`,
       );
       return result.data ?? null;
     } catch (err) {
