@@ -12,9 +12,10 @@
  *     texted the customer since the email went out, draft the "just sent
  *     that quote over" text and post it as a contact note.
  *
- *  B) FIRST-TOUCH INTAKE ASK — a brand-new 1:1 conversation whose messages
- *     are all inbound, oldest ≥10 min old (Matt's preemption window,
- *     owner-set 2026-10-19), classified as a real lead (not solicitation).
+ *  B) FIRST-TOUCH INTAKE ASK — a 1:1 thread with no manual reply whose first
+ *     inbound (text or voicemail) is ≥10 min old (Matt's preemption window,
+ *     owner-set 2026-10-19) and <48h old, classified as a real lead (not
+ *     solicitation). Aged by the inquiry, never conversation.createdAt.
  *     Draft the intake reply asking only for what the customer hasn't
  *     already provided.
  *
@@ -49,7 +50,7 @@ const INTAKE_REPLY_WINDOW_MIN = 10; // Matt 2026-10-19 (was 15 in the analysis)
 /** Full sweep cadence. launchd ticks every 60s; ticks between sweeps only
  *  drain the webhook-fed fast queue (one Redis call, instant follow-ups). */
 const SWEEP_INTERVAL_MIN = 10;
-const INTAKE_THREAD_MAX_AGE_H = 48; // conversation must be genuinely new
+const INTAKE_THREAD_MAX_AGE_H = 48; // the inquiry itself (first inbound) must be genuinely new
 const FOLLOWUP_LOOKBACK_H = 36;
 const MAX_NOTE_ATTEMPTS = 8; // ~80 min of retries waiting for a Quo contact
 const MAX_DRAFTS_PER_RUN = 6;
@@ -287,9 +288,20 @@ async function main(): Promise<void> {
   if (probePhone) {
     const msgs = (await quo.listMessages({ participantE164: probePhone, maxResults: 50 })).data ?? [];
     const inbound = msgs.filter((m) => m.direction === 'incoming');
-    if (!inbound.length) throw new Error('no inbound messages on that thread');
-    const customerText = inbound.map((m) => m.text ?? '').join('\n').trim();
+    let customerText = inbound.map((m) => m.text ?? '').join('\n').trim();
     const mediaCount = inbound.reduce((n, m) => n + (m.media?.length ?? 0), 0);
+    if (!inbound.length) {
+      // mirror the sweep's voicemail-only fallback
+      const calls = (await quo.listCalls({ participantE164: probePhone, maxResults: 10 })).data ?? [];
+      for (const c of calls.filter((x) => x.direction === 'incoming' && (x.duration ?? 0) === 0)) {
+        const vm = await quo.getCallVoicemail(c.id);
+        if (vm?.status === 'completed' && vm.transcript) {
+          customerText = `[voicemail transcript] ${vm.transcript}`;
+          break;
+        }
+      }
+      if (!customerText) throw new Error('no inbound messages or voicemail on that thread');
+    }
     const result = await draftIntake(gemini, { customerText, mediaCount, exemplars: pickExemplars(intakeExemplars, 6, seed) });
     console.log(`\n── probe intake ${probePhone} (classification: ${result?.classification}, provided: ${JSON.stringify(result?.provided)}) ──`);
     const gateFail = result?.draft ? gateIntake(result.draft, customerText, mediaCount) : null;
@@ -444,22 +456,56 @@ async function main(): Promise<void> {
       if (external.length !== 1 || (c.participants ?? []).length > 2) continue;
       const phone = external[0];
       if (!phone?.startsWith('+') || state.intakeDone[phone]) continue;
-      if (now - new Date(c.createdAt).getTime() > INTAKE_THREAD_MAX_AGE_H * 3_600_000) continue;
 
       const msgs = (await quo.listMessages({ participantE164: phone, maxResults: 50 })).data ?? [];
-      if (!msgs.length) continue;
       const inbound = msgs.filter((m) => m.direction === 'incoming');
       const manualOut = msgs.filter((m) => m.direction === 'outgoing' && !AUTO_RE.test(m.text ?? ''));
-      if (!inbound.length || manualOut.length > 0) {
-        if (manualOut.length > 0) state.intakeDone[phone] = 'skipped:matt-replied';
+      if (manualOut.length > 0) {
+        state.intakeDone[phone] = 'skipped:matt-replied';
         continue;
       }
-      const oldest = inbound.reduce((a, b) => (a.createdAt < b.createdAt ? a : b));
-      const ageMin = (now - new Date(oldest.createdAt).getTime()) / 60_000;
-      if (ageMin < INTAKE_REPLY_WINDOW_MIN) continue; // Matt's preemption window — check again next cycle
 
-      const customerText = inbound.map((m) => m.text ?? '').join('\n').trim();
-      const mediaCount = inbound.reduce((n, m) => n + (m.media?.length ?? 0), 0);
+      // Customer's own words: inbound texts, or — when they only called
+      // (2026-10-19 gap: a voicemail-only caller has zero messages, so the
+      // text-only path never saw them) — the voicemail transcript.
+      let customerText: string;
+      let mediaCount = 0;
+      let inquiryAt: string;
+      if (inbound.length > 0) {
+        inquiryAt = inbound.reduce((a, b) => (a.createdAt < b.createdAt ? a : b)).createdAt;
+        customerText = inbound.map((m) => m.text ?? '').join('\n').trim();
+        mediaCount = inbound.reduce((n, m) => n + (m.media?.length ?? 0), 0);
+      } else {
+        const calls = (await quo.listCalls({ participantE164: phone, maxResults: 10 })).data ?? [];
+        // Any incoming 0-duration call may carry a voicemail; status must
+        // not gate the probe (30 of 31 measured VMs were 'no-answer').
+        const candidates = calls
+          .filter((c) => c.direction === 'incoming' && (c.duration ?? 0) === 0)
+          .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+        let transcript: string | null = null;
+        let vmAt: string | undefined;
+        for (const c of candidates) {
+          const vm = await quo.getCallVoicemail(c.id);
+          if (vm?.status === 'completed' && vm.transcript) {
+            transcript = vm.transcript;
+            vmAt = c.createdAt;
+            break;
+          }
+        }
+        // No VM = the call just rang out; VM without a completed transcript
+        // is still processing — either way, check again next sweep.
+        if (!transcript || !vmAt) continue;
+        customerText = `[voicemail transcript] ${transcript}`;
+        inquiryAt = vmAt;
+      }
+      const ageMin = (now - new Date(inquiryAt).getTime()) / 60_000;
+      if (ageMin < INTAKE_REPLY_WINDOW_MIN) continue; // Matt's preemption window — check again next cycle
+      // Age by the inquiry itself, NOT conversation.createdAt — Quo reuses the
+      // conversation created by ANY earlier touch (even a rang-out call weeks
+      // ago), which made genuinely-new texters look stale (Wesley Price miss,
+      // 2026-10-19: thread created 10/09 by an unanswered call).
+      if (ageMin > INTAKE_THREAD_MAX_AGE_H * 60) continue;
+
       if (SPAM_RE.test(customerText)) {
         state.intakeDone[phone] = 'skipped:spam-regex';
         records.push({ type: 'intake', phone, outcome: 'spam-regex' });
