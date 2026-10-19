@@ -252,8 +252,12 @@ async function main(): Promise<void> {
   const snapshot = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8')) as Snapshot;
   const rulesetText = fs.readFileSync(RULESET_PATH, 'utf8');
 
+  // Automatic runs draft only quote_promised findings; an explicit --phone
+  // is an owner override and may target a finding from any section (e.g. a
+  // deal_closer thread the owner decided to quote remotely).
   let targets = findingsFile.findings.filter(
-    (f): f is Finding & { phone: string } => f.section === 'quote_promised' && !!f.phone,
+    (f): f is Finding & { phone: string } =>
+      !!f.phone && (f.section === 'quote_promised' || f.phone === phoneArg),
   );
   if (phoneArg) targets = targets.filter((f) => f.phone === phoneArg);
 
