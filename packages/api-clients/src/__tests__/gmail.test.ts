@@ -5,6 +5,7 @@ vi.mock('googleapis', () => {
   const mockMessagesGet = vi.fn();
   const mockAttachmentsGet = vi.fn();
   const mockGetProfile = vi.fn();
+  const mockDraftsCreate = vi.fn();
   const MockOAuth2 = vi.fn(() => ({
     setCredentials: vi.fn(),
   }));
@@ -15,6 +16,7 @@ vi.mock('googleapis', () => {
         get: mockMessagesGet,
         attachments: { get: mockAttachmentsGet },
       },
+      drafts: { create: mockDraftsCreate },
       getProfile: mockGetProfile,
     },
   }));
@@ -29,6 +31,7 @@ vi.mock('googleapis', () => {
       mockMessagesGet,
       mockAttachmentsGet,
       mockGetProfile,
+      mockDraftsCreate,
       MockOAuth2,
       mockGmail,
     },
@@ -55,6 +58,7 @@ beforeEach(async () => {
   mocks.mockMessagesGet.mockReset();
   mocks.mockAttachmentsGet.mockReset();
   mocks.mockGetProfile.mockReset();
+  mocks.mockDraftsCreate.mockReset();
 });
 
 describe('GmailClient.listMessages', () => {
@@ -236,5 +240,47 @@ describe('GmailClient rate-limit retry', () => {
     const client = new GmailClient(retryConfig);
     await expect(client.listMessages({ query: 'x' })).rejects.toThrow('Forbidden');
     expect(mocks.mockMessagesList).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('GmailClient.createDraft', () => {
+  const decodeRaw = (raw: string): string =>
+    Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+
+  it('builds a threaded multipart draft with attachments', async () => {
+    mocks.mockDraftsCreate.mockResolvedValue({ data: { id: 'd1', message: { id: 'm9' } } });
+    const client = new GmailClient(config);
+    const res = await client.createDraft({
+      to: ['keri@example.com'],
+      subject: 'Re: Quote',
+      body: 'Hi Keri,\nDocs attached.',
+      threadId: 't42',
+      inReplyTo: '<orig@mail.gmail.com>',
+      attachments: [{ filename: 'w9.pdf', mimeType: 'application/pdf', content: Buffer.from('PDFBYTES') }],
+    });
+
+    expect(res).toEqual({ draftId: 'd1', messageId: 'm9' });
+    const call = mocks.mockDraftsCreate.mock.calls[0][0];
+    expect(call.requestBody.message.threadId).toBe('t42');
+    const mime = decodeRaw(call.requestBody.message.raw);
+    expect(mime).toContain('To: keri@example.com');
+    expect(mime).toContain('Subject: Re: Quote');
+    expect(mime).toContain('In-Reply-To: <orig@mail.gmail.com>');
+    expect(mime).toContain('References: <orig@mail.gmail.com>');
+    expect(mime).toContain('Content-Disposition: attachment; filename="w9.pdf"');
+    expect(mime).toContain(Buffer.from('PDFBYTES').toString('base64'));
+    expect(mime).toContain(Buffer.from('Hi Keri,\nDocs attached.', 'utf8').toString('base64'));
+  });
+
+  it('omits threading headers and threadId when not replying', async () => {
+    mocks.mockDraftsCreate.mockResolvedValue({ data: { id: 'd2', message: { id: 'm10' } } });
+    const client = new GmailClient(config);
+    await client.createDraft({ to: ['a@b.com'], subject: 'Hello', body: 'plain' });
+
+    const call = mocks.mockDraftsCreate.mock.calls[0][0];
+    expect(call.requestBody.message.threadId).toBeUndefined();
+    const mime = decodeRaw(call.requestBody.message.raw);
+    expect(mime).not.toContain('In-Reply-To:');
+    expect(mime).not.toContain('References:');
   });
 });

@@ -72,6 +72,24 @@ export interface ListMessagesOptions {
   maxResults?: number;
 }
 
+export interface DraftAttachment {
+  filename: string;
+  mimeType: string;
+  content: Buffer;
+}
+
+export interface CreateDraftOptions {
+  to: string[];
+  subject: string;
+  /** Plain-text body. */
+  body: string;
+  /** Thread to attach the draft to (reply threading). */
+  threadId?: string;
+  /** RFC 822 Message-ID of the message being replied to, e.g. '<abc@mail.gmail.com>'. */
+  inReplyTo?: string;
+  attachments?: DraftAttachment[];
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function header(msg: gmail_v1.Schema$Message, name: string): string {
@@ -247,5 +265,62 @@ export class GmailClient {
     const gmail = this.getClient();
     const res = await gmail.users.getProfile({ userId: 'me' });
     return (res.data.emailAddress ?? '').toLowerCase();
+  }
+
+  /**
+   * Create a draft (never sends). For a reply, pass the original message's
+   * threadId and its RFC 822 Message-ID header via inReplyTo so Gmail
+   * threads it correctly. Attachments are buffered in memory — keep the
+   * combined size well under Gmail's 25MB message cap.
+   */
+  async createDraft(options: CreateDraftOptions): Promise<{ draftId: string; messageId: string }> {
+    const gmail = this.getClient();
+    const boundary = `aac-${Date.now().toString(36)}-mixed`;
+    const headers = [
+      `To: ${options.to.join(', ')}`,
+      `Subject: ${options.subject}`,
+      ...(options.inReplyTo ? [`In-Reply-To: ${options.inReplyTo}`, `References: ${options.inReplyTo}`] : []),
+      'MIME-Version: 1.0',
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    ];
+    const parts = [
+      [
+        `--${boundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        Buffer.from(options.body, 'utf8').toString('base64'),
+      ].join('\r\n'),
+      ...(options.attachments ?? []).map((a) =>
+        [
+          `--${boundary}`,
+          `Content-Type: ${a.mimeType}; name="${a.filename}"`,
+          `Content-Disposition: attachment; filename="${a.filename}"`,
+          'Content-Transfer-Encoding: base64',
+          '',
+          a.content.toString('base64'),
+        ].join('\r\n'),
+      ),
+    ];
+    const raw = Buffer.from(
+      `${headers.join('\r\n')}\r\n\r\n${parts.join('\r\n')}\r\n--${boundary}--`,
+      'utf8',
+    )
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+
+    const res = await this.withRetry('drafts.create', () =>
+      gmail.users.drafts.create({
+        userId: 'me',
+        requestBody: {
+          message: { raw, ...(options.threadId ? { threadId: options.threadId } : {}) },
+        },
+      }),
+    );
+    const draftId = res.data.id ?? '';
+    const messageId = res.data.message?.id ?? '';
+    log.info('Created Gmail draft', { draftId, to: options.to, attachments: options.attachments?.length ?? 0 });
+    return { draftId, messageId };
   }
 }
