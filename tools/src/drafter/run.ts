@@ -13,6 +13,8 @@
  *   npx tsx tools/src/drafter/run.ts              # draft all quote_promised findings
  *   npx tsx tools/src/drafter/run.ts --dry-run    # print drafts, create nothing
  *   npx tsx tools/src/drafter/run.ts --phone +1617...   # one thread only
+ *   npx tsx tools/src/drafter/run.ts --phone +1617... --photo-dir /path/to/imgs
+ *                                    # include photos that arrived by email
  *
  * Drafting logic lives in @aac/quoting (draft-quote.ts); this script is
  * orchestration + I/O only. See docs/projects/quote-drafter.md.
@@ -235,6 +237,16 @@ async function main(): Promise<void> {
   const skipRecentArg = argv.includes('--skip-if-recent-estimate')
     ? Number(argv[argv.indexOf('--skip-if-recent-estimate') + 1])
     : undefined;
+  // Photos that arrived outside Quo (email, AirDrop) — a directory of images
+  // to analyze alongside any MMS photos. Manual --phone runs only.
+  const photoDirArg = argv.includes('--photo-dir') ? argv[argv.indexOf('--photo-dir') + 1] : undefined;
+  if (photoDirArg && !phoneArg) throw new Error('--photo-dir requires --phone (one customer at a time)');
+  // Group threads: Quo returns nothing for the 1:1 participant when the
+  // customer's conversation is a group chat — pass the FULL participant set.
+  const participantsArg = argv.includes('--participants')
+    ? argv[argv.indexOf('--participants') + 1].split(',').map((p) => p.trim()).filter(Boolean)
+    : undefined;
+  if (participantsArg && !phoneArg) throw new Error('--participants requires --phone (one customer at a time)');
 
   const findingsFile = JSON.parse(fs.readFileSync(findingsArg ?? FINDINGS_PATH, 'utf8')) as FindingsFile;
   const snapshot = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8')) as Snapshot;
@@ -366,7 +378,7 @@ async function main(): Promise<void> {
     const label = `${finding.customer ?? 'unknown'} (${finding.phone})`;
     console.log(`── ${label}: ${finding.title}`);
     try {
-      const record = await draftOne({ finding, qb, quo, gemini, redis, snapshot, rulesetText, itemNames, items, library, recentEstimates, today, dryRun, docNumber: String(nextDocNumber), sectionVText, exemplarLibrary, fieldChannel, skipIfRecentEstimateDays: skipRecentArg });
+      const record = await draftOne({ finding, qb, quo, gemini, redis, snapshot, rulesetText, itemNames, items, library, recentEstimates, today, dryRun, docNumber: String(nextDocNumber), sectionVText, exemplarLibrary, fieldChannel, skipIfRecentEstimateDays: skipRecentArg, extraPhotoDir: photoDirArg, threadParticipants: participantsArg });
       if (record.outcome === 'created') nextDocNumber++;
       records.push(record);
     } catch (err) {
@@ -461,6 +473,8 @@ async function draftOne(ctx: {
   redis: Redis;
   fieldChannel: FieldChannel | null;
   skipIfRecentEstimateDays?: number;
+  extraPhotoDir?: string;
+  threadParticipants?: string[];
 }): Promise<DraftRunRecord> {
   const { finding, qb, quo, gemini } = ctx;
   const phone = finding.phone;
@@ -511,7 +525,10 @@ async function draftOne(ctx: {
   }
 
   // ── assemble the thread + photos fresh from Quo (snapshot has no media)
-  const page = await quo.listMessages({ participantE164: phone, maxResults: MAX_THREAD_MESSAGES });
+  const page = await quo.listMessages({
+    participantE164: ctx.threadParticipants ?? phone,
+    maxResults: MAX_THREAD_MESSAGES,
+  });
   const messages = [...page.data].sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
   );
@@ -535,6 +552,19 @@ async function draftOne(ctx: {
       if (!dl || !dl.contentType.startsWith('image/')) continue;
       imageParts.push({ mimeType: dl.contentType, base64: Buffer.from(dl.data).toString('base64') });
     }
+  }
+  if (ctx.extraPhotoDir) {
+    const MIME: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.heic': 'image/heic' };
+    const names = fs.readdirSync(ctx.extraPhotoDir).sort();
+    let added = 0;
+    for (const name of names) {
+      if (imageParts.length >= MAX_PHOTOS) break;
+      const mimeType = MIME[path.extname(name).toLowerCase()];
+      if (!mimeType) continue;
+      imageParts.push({ mimeType, base64: fs.readFileSync(path.join(ctx.extraPhotoDir, name)).toString('base64') });
+      added++;
+    }
+    console.log(`  extra photos: ${added} loaded from ${ctx.extraPhotoDir}`);
   }
   console.log(`  thread: ${thread.length} messages, ${imageParts.length} photo(s)`);
 
