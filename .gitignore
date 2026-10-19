@@ -17,6 +17,7 @@ next-env.d.ts
 .env.local
 .env.*.local
 .env.diagnostic
+.env.diagnostic.bak*
 
 # Scratch — one-off diagnostic scripts and their output, never committed
 tools/src/scratch/
