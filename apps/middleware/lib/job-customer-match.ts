@@ -15,9 +15,131 @@ import {
 } from '@aac/api-clients/pipedrive';
 import type { QuickBooksClient, QBCustomer } from '@aac/api-clients/quickbooks';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
+import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import { expandCompoundName } from './followup.js';
 
 const log = createLogger('job-customer-match');
+
+// ── nickname expansion ───────────────────────────────────────────────
+
+/** Calendar titles use what Matt calls the customer; Pipedrive has the
+ *  formal name (or vice versa) — "Bob Doherty" vs "Robert Doherty"
+ *  (reminder miss, 2026-10-19). Each group is a set of interchangeable
+ *  first names. */
+const NICKNAME_GROUPS: string[][] = [
+  ['robert', 'rob', 'bob', 'bobby'],
+  ['william', 'will', 'bill', 'billy'],
+  ['michael', 'mike'],
+  ['james', 'jim', 'jimmy'],
+  ['john', 'jack', 'johnny', 'jon', 'jonathan'],
+  ['richard', 'rich', 'rick', 'dick'],
+  ['thomas', 'tom', 'tommy'],
+  ['christopher', 'chris'],
+  ['daniel', 'dan', 'danny'],
+  ['david', 'dave'],
+  ['donald', 'don'],
+  ['edward', 'ed', 'eddie'],
+  ['theodore', 'ted', 'theo'],
+  ['joseph', 'joe', 'joey'],
+  ['anthony', 'tony'],
+  ['stephen', 'steven', 'steve'],
+  ['andrew', 'andy', 'drew'],
+  ['matthew', 'matt'],
+  ['kenneth', 'ken', 'kenny'],
+  ['ronald', 'ron'],
+  ['lawrence', 'larry'],
+  ['gerald', 'jerry'],
+  ['timothy', 'tim'],
+  ['gregory', 'greg'],
+  ['raymond', 'ray'],
+  ['samuel', 'sam'],
+  ['benjamin', 'ben'],
+  ['nicholas', 'nick'],
+  ['alexander', 'alex'],
+  ['charles', 'charlie', 'chuck'],
+  ['frederick', 'fred'],
+  ['peter', 'pete'],
+  ['philip', 'phil'],
+  ['vincent', 'vince', 'vinny'],
+  ['albert', 'al'],
+  ['eugene', 'gene'],
+  ['stanley', 'stan'],
+  ['walter', 'walt'],
+  ['jacob', 'jake'],
+  ['joshua', 'josh'],
+  ['zachary', 'zach'],
+  ['nathaniel', 'nathan', 'nate'],
+  ['patrick', 'pat'],
+  ['patricia', 'pat', 'patty', 'tricia'],
+  ['elizabeth', 'liz', 'beth', 'betsy'],
+  ['katherine', 'catherine', 'kate', 'katie', 'kathy'],
+  ['margaret', 'maggie', 'peggy', 'meg'],
+  ['jennifer', 'jen', 'jenny'],
+  ['susan', 'sue', 'suzie'],
+  ['deborah', 'deb', 'debbie'],
+  ['barbara', 'barb'],
+  ['christine', 'christina', 'chris'],
+  ['kimberly', 'kim'],
+  ['cynthia', 'cindy'],
+  ['sandra', 'sandy'],
+  ['rebecca', 'becky'],
+  ['victoria', 'vicky'],
+  ['judith', 'judy'],
+  ['dorothy', 'dot', 'dottie'],
+  ['abigail', 'abby'],
+  ['gabriel', 'gabe'],
+];
+
+const NICKNAME_MAP: Map<string, Set<string>> = (() => {
+  const map = new Map<string, Set<string>>();
+  for (const group of NICKNAME_GROUPS) {
+    for (const name of group) {
+      const set = map.get(name) ?? new Set<string>();
+      for (const other of group) if (other !== name) set.add(other);
+      map.set(name, set);
+    }
+  }
+  return map;
+})();
+
+/** "Bob Doherty" → ["Robert Doherty", "Rob Doherty", "Bobby Doherty"].
+ *  Only the first token varies. Returns [] when the first name has no
+ *  known variants or the name is a single word. */
+export function expandNicknames(name: string): string[] {
+  const words = name.trim().split(/\s+/);
+  if (words.length < 2) return [];
+  const variants = NICKNAME_MAP.get(words[0].toLowerCase());
+  if (!variants) return [];
+  const rest = words.slice(1).join(' ');
+  return [...variants].map((v) => `${v[0].toUpperCase()}${v.slice(1)} ${rest}`);
+}
+
+// ── phone-in-description fallback ────────────────────────────────────
+
+const PHONE_RE = /(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
+
+/** E.164 phones found in an event description, deduped, max 5. */
+export function extractPhonesFromDescription(description: string | undefined | null): string[] {
+  if (!description) return [];
+  const out: string[] = [];
+  for (const raw of description.match(PHONE_RE) ?? []) {
+    const normalized = quickNormalizePhone(raw);
+    if (normalized && !out.includes(normalized)) out.push(normalized);
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
+/** Guard for phone matches: descriptions also carry property managers and
+ *  other third parties, so the matched person's last name must appear in
+ *  the event title. */
+function lastNameInSummary(personName: string | null | undefined, summary: string): boolean {
+  if (!personName) return false;
+  const words = personName.trim().split(/\s+/);
+  const lastName = words[words.length - 1]?.toLowerCase().replace(/[^a-z'-]/g, '');
+  if (!lastName || lastName.length < 2) return false;
+  return summary.toLowerCase().includes(lastName);
+}
 
 /** "Description has 'PipedriveID: 12345'" → "12345" */
 export function extractPipedriveId(description: string | undefined | null): string | null {
@@ -102,13 +224,32 @@ export async function matchEventToDealAndPerson(
     if (person) return { deal: null, person };
   }
 
-  for (const candidate of expandCompoundName(event.summary)) {
+  const nameCandidates = [
+    ...expandNicknames(event.summary),
+    ...expandCompoundName(event.summary).flatMap((c) => [c, ...expandNicknames(c)]),
+  ];
+  for (const candidate of nameCandidates) {
     const found = await pipedrive.searchPersonByName(candidate);
     if (found) {
       const person = await pipedrive.getPerson(found.id);
       if (person) {
-        log.info('Matched compound-name candidate', { original: event.summary, candidate });
+        log.info('Matched name candidate', { original: event.summary, candidate });
         return { deal: null, person };
+      }
+    }
+  }
+
+  for (const phone of extractPhonesFromDescription(event.description)) {
+    // PD's phone search is format-literal: E.164 and national can hit
+    // different stored records (verified live 2026-10-19) — try both.
+    for (const term of [phone, phone.replace(/^\+1/, '')]) {
+      const found = await pipedrive.searchPersonByPhone(term);
+      if (found && lastNameInSummary(found.name, event.summary)) {
+        const person = await pipedrive.getPerson(found.id);
+        if (person) {
+          log.info('Matched via phone in description', { original: event.summary, phone: term, personName: found.name });
+          return { deal: null, person };
+        }
       }
     }
   }
