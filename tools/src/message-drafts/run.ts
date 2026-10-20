@@ -16,6 +16,13 @@
  *     inbound (text or voicemail) is ≥10 min old (Matt's preemption window,
  *     owner-set 2026-10-19) and <48h old, classified as a real lead (not
  *     solicitation). Aged by the inquiry, never conversation.createdAt.
+ *
+ *  C) CT→LUC ROUTING — same trigger as (B), but the classifier determined
+ *     the PROPERTY is in Connecticut (content-based; area code is only a
+ *     hint — an 860 number has been an MA property and vice versa). One note
+ *     carries BOTH drafts: the handoff text for Matt to send Luc (all contact
+ *     info + photos pointer) and the customer reply ("you've reached the MA
+ *     office, expect Luc to reach out"). Owner-requested 2026-10-19.
  *     Draft the intake reply asking only for what the customer hasn't
  *     already provided.
  *
@@ -44,6 +51,8 @@ const RUNLOG_PATH = path.join(DATA_DIR, 'runlog.jsonl');
 const EXEMPLAR_DIR = 'analysis/data/message-patterns';
 
 const OWN_LINE = '+16176681677';
+const LUC_LINE = '860-573-8760'; // Luc runs the CT office; Matt texts him off-platform
+const CT_AREA_CODES = new Set(['860', '203', '475', '959']);
 const INTERNAL = new Set(['+18573126761', '+16177660151', OWN_LINE]);
 
 const INTAKE_REPLY_WINDOW_MIN = 10; // Matt 2026-10-19 (was 15 in the analysis)
@@ -165,13 +174,20 @@ function gateFollowup(draft: string): string | null {
 
 interface IntakeResult {
   classification: 'lead' | 'solicitation' | 'other';
+  propertyState: 'MA' | 'CT' | 'other' | 'unknown';
   provided: { name: boolean; address: boolean; email: boolean };
+  extracted: { name: string | null; address: string | null; email: string | null };
   draft: string;
 }
 
 async function draftIntake(
   gemini: GeminiClient,
-  args: { customerText: string; mediaCount: number; exemplars: Array<{ customer: string; text: string }> },
+  args: {
+    customerText: string;
+    mediaCount: number;
+    areaCode: string;
+    exemplars: Array<{ customer: string; text: string }>;
+  },
 ): Promise<IntakeResult | null> {
   const prompt = `${VOICE_RULES}
 
@@ -183,22 +199,97 @@ A NEW inquiry just arrived on the business line. Analyze it, then draft Matt's f
 THE NEW INQUIRY (first message(s) from an unknown number):
 ${args.customerText || '(no text — photos only)'}
 ${args.mediaCount > 0 ? `[customer attached ${args.mediaCount} photo(s)]` : '[no photos attached]'}
+[texter's area code: ${args.areaCode || 'unknown'}]
 
 Steps:
 1. Classify: "lead" (homeowner/property contact with a real issue we might service), "solicitation" (lead-gen spam, vendor pitch, marketing), or "other" (wrong number, unclear).
-2. Note which of these the customer ALREADY provided: full name, property address, email address.
-3. If classification is "lead": draft Matt's reply. Thank them / acknowledge what they sent specifically; confirm we can help (only if the issue is plausibly crack repair / concrete work — if it's clearly outside our services, say we don't do that work); then ask ONLY for the items they have NOT already provided (full name, address of the property, email address for the quote). If they sent photos of a crack, mention the lifetime guarantee naturally. If they sent NO photos, ask for photos of the issue. End with Matt's signature line: "-- Matt at Attack A Crack".
-4. If "solicitation" or "other": draft must be an empty string.
+2. Determine the PROPERTY's state: "MA", "CT", "other", or "unknown". Judge from town/city names and addresses in the message (e.g. Cromwell, Enfield, New Britain are CT; Quincy, Braintree, Weymouth are MA). The area code is only a weak hint (CT codes: 860/203/475/959) — people move, and an 860 number has texted about an MA property. Only answer "CT" when the message content supports it.
+3. Note which of these the customer ALREADY provided, and extract the values: full name, property address, email address. Use null for anything not provided.
+4. If classification is "lead" AND the state is NOT "CT": draft Matt's reply. Thank them / acknowledge what they sent specifically; confirm we can help (only if the issue is plausibly crack repair / concrete work — if it's clearly outside our services, say we don't do that work); then ask ONLY for the items they have NOT already provided (full name, address of the property, email address for the quote). If they sent photos of a crack, mention the lifetime guarantee naturally. If they sent NO photos, ask for photos of the issue. End with Matt's signature line: "-- Matt at Attack A Crack".
+5. If "solicitation" or "other", or the state IS "CT": draft must be an empty string (CT inquiries get a different reply drafted separately).
 
-Return ONLY JSON: {"classification": "...", "provided": {"name": bool, "address": bool, "email": bool}, "draft": "..."}`;
+Return ONLY JSON: {"classification": "...", "propertyState": "...", "provided": {"name": bool, "address": bool, "email": bool}, "extracted": {"name": str|null, "address": str|null, "email": str|null}, "draft": "..."}`;
   try {
     const out = await gemini.generateContent(prompt, { maxOutputTokens: 4096 });
     const parsed = JSON.parse(stripFences(out)) as IntakeResult;
     if (!parsed || typeof parsed.draft !== 'string') return null;
+    parsed.propertyState ??= 'unknown';
+    parsed.extracted ??= { name: null, address: null, email: null };
     return parsed;
   } catch {
     return null;
   }
+}
+
+// ── CT→Luc routing drafts ────────────────────────────────────────
+
+async function draftCtRouting(
+  gemini: GeminiClient,
+  args: { customerText: string; exemplars: Array<{ customer: string; text: string }> },
+): Promise<string | null> {
+  const prompt = `${VOICE_RULES}
+
+REAL examples of Matt's replies to Connecticut inquiries that reached his Massachusetts line (customer message → Matt's reply):
+${args.exemplars.map((e, i) => `--- example ${i + 1} ---\nCUSTOMER: ${e.customer}\nMATT: ${e.text}`).join('\n')}
+
+A NEW Connecticut inquiry arrived on the Massachusetts business line:
+${args.customerText || '(no text — photos only)'}
+
+Draft Matt's reply. Required elements, in Matt's voice:
+- Thank them / acknowledge what they sent specifically (greet by first name if they gave one).
+- Let them know they've reached the Massachusetts office.
+- Matt is FORWARDING their info and photos to his partner Luc, who runs the Connecticut office — do NOT ask the customer to re-send anything themselves.
+- Luc will reach out; they should expect a text or call from ${LUC_LINE}.`;
+  try {
+    const out = await gemini.generateContent(prompt, { maxOutputTokens: 4096 });
+    return out.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function gateCtRouting(draft: string): string | null {
+  if (draft.length < 80 || draft.length > 900) return `length ${draft.length}`;
+  if (/\$\s?\d/.test(draft)) return 'contains a price';
+  if (!draft.includes(LUC_LINE)) return "missing Luc's number";
+  if (!/luc/i.test(draft)) return 'missing Luc';
+  if (!/massachusetts|ma office/i.test(draft)) return 'missing MA-office mention';
+  if (!/forward|pass(ing)? (this |that |it |all |your )?(along|over|on)|send(ing)? (your|all|everything)/i.test(draft)) {
+    return 'not forward-style';
+  }
+  return null;
+}
+
+function ctRoutingFallback(firstName: string | null): string {
+  const greet = firstName ? `Hi ${firstName}, thanks` : 'Hi there, thanks';
+  return `${greet} for reaching out! You've actually reached the Massachusetts office. Not to worry though — I'm forwarding your info and the photos you sent over to my partner Luc, who runs our Connecticut office, and he will reach out. Keep an eye out for a text or call from him at ${LUC_LINE}. Thank you!\n\n-- Matt at Attack A Crack`;
+}
+
+/** The one-message handoff Matt sends Luc (off-platform): all contact info +
+ *  the inquiry in the customer's own words + a photos pointer. */
+function buildLucHandoff(args: {
+  phone: string;
+  extracted: { name: string | null; address: string | null; email: string | null };
+  customerText: string;
+  mediaUrls: string[];
+}): string {
+  const lines = [
+    `New CT lead from the MA line:`,
+    ``,
+    `Name: ${args.extracted.name ?? '(not provided)'}`,
+    `Cell: ${args.phone}`,
+    `Address: ${args.extracted.address ?? '(not provided)'}`,
+    `Email: ${args.extracted.email ?? '(not provided)'}`,
+    ``,
+    `Their message: "${args.customerText.slice(0, 600)}"`,
+  ];
+  if (args.mediaUrls.length) {
+    lines.push(``, `${args.mediaUrls.length} photo(s) — forwarding separately (links may expire):`);
+    lines.push(...args.mediaUrls.slice(0, 6));
+  } else {
+    lines.push(``, `No photos attached.`);
+  }
+  return lines.join('\n');
 }
 
 function gateIntake(draft: string, customerText: string, mediaCount: number): string | null {
@@ -266,6 +357,9 @@ async function main(): Promise<void> {
   const intakeExemplars = JSON.parse(
     fs.readFileSync(path.join(EXEMPLAR_DIR, 'exemplars-intake.json'), 'utf8'),
   ) as Array<{ customer: string; text: string }>;
+  const ctExemplars = JSON.parse(
+    fs.readFileSync(path.join(EXEMPLAR_DIR, 'exemplars-ct-routing.json'), 'utf8'),
+  ) as Array<{ customer: string; text: string }>;
 
   // ── probe modes (manual generator testing, never posts) ────────
   if (probeEstimate) {
@@ -302,8 +396,24 @@ async function main(): Promise<void> {
       }
       if (!customerText) throw new Error('no inbound messages or voicemail on that thread');
     }
-    const result = await draftIntake(gemini, { customerText, mediaCount, exemplars: pickExemplars(intakeExemplars, 6, seed) });
-    console.log(`\n── probe intake ${probePhone} (classification: ${result?.classification}, provided: ${JSON.stringify(result?.provided)}) ──`);
+    const result = await draftIntake(gemini, {
+      customerText,
+      mediaCount,
+      areaCode: probePhone.slice(2, 5),
+      exemplars: pickExemplars(intakeExemplars, 6, seed),
+    });
+    console.log(`\n── probe intake ${probePhone} (classification: ${result?.classification}, state: ${result?.propertyState}, provided: ${JSON.stringify(result?.provided)}, extracted: ${JSON.stringify(result?.extracted)}) ──`);
+    if (result?.classification === 'lead' && result.propertyState === 'CT') {
+      const reply = await draftCtRouting(gemini, { customerText, exemplars: pickExemplars(ctExemplars, 6, seed) });
+      const gateFail = reply ? gateCtRouting(reply) : 'generation failed';
+      if (gateFail) console.log(`[GATE FAIL: ${gateFail} — fallback would be used]`);
+      console.log('── customer reply ──');
+      console.log(gateFail ? ctRoutingFallback(result.extracted.name?.split(' ')[0] ?? null) : reply);
+      console.log('── handoff to Luc ──');
+      const mediaUrls = inbound.flatMap((m) => (m.media ?? []).map((x) => x.url)).filter(Boolean);
+      console.log(buildLucHandoff({ phone: probePhone, extracted: result.extracted, customerText, mediaUrls }));
+      return;
+    }
     const gateFail = result?.draft ? gateIntake(result.draft, customerText, mediaCount) : null;
     if (gateFail) console.log(`[GATE FAIL: ${gateFail} — fallback would be used]`);
     console.log(result?.draft || '(no draft — non-lead or generation failed)');
@@ -520,26 +630,49 @@ async function main(): Promise<void> {
       const result = await draftIntake(gemini, {
         customerText,
         mediaCount,
+        areaCode: phone.slice(2, 5),
         exemplars: pickExemplars(intakeExemplars, 6, seed),
       });
-      if (!result || result.classification !== 'lead' || !result.draft.trim()) {
+      if (!result || result.classification !== 'lead') {
         state.intakeDone[phone] = `skipped:${result?.classification ?? 'generation-failed'}`;
         records.push({ type: 'intake', phone, outcome: result?.classification ?? 'generation-failed' });
         continue;
       }
-      let draft = result.draft.trim();
-      const gateFail = gateIntake(draft, customerText, mediaCount);
-      if (gateFail) draft = intakeFallback(mediaCount);
 
-      const posted = await postNote(phone, 'FIRST-TOUCH INTAKE', draft, `New inquiry ${Math.round(ageMin)} min ago, no reply yet.${mediaCount ? ` ${mediaCount} photo(s) attached.` : ''}${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}`);
+      const isCt = result.propertyState === 'CT';
+      let kind: string;
+      let draft: string;
+      let extra: string;
+      let gateFail: string | null;
+      if (isCt) {
+        const reply = await draftCtRouting(gemini, { customerText, exemplars: pickExemplars(ctExemplars, 6, seed) });
+        gateFail = reply ? gateCtRouting(reply) : 'generation failed';
+        kind = 'CT→LUC ROUTING';
+        draft = gateFail ? ctRoutingFallback(result.extracted.name?.split(' ')[0] ?? null) : reply!;
+        const mediaUrls = inbound.flatMap((m) => (m.media ?? []).map((x) => x.url)).filter(Boolean);
+        extra = `CT property detected${CT_AREA_CODES.has(phone.slice(2, 5)) ? ' (CT area code)' : ''}. New inquiry ${Math.round(ageMin)} min ago, no reply yet.${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}\n\n——— HANDOFF TO LUC (copy/paste to him, then forward the photos) ———\n${buildLucHandoff({ phone, extracted: result.extracted, customerText, mediaUrls })}\n———`;
+      } else {
+        if (!result.draft.trim()) {
+          state.intakeDone[phone] = 'skipped:empty-draft';
+          records.push({ type: 'intake', phone, outcome: 'empty-draft' });
+          continue;
+        }
+        kind = 'FIRST-TOUCH INTAKE';
+        draft = result.draft.trim();
+        gateFail = gateIntake(draft, customerText, mediaCount);
+        if (gateFail) draft = intakeFallback(mediaCount);
+        extra = `New inquiry ${Math.round(ageMin)} min ago, no reply yet.${mediaCount ? ` ${mediaCount} photo(s) attached.` : ''}${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}`;
+      }
+
+      const posted = await postNote(phone, kind, draft, extra);
       if (posted) {
         if (!dryRun) {
           state.intakeDone[phone] = new Date(now).toISOString();
           delete state.noteAttempts[phone];
         }
         drafted++;
-        records.push({ type: 'intake', phone, outcome: 'drafted', fallback: gateFail ?? null, draft });
-        console.log(`intake drafted: ${phone} (inquiry ${Math.round(ageMin)}m old${mediaCount ? `, ${mediaCount} photos` : ''})${gateFail ? ` (fallback: ${gateFail})` : ''}`);
+        records.push({ type: isCt ? 'ct-routing' : 'intake', phone, outcome: 'drafted', fallback: gateFail ?? null, draft });
+        console.log(`${isCt ? 'CT routing' : 'intake'} drafted: ${phone} (inquiry ${Math.round(ageMin)}m old${mediaCount ? `, ${mediaCount} photos` : ''})${gateFail ? ` (fallback: ${gateFail})` : ''}`);
       } else {
         // no Quo contact yet (sync usually creates one within minutes) — retry
         const attempts = (state.noteAttempts[phone] ?? 0) + 1;
