@@ -93,7 +93,15 @@ Spec: `projects/triage-dashboard.md`.
    marketing ROI item; building it over the winter means it's producing when
    spring demand season opens. This is the first Cat-3 item unlocked by the
    Cat-2 program landing.
-5. **Security: audit long tail.** P4-1 QB OAuth lock closed 2026-10-16
+5. **Middleware observability — ACTIVE (Matt's call 2026-10-19, after Quo
+   silently auto-disabled the webhook and the email from Quo was the first
+   signal).** Plan: `projects/middleware-observability.md`. Sequence:
+   outside-in watchdog (pipe freshness vs Quo truth, cron cadence, launchd
+   heartbeats, direct-SMS P1 alerts) → ack-fast/process-after webhook
+   restructure → capture-gap mop-up → triage System-health section.
+   Signal-not-noise contract: P1 texts only for broken business pipes,
+   fingerprint-deduped, with recovery notices.
+6. **Security: audit long tail.** P4-1 QB OAuth lock closed 2026-10-16
    (single-flight `refreshLock` wired into all QB consumers). Remaining are
    smaller: P4-5 QB pagination, P4-6 429/timeout handling.
 
