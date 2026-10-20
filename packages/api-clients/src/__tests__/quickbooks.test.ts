@@ -395,6 +395,19 @@ describe('QuickBooksClient', () => {
       expect(result).toEqual([]);
     });
 
+    it('tolerates a numeric customerId at runtime (Upstash deserializes stored "2270" to 2270)', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: {} }));
+
+      // Type-level string, but Redis-sourced IDs arrive as numbers at runtime.
+      const result = await client.getEstimatesByCustomer(2270 as unknown as string);
+
+      const url = mockFetch.mock.calls[0][0] as string;
+      const decoded = decodeURIComponent(url.split('query=')[1].split('&')[0]);
+      expect(decoded).toContain("CustomerRef = '2270'");
+      expect(result).toEqual([]);
+    });
+
     it('returns all estimates when status filter omitted', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(mockResponse({

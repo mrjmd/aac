@@ -132,12 +132,17 @@ export async function storePipedriveToQbMapping(
 
 export async function getQbCustomerIdFromPipedrive(pipedriveId: string): Promise<string | null> {
   const redis = getRedis();
-  return redis.get<string>(keys.map.pipedriveToQb(pipedriveId));
+  // Upstash JSON-parses values on read, so a stored "2270" comes back as the
+  // number 2270 — String() it or downstream string ops (QB query escaping)
+  // throw inside fail-open catches and silently cap directive confidence.
+  const value = await redis.get<string | number>(keys.map.pipedriveToQb(pipedriveId));
+  return value == null ? null : String(value);
 }
 
 export async function getPipedriveIdFromQb(qbCustomerId: string): Promise<string | null> {
   const redis = getRedis();
-  return redis.get<string>(keys.map.qbToPipedrive(qbCustomerId));
+  const value = await redis.get<string | number>(keys.map.qbToPipedrive(qbCustomerId));
+  return value == null ? null : String(value);
 }
 
 // ── Loop Prevention ──────────────────────────────────────────────────

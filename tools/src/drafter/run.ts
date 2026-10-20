@@ -484,15 +484,30 @@ async function draftOne(ctx: {
   const phone = finding.phone;
   const customerName = finding.customer?.trim() || phone;
 
-  // ── resolve the QBO customer (snapshot phone join → name search → create)
+  // ── resolve the QBO customer (snapshot phone join → live Quo-contact name
+  //    → live QBO name search → create). The snapshot is built at 08:15, so
+  //    a same-day lead misses the phone join AND has no finding.customer —
+  //    falling through to a phone-number-named create while the middleware
+  //    has already made the real record (John Skinner dup, 2026-10-20).
   const snapCustomer = ctx.snapshot.customers.find((c) => c.phones.includes(phone));
   let customerId = snapCustomer?.id ?? null;
   let resolvedName = snapCustomer?.name ?? customerName;
-  if (!customerId && finding.customer) {
-    const byName = await qb.searchCustomerByName(finding.customer);
+  let liveName = finding.customer?.trim() || null;
+  if (!customerId && !liveName) {
+    // Middleware syncs the AI-extracted name onto the Quo contact within
+    // minutes of first touch — that's the freshest name source we have.
+    const contact = await quo.findContactByExternalId(phone);
+    const quoName = [contact?.defaultFields.firstName, contact?.defaultFields.lastName]
+      .filter(Boolean).join(' ').trim();
+    if (quoName && !/^[+\d\s().-]+$/.test(quoName)) liveName = quoName;
+  }
+  if (!customerId && liveName) {
+    const byName = await qb.searchCustomerByName(liveName);
     if (byName?.Id) {
       customerId = byName.Id;
-      resolvedName = byName.DisplayName ?? customerName;
+      resolvedName = byName.DisplayName ?? liveName;
+    } else {
+      resolvedName = liveName;
     }
   }
 
@@ -727,9 +742,29 @@ async function draftOne(ctx: {
   }
 
   if (!customerId) {
-    const created = await qb.createCustomer({ displayName: customerName, phone });
-    customerId = created.Id!;
-    console.log(`  + created QBO customer ${customerId} "${customerName}"`);
+    if (!liveName) {
+      // No real name anywhere yet. Creating here would mint a customer named
+      // after the phone number while middleware creates the real record the
+      // moment the name extracts — a guaranteed duplicate. Defer; the next
+      // trigger re-runs with the name available.
+      console.log('  ~ deferred: no customer name yet — not creating a phone-named QBO customer');
+      return { phone, customer: resolvedName, outcome: 'skipped', detail: 'no name yet — deferred create' };
+    }
+    try {
+      const created = await qb.createCustomer({ displayName: liveName, phone });
+      customerId = created.Id!;
+      console.log(`  + created QBO customer ${customerId} "${liveName}"`);
+    } catch (err) {
+      // 6240 Duplicate Name: QBO's uniqueness check also spans inactive
+      // customers and loose casing, which the exact DisplayName query above
+      // can miss — attach to the existing record instead of dying.
+      if (!/6240|Duplicate Name/i.test((err as Error).message)) throw err;
+      const existing = await qb.searchCustomerByName(liveName, { includeInactive: true });
+      if (!existing?.Id) throw err;
+      customerId = existing.Id;
+      resolvedName = existing.DisplayName ?? liveName;
+      console.log(`  ~ duplicate-name resolved to existing QBO customer ${customerId} "${resolvedName}"`);
+    }
   }
 
   const estimate = await qb.createEstimate({ customerId, lines, privateNote, docNumber: ctx.docNumber });

@@ -547,7 +547,9 @@ export class QuickBooksClient {
     customerId: string,
     status?: QBEstimateStatus
   ): Promise<QBEstimate[]> {
-    const escapedId = customerId.replace(/'/g, "\\'");
+    // Defensive: IDs read from Redis can arrive as numbers at runtime
+    // (Upstash JSON-parses "2270" into 2270) — .replace on a number throws.
+    const escapedId = String(customerId).replace(/'/g, "\\'");
     // QB does NOT allow filtering Estimate by TxnStatus in the query API
     // ("property 'TxnStatus' is not queryable"). Fetch all, filter client-side.
     const sql = `SELECT * FROM Estimate WHERE CustomerRef = '${escapedId}' ORDER BY MetaData.CreateTime DESC MAXRESULTS 100`;
