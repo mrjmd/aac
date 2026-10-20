@@ -265,8 +265,10 @@ function ctRoutingFallback(firstName: string | null): string {
   return `${greet} for reaching out! You've actually reached the Massachusetts office. Not to worry though — I'm forwarding your info and the photos you sent over to my partner Luc, who runs our Connecticut office, and he will reach out. Keep an eye out for a text or call from him at ${LUC_LINE}. Thank you!\n\n-- Matt at Attack A Crack`;
 }
 
-/** The one-message handoff Matt sends Luc (off-platform): all contact info +
- *  the inquiry in the customer's own words + a photos pointer. */
+/** The one-message handoff Matt sends Luc (off-platform). Format matches
+ *  his real sends (owner screenshots, 2026-10-19): bare lines — name,
+ *  address, email, phone, no labels — then the customer's own words quoted
+ *  ("Here's what X sent:"). Photos get forwarded separately as images. */
 function buildLucHandoff(args: {
   phone: string;
   extracted: { name: string | null; address: string | null; email: string | null };
@@ -274,20 +276,19 @@ function buildLucHandoff(args: {
   mediaUrls: string[];
 }): string {
   const lines = [
-    `New CT lead from the MA line:`,
-    ``,
-    `Name: ${args.extracted.name ?? '(not provided)'}`,
-    `Cell: ${args.phone}`,
-    `Address: ${args.extracted.address ?? '(not provided)'}`,
-    `Email: ${args.extracted.email ?? '(not provided)'}`,
-    ``,
-    `Their message: "${args.customerText.slice(0, 600)}"`,
-  ];
+    args.extracted.name,
+    args.extracted.address,
+    args.extracted.email,
+    args.phone,
+  ].filter((l): l is string => !!l);
+  const text = args.customerText.trim();
+  if (text) {
+    const who = args.extracted.name?.split(' ')[0] ?? 'they';
+    lines.push(``, `Here's what ${who} sent: "${text.slice(0, 600)}"`);
+  }
   if (args.mediaUrls.length) {
-    lines.push(``, `${args.mediaUrls.length} photo(s) — forwarding separately (links may expire):`);
+    lines.push(``, `${args.mediaUrls.length} photo(s) in the thread — forward those too. Links (may expire):`);
     lines.push(...args.mediaUrls.slice(0, 6));
-  } else {
-    lines.push(``, `No photos attached.`);
   }
   return lines.join('\n');
 }
