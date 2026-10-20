@@ -51,13 +51,51 @@ drafts miss their 10-minute window, quote drafts stall, queues back up.
   `maxDuration: 300`; QStash's per-event fan-out means one customer per
   invocation, which fits.
 
+## Latency tiers (Matt, 2026-10-20: "if we move it to the cloud it needs to
+## be happening quickly")
+
+The 10-minute delays Matt sees today come from two different places and only
+one of them should survive the migration:
+
+1. **Polling artifacts** — the laptop drains queues every 60s/600s. These
+   disappear entirely: webhook → QStash publish (~100ms) → worker invoke
+   (~1s) → Gemini draft (5–20s). Wall clock from the triggering event to the
+   note in Quo: **~10–30 seconds**.
+2. **Product windows** — delays that encode a decision, kept on purpose:
+   the 10-min intake preemption window exists so the system stays silent
+   when Matt has already answered a new lead himself; the quote-drafter
+   settle window exists because customers trickle photos in over several
+   minutes and drafting early means drafting wrong.
+
+| Flow | Tier | Target latency |
+|---|---|---|
+| Quote EmailSent → "I just sent that quote" follow-up draft | fast lane | seconds (no delay param) |
+| quote_approved / scheduling reply → suggested-slot note + hold | fast lane | seconds |
+| Stub/hold creation from confirmed slots | fast lane | seconds |
+| First-touch intake ask / CT routing | windowed | 10 min (preemption — it's a backstop for when Matt is away; at his desk he's already replied and it correctly stays silent) |
+| Quote drafter (T1 photos / T3 promise) | windowed | 10–15 min settle; option later: draft at +2 min and regenerate-in-place as photos land (drafter already supports regeneration) — costs more Gemini + note churn |
+
+**Why execution doesn't run inline in the webhook function itself** (the
+rationale for ack-then-work): the 2026-10-19 incident — ONE slow
+scheduling-reply handler exceeded Quo's webhook timeout, Quo retried, timed
+out again, and **auto-disabled the entire webhook**, silently killing every
+downstream automation until it was manually re-enabled. Webhook handlers
+must ack in milliseconds; anything that calls Gemini/QBO/Calendar belongs in
+a worker invocation that can take 60s without endangering the event feed.
+Today the scheduling dispatch still runs inline (that's why Michelle's
+classification took 13s inside the webhook) — P1 moves it to the fast-lane
+worker, which closes the ack-fast hardening item from the incident while
+keeping seconds-level latency.
+
 ## Phasing
 
-**P1 — message-drafts worker** (highest value: time-sensitive, dies when
-laptop sleeps). QStash wiring in middleware webhook + qb-webhook, worker
-endpoints, state→Redis, exemplars→repo. Launchd job becomes a no-op and is
-unloaded after a week of clean parallel running (worker posts, laptop
-dry-runs, compare).
+**P1 — fast lane + message-drafts worker** (highest value: time-sensitive,
+dies when laptop sleeps). QStash wiring in middleware webhook + qb-webhook,
+worker endpoints, state→Redis, exemplars→repo. Includes moving the inline
+scheduling dispatch out of the Quo webhook into the fast-lane worker
+(ack-fast hardening from the 10/19 incident) with seconds-level latency.
+Launchd job becomes a no-op and is unloaded after a week of clean parallel
+running (worker posts, laptop dry-runs, compare).
 
 **P2 — quote drafter.** Same pattern; extra scope = asset migration, longer
 runtime, and it WRITES QBO — keep the env kill-switch and ship behind a
