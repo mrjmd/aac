@@ -110,10 +110,6 @@ function saveState(s: TState): void {
   fs.writeFileSync(STATE_PATH, JSON.stringify(s, null, 1));
 }
 
-function deepLink(phone: string, body: string): string {
-  return `openphone://message?number=${encodeURIComponent(phone)}&from=${encodeURIComponent(OWN_LINE)}&text=${encodeURIComponent(body)}`;
-}
-
 function pickExemplars<T>(all: T[], n: number, seed: number): T[] {
   // deterministic rotation so consecutive runs vary their few-shot set
   const out: T[] = [];
@@ -454,7 +450,9 @@ async function main(): Promise<void> {
   let drafted = 0;
 
   const postNote = async (phone: string, kind: string, body: string, extra: string): Promise<boolean> => {
-    const noteText = `🤖 ${kind} DRAFT — copy/paste to send (bot never sends):\n\n${body}\n\n———\n${extra}\nPrefill link (desktop): ${deepLink(phone, body)}`;
+    // No prefill deep link: the URL-encoded body dwarfed the note and Matt
+    // never used it (removed on his request, 2026-10-20). Copy/paste only.
+    const noteText = `🤖 ${kind} DRAFT — copy/paste to send (bot never sends):\n\n${body}\n\n———\n${extra}`;
     if (dryRun) {
       console.log(`\n[dry-run] note for ${phone}:\n${noteText}\n`);
       return true;
@@ -576,6 +574,30 @@ async function main(): Promise<void> {
         continue;
       }
 
+      // Voice-call engagement guard (Kevin Maldarelli miss, 2026-10-20: an
+      // existing commercial customer texted 19 callback photos from a number
+      // with zero prior texts, and the intake pass pitched him the new-lead
+      // ask). Not a first touch when:
+      //   (a) Matt DIALED them and connected — the voice equivalent of the
+      //       matt-replied text guard above; or
+      //   (b) a completed call predates the inquiry window by ≥48h — they
+      //       spoke with Matt in some earlier episode (inquiries here are at
+      //       most INTAKE_THREAD_MAX_AGE_H=36h old, so 48h can't clip one).
+      // An INBOUND completed call minutes before the photos stays eligible —
+      // that's the normal call-then-text first touch (+15083690414, 10/20).
+      // Calls are fetched here so the voicemail fallback below reuses them.
+      const calls = (await quo.listCalls({ participantE164: phone, maxResults: 10 })).data ?? [];
+      const connected = (c: (typeof calls)[number]) => c.status === 'completed' && (c.duration ?? 0) > 0;
+      const mattDialedOut = calls.some((c) => c.direction === 'outgoing' && connected(c));
+      const oldCompletedCall = calls.some(
+        (c) => connected(c) && new Date(c.createdAt).getTime() < now - 48 * 3_600_000,
+      );
+      if (mattDialedOut || oldCompletedCall) {
+        state.intakeDone[phone] = `skipped:${mattDialedOut ? 'matt-called-them' : 'prior-call-episode'}`;
+        records.push({ type: 'intake', phone, outcome: mattDialedOut ? 'matt-called-them' : 'prior-call-episode' });
+        continue;
+      }
+
       // Customer's own words: inbound texts, or — when they only called
       // (2026-10-19 gap: a voicemail-only caller has zero messages, so the
       // text-only path never saw them) — the voicemail transcript.
@@ -587,7 +609,6 @@ async function main(): Promise<void> {
         customerText = inbound.map((m) => m.text ?? '').join('\n').trim();
         mediaCount = inbound.reduce((n, m) => n + (m.media?.length ?? 0), 0);
       } else {
-        const calls = (await quo.listCalls({ participantE164: phone, maxResults: 10 })).data ?? [];
         // Any incoming 0-duration call may carry a voicemail; status must
         // not gate the probe (30 of 31 measured VMs were 'no-answer').
         const candidates = calls
