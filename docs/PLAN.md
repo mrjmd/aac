@@ -93,8 +93,9 @@ Spec: `projects/triage-dashboard.md`.
    marketing ROI item; building it over the winter means it's producing when
    spring demand season opens. This is the first Cat-3 item unlocked by the
    Cat-2 program landing.
-5. **Security: P4-1 QB OAuth lock** — the remaining big item from the audit
-   (see below). Close before more systems depend on QB writes.
+5. **Security: audit long tail.** P4-1 QB OAuth lock closed 2026-10-16
+   (single-flight `refreshLock` wired into all QB consumers). Remaining are
+   smaller: P4-5 QB pagination, P4-6 429/timeout handling.
 
 ---
 
@@ -102,10 +103,11 @@ Spec: `projects/triage-dashboard.md`.
 
 `projects/audit-2026-07-remediation.md`. As of the 2026-10-16 sweep: Pipedrive
 webhook auth live, the leaked Gemini key was auto-disabled by Google, PD API v1
-has no announced removal date (migration still queued, not urgent). **Open:
-P4-1 QB token-refresh race (OAuth lock)** — the big one; plus P4-5 QB
-pagination, P4-6 429/timeout handling. The legacy QB webhook payload format
-dies 2026-07-31 — already handled (`/api/qb-webhook` is CloudEvents-only).
+has no announced removal date (migration still queued, not urgent). **P4-1 QB
+token-refresh race closed 2026-10-16** (single-flight `refreshLock`, all QB
+consumers wired, 6 tests) alongside P4-2. Open: P4-5 QB pagination, P4-6
+429/timeout handling. The legacy QB webhook payload format dies 2026-07-31 —
+already handled (`/api/qb-webhook` is CloudEvents-only).
 
 ---
 
