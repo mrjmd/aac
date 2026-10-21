@@ -96,6 +96,34 @@ export const keys = {
   /** Per-customer lock serializing racing triggers — 300s TTL */
   quoteTriggerLock: (phone: string) => `quote-trigger:lock:${phone}` as const,
 
+  // ── Message Drafts (shared state: worker + laptop backstop) ────────
+
+  /**
+   * Dedup/claim hash: estimateId → iso | skipped:* | pending:iso. An actor
+   * HSETNX-claims before drafting so the worker fast lane, worker sweeps,
+   * and laptop runner never double-post (launchd → server-workers P1).
+   */
+  messageDraftFollowupDone: 'message-drafts:followup-done' as const,
+
+  /** Dedup/claim hash: phone → iso | skipped:* | pending:iso. */
+  messageDraftIntakeDone: 'message-drafts:intake-done' as const,
+
+  /** Hash: phone → failed findContact attempts (Quo contact not synced yet). */
+  messageDraftNoteAttempts: 'message-drafts:note-attempts' as const,
+
+  /**
+   * ZSET delay queue for first-touch intake drafts: member = phone, score =
+   * epoch ms when the 10-min preemption window ends. ZADDed by the Quo
+   * webhook on first inbound; drained by the worker's per-minute tick.
+   */
+  messageDraftIntakeDue: 'message-drafts:intake-due' as const,
+
+  /** First activation timestamp — guards against drafting stale backlog. */
+  messageDraftFirstRunAt: 'message-drafts:first-run-at' as const,
+
+  /** Audit trail of draft outcomes (LPUSH + LTRIM 500). */
+  messageDraftRunlog: 'message-drafts:runlog' as const,
+
   /**
    * SyncToken of the bot's last write to a QBO estimate — the ownership
    * fingerprint. Current token ≠ stored token ⇒ human-owned forever.
