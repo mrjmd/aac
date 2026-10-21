@@ -1,6 +1,6 @@
 # Plan: Retire the Laptop — launchd Jobs → Server-Side Workers
 
-**Date:** 2026-10-20 · **Updated:** 2026-10-21 · **Status:** P0 + P1 SHIPPED 2026-10-21 (see Implementation notes); P2 (quote drafter) pending; P3 (triage) stays local
+**Date:** 2026-10-20 · **Updated:** 2026-10-21 · **Status:** P0 + P1 + P2 SHIPPED 2026-10-21 (see Implementation notes); P3 (triage) stays local
 **Driver:** Matt — "I don't like the idea of everything being dependent on
 this laptop running launchd. That's not sustainable." And 10/21: "When I send
 a quote in QuickBooks, the very next thing I do is switch back over to Quo
@@ -201,6 +201,48 @@ laptop runner is now a thin backstop over the same package + Redis state
 **Parallel run:** laptop launchd stays loaded as backstop. After ~a week
 of the worker drafting everything first (laptop records shows only claims
 lost to the worker), unload `com.aac.message-drafts`.
+
+## Implementation notes (P2 as shipped, 2026-10-21)
+
+Same no-QStash pattern as P1; the settle window is another Redis ZSET.
+
+- **`packages/quote-drafter`** — the drafter core (was
+  `tools/src/drafter/run.ts`) + trigger loop (was
+  `tools/src/quote-trigger/shadow.ts`) with injected deps. All state in
+  Redis: `quote-trigger:pending` (per-phone event buffer),
+  `quote-trigger:due` (debounce ZSET, ZADD GT so new events push the
+  window out), `quote-trigger:t2-done`, `quote-drafter:runlog`,
+  `quote-drafter:run-lock` (NX — serializes ticks so estimate doc numbers
+  can't race).
+- **Worker endpoints** — `api/quote-tick.ts` (per-minute cron; cheap when
+  idle) + `api/quote-draft.ts` (manual sync draft/dry-run probe). Both
+  maxDuration 800 / memory 1024 (photo drafts are slow; the exemplar
+  library is big).
+- **Assets via Vercel Blob** — ruleset / Section V / exemplar library
+  (~27MB) are gitignored business data, so the worker can't get them from
+  the repo. `tools/src/quote-trigger/sync-assets.ts` uploads them
+  (random-suffix URLs) and writes the `quote-drafter:assets` Redis
+  manifest; the worker caches by `updatedAt`. **Run sync-assets after
+  editing any of the three local files.**
+- **Kill-switch** — `QUOTE_DRAFTER_MODE` env (set `live`) with a
+  `quote-drafter:mode` Redis override (`off`/`shadow`/`live`) for instant
+  flips without a redeploy (`tools/src/scratch/quote-mode.ts`).
+- **Both 10/21 John Skinner bugs fixed in the move:** customer resolution
+  is phone-first via new `QuickBooksClient.findCustomerByPhone` (dup
+  customers came from name-only resolution against a stale snapshot), and
+  T3 no longer fires on post-send language ("I just sent that quote
+  over") — plus a bot-owned pending draft is only regenerated when there
+  is new INBOUND content.
+- **Cutover (no parallel run):** `com.aac.quote-shadow` unloaded (plist
+  kept for rollback); shadow-validated via synthetic queue events (T1 →
+  classify → skip on recent-estimate guard; post-send text → no-trigger),
+  then flipped live. Unlike message-drafts there's no laptop backstop —
+  the queue is consume-once, and the drafter is not time-critical (a
+  missed draft is visible in the runlog + the manual CLI still works).
+- **Manual CLI preserved** — `tools/src/drafter/run.ts` is a thin wrapper
+  over the package (same flags + `--name`); assets from the local files;
+  `harvest-edits.ts` now merges the worker's Redis runlog with the local
+  drafts.json.
 
 ## Gotchas (from memory, so we don't re-learn them)
 
