@@ -1,191 +1,47 @@
 #!/usr/bin/env npx tsx
 /**
- * Quote drafter v1 — bot-marked Pending estimates in QBO.
+ * Quote drafter — manual CLI over @aac/quote-drafter (the logic lives in
+ * the package; the cloud worker runs the same code on triggers).
  *
- * For each `quote_promised` finding in the latest triage run, assemble
- * the Quo thread + MMS photos, draft estimate lines with Gemini against
- * the canonical pricing ruleset (SECTION 0), and create a Pending
- * estimate in QBO. Nothing customer-facing: the estimate is never sent,
- * carries a "BOT DRAFT — REVIEW BEFORE SENDING" top line, and a
- * PrivateNote with reasoning + recent comparables.
- *
- * Usage (from repo root, after a triage refresh):
+ * Usage (from repo root):
  *   npx tsx tools/src/drafter/run.ts              # draft all quote_promised findings
  *   npx tsx tools/src/drafter/run.ts --dry-run    # print drafts, create nothing
- *   npx tsx tools/src/drafter/run.ts --phone +1617...   # one thread only
+ *   npx tsx tools/src/drafter/run.ts --phone +1617...        # one thread only
+ *   npx tsx tools/src/drafter/run.ts --phone +1617... --name "Jane Doe"
  *   npx tsx tools/src/drafter/run.ts --phone +1617... --photo-dir /path/to/imgs
- *                                    # include photos that arrived by email
+ *   npx tsx tools/src/drafter/run.ts --phone +1617... --participants +1617...,+1508...
  *
- * Drafting logic lives in @aac/quoting (draft-quote.ts); this script is
- * orchestration + I/O only. See docs/projects/quote-drafter.md.
+ * Assets load from the local analysis/ files (the authoritative copies the
+ * owner edits); run tools/src/quote-trigger/sync-assets.ts after changing
+ * them so the cloud worker picks them up too.
  */
-
 import fs from 'node:fs';
 import path from 'node:path';
 import { Redis } from '@upstash/redis';
-import { QuickBooksClient, type QBEstimate } from '@aac/api-clients/quickbooks';
-import { QuoClient, type QuoMessage, type QuoCall } from '@aac/api-clients/quo';
+import { QuickBooksClient } from '@aac/api-clients/quickbooks';
+import { QuoClient } from '@aac/api-clients/quo';
 import { GeminiClient } from '@aac/api-clients/gemini';
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
+import type { ExemplarLibraryEntry } from '@aac/quoting';
 import {
-  assembleEstimateLines,
-  buildAreaAnalysisPrompt,
-  buildDescriptionLibrary,
-  buildDraftPrivateNote,
-  buildQuoteDraftPrompt,
-  areaSituationText,
-  draftTotal,
-  formatPhotoContext,
-  isBotDraft,
-  parseAreaAnalysis,
-  parseQuoteDraftResponse,
-  retrieveSimilar,
-  selectComparables,
-  validateQuoteDraft,
-  matchEventsToCustomer,
-  inDebriefWindow,
-  buildFieldExtractionPrompt,
-  parseFieldExtraction,
-  formatFieldContext,
-  diffDraftLines,
-  buildDraftCreatedNote,
-  buildDraftUpdatedNote,
-  type DraftThreadMessage,
-  type ExemplarLibraryEntry,
-  type FieldEvidence,
-} from '@aac/quoting';
-import type { Finding, FindingsFile } from '../triage/analyze.ts';
-import type { Snapshot } from '../triage/collect.ts';
-
-// ── config ───────────────────────────────────────────────────────────
+  draftOne,
+  loadFieldChannel,
+  prepareRun,
+  MAX_PHOTOS,
+  type DrafterAssets,
+  type DrafterDeps,
+  type DraftRunRecord,
+  type QuoteFinding,
+} from '@aac/quote-drafter';
 
 const FINDINGS_PATH = 'analysis/data/triage/findings.json';
-const SNAPSHOT_PATH = 'analysis/data/triage/snapshot.json';
 const RULESET_PATH = 'analysis/data/quoting-spike/llm-ruleset.md';
 const RUNLOG_PATH = 'analysis/data/triage/drafts.json';
-// Photo→quote training layer (Phase 4) — both optional; the drafter
-// degrades to v1 behavior when they're absent. v2 artifacts carry the
-// owner's 2026-10-18 review corrections + Mike field-context joins
-// (holdout: 68% exact / 80% on assessment-sourced cases vs blind 49%).
 const SECTION_V_PATH = 'analysis/data/photo-corpus/section-v-draft-v2.md';
 const EXEMPLAR_LIBRARY_PATH = 'analysis/data/photo-corpus/exemplar-library-v2.jsonl';
-const EXEMPLARS_PER_AREA = 3;
-const MAX_PHOTOS = 6;
-// Runtime field context (owner process rule 2026-10-18): recover the
-// assessment chain live — calendar event + Matt↔Mike debrief + photos Mike
-// attached to the event. Holdout-validated: assessment-sourced cases went
-// 60% → 80% exact with this supplied.
-const MIKE_PHONE = '+18573126761';
-const MIKE_EMAILS = new Set(['mike@attackacrack.com', 'harrringtonm@gmail.com']);
-const FIELD_LOOKBACK_DAYS = 60;
-const MAX_TECH_PHOTOS = 4;
-const MAX_DEBRIEF_CALLS = 3;
-const MAX_TRANSCRIPT_CHARS = 8_000;
-
-interface FieldChannel {
-  events: Array<{
-    id: string;
-    summary?: string;
-    location?: string;
-    description?: string;
-    colorId?: string;
-    startMs: number;
-    attachments: Array<{ fileId?: string; title: string; mimeType?: string }>;
-  }>;
-  mikeTexts: QuoMessage[];
-  mikeCalls: QuoCall[];
-  drive: GoogleDriveClient;
-}
-
-/**
- * Recover the assessment chain for one customer: matched calendar events,
- * debrief texts/call-transcripts, Mike-attached event photos (Drive owner
- * check — Matt also attaches customer duplicates, which are excluded), and
- * an LLM extraction of the field findings. Never throws; empty on no match.
- */
-async function fetchFieldContext(input: {
-  channel: FieldChannel;
-  quo: QuoClient;
-  gemini: GeminiClient;
-  customerName: string;
-  customerPhotoCount: number;
-}): Promise<{ fieldBlock: string; techParts: Array<{ mimeType: string; base64: string }>; eventCount: number }> {
-  const { channel, quo, gemini, customerName } = input;
-  const none = { fieldBlock: '', techParts: [], eventCount: 0 };
-  const matches = matchEventsToCustomer(channel.events, customerName);
-  if (!matches.length) return none;
-  const visitTimes = matches.map((m) => m.startMs);
-
-  // debrief texts: name mention anywhere recent, or anything near a visit
-  const tokens = customerName.toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= 4);
-  const texts = channel.mikeTexts
-    .filter((m) => {
-      const at = new Date(m.createdAt).getTime();
-      const nearVisit = visitTimes.some((v) => inDebriefWindow(at, v));
-      const mention = tokens.some((t) => (m.text ?? '').toLowerCase().includes(t));
-      return nearVisit || mention;
-    })
-    .map((m) => ({ at: m.createdAt, fromOwner: m.direction === 'outgoing', text: m.text ?? '' }))
-    .filter((t) => t.text.trim());
-
-  // debrief calls near a visit → transcripts
-  const calls = channel.mikeCalls
-    .filter((c) => c.status === 'completed' && (c.duration ?? 0) >= 40)
-    .filter((c) => visitTimes.some((v) => inDebriefWindow(new Date(c.createdAt).getTime(), v)))
-    .slice(0, MAX_DEBRIEF_CALLS);
-  const callTranscripts: Array<{ at: string; durationMin: number; dialogue: string }> = [];
-  for (const c of calls) {
-    const t = await quo.getCallTranscript(c.id).catch(() => null);
-    if (!t?.dialogue?.length) continue;
-    let dialogue = t.dialogue
-      .map((d) => `${d.identifier === MIKE_PHONE ? 'MIKE' : 'MATT'}: ${d.content}`)
-      .join('\n');
-    if (dialogue.length > MAX_TRANSCRIPT_CHARS) {
-      dialogue = dialogue.slice(0, MAX_TRANSCRIPT_CHARS / 2) + '\n…\n' + dialogue.slice(-MAX_TRANSCRIPT_CHARS / 2);
-    }
-    callTranscripts.push({ at: c.createdAt, durationMin: Math.round((c.duration ?? 0) / 60), dialogue });
-  }
-
-  // technician photos attached to the matched events (owner = Mike only)
-  const techParts: Array<{ mimeType: string; base64: string }> = [];
-  for (const ev of matches) {
-    const raw = channel.events.find((e) => e.id === ev.id);
-    for (const a of raw?.attachments ?? []) {
-      if (techParts.length >= MAX_TECH_PHOTOS) break;
-      if (!a.fileId) continue;
-      if (a.mimeType && !a.mimeType.startsWith('image/')) continue;
-      const info = await channel.drive.getFileInfo(a.fileId);
-      const owner = (info?.ownerEmail ?? info?.lastModifiedByEmail ?? '').toLowerCase();
-      if (!MIKE_EMAILS.has(owner)) continue;
-      const dl = await channel.drive.downloadFile(a.fileId);
-      if (!dl || !dl.mimeType.startsWith('image/')) continue;
-      techParts.push({ mimeType: dl.mimeType, base64: Buffer.from(dl.data).toString('base64') });
-    }
-  }
-
-  if (!texts.length && !callTranscripts.length && !techParts.length) return none;
-
-  let extraction = null;
-  if (texts.length || callTranscripts.length) {
-    const evidence: FieldEvidence = { events: matches, texts, callTranscripts };
-    const raw = await generateWithRetry(gemini, buildFieldExtractionPrompt({ customerName, evidence }), {});
-    extraction = parseFieldExtraction(raw);
-  }
-
-  return {
-    fieldBlock: formatFieldContext({
-      extraction,
-      techPhotoCount: techParts.length,
-      customerPhotoCount: input.customerPhotoCount,
-    }),
-    techParts,
-    eventCount: matches.length,
-  };
-}
-const MAX_THREAD_MESSAGES = 100;
 
 function loadEnv(): void {
   const envPath = path.resolve(process.cwd(), '.env.diagnostic');
@@ -203,77 +59,84 @@ function loadEnv(): void {
     if (!(key in process.env)) process.env[key] = value;
   }
 }
-
 function requireEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env: ${name}`);
   return v;
 }
 
-// ── main ─────────────────────────────────────────────────────────────
-
-interface DraftRunRecord {
-  phone: string;
-  customer: string;
-  outcome: 'created' | 'updated' | 'dry-run' | 'skipped' | 'failed';
-  detail: string;
-  estimateId?: string;
-  docNumber?: string;
-  total?: number;
-  /** The bot's drafted lines — the baseline the edit-harvester diffs
-   *  owner changes against (the passive training-label loop). */
-  lines?: Array<{ item: string; qty: number; unitPrice: number }>;
+interface FindingsFileShape {
+  findings: Array<{ section?: string; customer?: string | null; phone?: string | null; title?: string }>;
 }
 
 async function main(): Promise<void> {
   loadEnv();
   const argv = process.argv.slice(2);
+  const flag = (name: string): string | undefined =>
+    argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined;
   const dryRun = argv.includes('--dry-run');
-  const phoneArg = argv.includes('--phone') ? argv[argv.indexOf('--phone') + 1] : undefined;
-  const findingsArg = argv.includes('--findings') ? argv[argv.indexOf('--findings') + 1] : undefined;
-  // Trigger-runner guard: skip customers with ANY estimate newer than N
-  // days (bot or human) — automated runs must not stack next to a quote
-  // that already exists. Manual runs omit the flag and keep full control.
-  const skipRecentArg = argv.includes('--skip-if-recent-estimate')
-    ? Number(argv[argv.indexOf('--skip-if-recent-estimate') + 1])
-    : undefined;
-  // Photos that arrived outside Quo (email, AirDrop) — a directory of images
-  // to analyze alongside any MMS photos. Manual --phone runs only.
-  const photoDirArg = argv.includes('--photo-dir') ? argv[argv.indexOf('--photo-dir') + 1] : undefined;
+  const phoneArg = flag('--phone');
+  const nameArg = flag('--name');
+  const findingsArg = flag('--findings');
+  const skipRecentArg = flag('--skip-if-recent-estimate');
+  const photoDirArg = flag('--photo-dir');
+  const participantsArg = flag('--participants')
+    ?.split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
   if (photoDirArg && !phoneArg) throw new Error('--photo-dir requires --phone (one customer at a time)');
-  // Group threads: Quo returns nothing for the 1:1 participant when the
-  // customer's conversation is a group chat — pass the FULL participant set.
-  const participantsArg = argv.includes('--participants')
-    ? argv[argv.indexOf('--participants') + 1].split(',').map((p) => p.trim()).filter(Boolean)
-    : undefined;
   if (participantsArg && !phoneArg) throw new Error('--participants requires --phone (one customer at a time)');
 
-  const findingsFile = JSON.parse(fs.readFileSync(findingsArg ?? FINDINGS_PATH, 'utf8')) as FindingsFile;
-  const snapshot = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8')) as Snapshot;
-  const rulesetText = fs.readFileSync(RULESET_PATH, 'utf8');
-
-  // Automatic runs draft only quote_promised findings; an explicit --phone
-  // is an owner override and may target a finding from any section (e.g. a
-  // deal_closer thread the owner decided to quote remotely).
-  let targets = findingsFile.findings.filter(
-    (f): f is Finding & { phone: string } =>
-      !!f.phone && (f.section === 'quote_promised' || f.phone === phoneArg),
-  );
-  if (phoneArg) targets = targets.filter((f) => f.phone === phoneArg);
-
-  const skippedNoPhone = findingsFile.findings.filter(
-    (f) => f.section === 'quote_promised' && !f.phone,
-  );
-  for (const f of skippedNoPhone) {
-    console.log(`~ skipping (no phone — email-only thread): ${f.title}`);
+  // ── targets: explicit phone, else quote_promised findings from triage
+  let targets: QuoteFinding[] = [];
+  const findingsPath = findingsArg ?? FINDINGS_PATH;
+  const findingsFile = fs.existsSync(findingsPath)
+    ? (JSON.parse(fs.readFileSync(findingsPath, 'utf8')) as FindingsFileShape)
+    : { findings: [] };
+  if (phoneArg) {
+    const match = findingsFile.findings.find((f) => f.phone === phoneArg);
+    targets = [
+      {
+        phone: phoneArg,
+        customer: nameArg ?? match?.customer ?? null,
+        title: match?.title ?? `manual run for ${phoneArg}`,
+      },
+    ];
+  } else {
+    targets = findingsFile.findings
+      .filter((f): f is { section: string; customer: string | null; phone: string; title: string } =>
+        !!f.phone && f.section === 'quote_promised',
+      )
+      .map((f) => ({ phone: f.phone, customer: f.customer ?? null, title: f.title ?? '' }));
+    for (const f of findingsFile.findings) {
+      if (f.section === 'quote_promised' && !f.phone) {
+        console.log(`~ skipping (no phone — email-only thread): ${f.title}`);
+      }
+    }
   }
-
   if (targets.length === 0) {
     console.log('No quote_promised findings with a phone number. Nothing to draft.');
     return;
   }
-  console.log(`${targets.length} quote_promised finding(s)${dryRun ? ' [DRY RUN]' : ''}\n`);
+  console.log(`${targets.length} target(s)${dryRun ? ' [DRY RUN]' : ''}\n`);
 
+  // ── assets from the local authoritative files
+  const assets: DrafterAssets = {
+    rulesetText: fs.readFileSync(RULESET_PATH, 'utf8'),
+    sectionVText: fs.existsSync(SECTION_V_PATH) ? fs.readFileSync(SECTION_V_PATH, 'utf8') : undefined,
+    exemplarLibrary: fs.existsSync(EXEMPLAR_LIBRARY_PATH)
+      ? fs
+          .readFileSync(EXEMPLAR_LIBRARY_PATH, 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map((l) => JSON.parse(l) as ExemplarLibraryEntry)
+      : [],
+  };
+  console.log(
+    `photo layer: Section V ${assets.sectionVText ? 'loaded' : 'ABSENT'}, exemplar library ${assets.exemplarLibrary.length} areas\n`,
+  );
+
+  // ── deps
   const redis = new Redis({
     url: requireEnv('UPSTASH_REDIS_REST_URL'),
     token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
@@ -299,91 +162,73 @@ async function main(): Promise<void> {
     apiKey: requireEnv('QUO_API_KEY'),
     phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
   });
-  const gemini = new GeminiClient({
-    apiKey: requireEnv('GEMINI_API_KEY'),
-    textModel: 'gemini-3.6-flash',
-  });
-
-  // One fetch for the run: item menu + recent estimates (newest-first)
-  // feed the description library and comparables for every draft.
-  const items = await qb.listItems();
-  const yearAgo = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
-  const recentEstimates = await qb.listRecentEstimates(yearAgo);
-  const library = buildDescriptionLibrary(recentEstimates);
-  const itemNames = items.map((i) => i.Name);
-  console.log(`QBO: ${items.length} items, ${recentEstimates.length} recent estimates, ${library.size} canonical descriptions\n`);
-
-  // AAC's QBO uses custom transaction numbers — the API assigns nothing,
-  // so continue the estimate sequence ourselves (invoices number separately).
-  let nextDocNumber =
-    Math.max(
-      0,
-      ...recentEstimates
-        .map((e) => Number(e.DocNumber))
-        .filter((n) => Number.isFinite(n) && n > 0),
-    ) + 1;
-
-  // Photo-training assets (optional — Section V is a DRAFT until owner
-  // sign-off; exemplars teach scope reading, Section 0 owns prices).
-  const sectionVText = fs.existsSync(SECTION_V_PATH)
-    ? fs.readFileSync(SECTION_V_PATH, 'utf8')
-    : undefined;
-  const exemplarLibrary: ExemplarLibraryEntry[] = fs.existsSync(EXEMPLAR_LIBRARY_PATH)
-    ? fs.readFileSync(EXEMPLAR_LIBRARY_PATH, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as ExemplarLibraryEntry)
-    : [];
-  console.log(
-    `photo layer: Section V ${sectionVText ? 'loaded' : 'ABSENT'}, exemplar library ${exemplarLibrary.length} areas\n`,
-  );
-
-  // Field channel (one fetch per run): recent calendar events + the
-  // Matt↔Mike thread/calls. Optional — missing Google env just disables it.
-  let fieldChannel: FieldChannel | null = null;
+  const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY'), textModel: 'gemini-3.6-flash' });
+  let calendar: GoogleCalendarClient | null = null;
+  let drive: GoogleDriveClient | null = null;
   if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN) {
-    try {
-      const oauth = {
-        clientId: requireEnv('GOOGLE_CLIENT_ID'),
-        clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),
-        refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
-      };
-      const calendar = new GoogleCalendarClient({
-        calendarId: process.env.GOOGLE_CALENDAR_ID || 'matt@attackacrack.com',
-        oauth,
+    const oauth = {
+      clientId: requireEnv('GOOGLE_CLIENT_ID'),
+      clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),
+      refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
+    };
+    calendar = new GoogleCalendarClient({
+      calendarId: process.env.GOOGLE_CALENDAR_ID || 'matt@attackacrack.com',
+      oauth,
+    });
+    drive = new GoogleDriveClient({ oauth });
+  }
+  const deps: DrafterDeps = {
+    redis,
+    qb,
+    quo,
+    gemini,
+    calendar,
+    drive,
+    log: (l) => console.log(l),
+    now: () => Date.now(),
+  };
+
+  // Photos that arrived outside Quo (email, AirDrop) — manual runs only.
+  let extraImageParts: Array<{ mimeType: string; base64: string }> | undefined;
+  if (photoDirArg) {
+    const MIME: Record<string, string> = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp',
+      '.heic': 'image/heic',
+    };
+    extraImageParts = [];
+    for (const name of fs.readdirSync(photoDirArg).sort()) {
+      if (extraImageParts.length >= MAX_PHOTOS) break;
+      const mimeType = MIME[path.extname(name).toLowerCase()];
+      if (!mimeType) continue;
+      extraImageParts.push({
+        mimeType,
+        base64: fs.readFileSync(path.join(photoDirArg, name)).toString('base64'),
       });
-      const drive = new GoogleDriveClient({ oauth });
-      const now = Date.now();
-      const rawEvents = await calendar.listEvents({
-        timeMin: new Date(now - FIELD_LOOKBACK_DAYS * 86_400_000).toISOString(),
-        timeMax: new Date(now + 86_400_000).toISOString(),
-      });
-      const events = rawEvents.map((e) => ({
-        id: e.id,
-        summary: e.summary,
-        location: e.location,
-        description: e.description,
-        colorId: e.colorId,
-        startMs: new Date(e.start).getTime(),
-        attachments: e.attachments,
-      }));
-      const mikeTexts = (await quo.listMessages({ participantE164: MIKE_PHONE, maxResults: 100 })).data;
-      const mikeCalls = (await quo.listCalls({ participantE164: MIKE_PHONE, maxResults: 100 })).data;
-      fieldChannel = { events, mikeTexts, mikeCalls, drive };
-      console.log(
-        `field channel: ${events.length} events (${FIELD_LOOKBACK_DAYS}d), ${mikeTexts.length} Mike texts, ${mikeCalls.length} Mike calls\n`,
-      );
-    } catch (err) {
-      console.log(`field channel unavailable (${(err as Error).message.slice(0, 100)}) — drafting without it\n`);
     }
+    console.log(`extra photos: ${extraImageParts.length} loaded from ${photoDirArg}\n`);
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const run = await prepareRun(deps);
+  const fieldChannel = await loadFieldChannel(deps);
   const records: DraftRunRecord[] = [];
-
   for (const finding of targets) {
-    const label = `${finding.customer ?? 'unknown'} (${finding.phone})`;
-    console.log(`── ${label}: ${finding.title}`);
+    console.log(`── ${finding.customer ?? 'unknown'} (${finding.phone}): ${finding.title}`);
     try {
-      const record = await draftOne({ finding, qb, quo, gemini, redis, snapshot, rulesetText, itemNames, items, library, recentEstimates, today, dryRun, docNumber: String(nextDocNumber), sectionVText, exemplarLibrary, fieldChannel, skipIfRecentEstimateDays: skipRecentArg, extraPhotoDir: photoDirArg, threadParticipants: participantsArg });
-      if (record.outcome === 'created') nextDocNumber++;
+      const record = await draftOne(deps, {
+        finding,
+        run,
+        assets,
+        fieldChannel,
+        dryRun,
+        skipIfRecentEstimateDays: skipRecentArg ? Number(skipRecentArg) : undefined,
+        hasNewInbound: true, // manual run = owner override, always allowed to regenerate
+        extraImageParts,
+        threadParticipants: participantsArg,
+      });
+      if (record.outcome === 'created') run.nextDocNumber++;
       records.push(record);
     } catch (err) {
       const msg = (err as Error).message.slice(0, 300);
@@ -393,401 +238,21 @@ async function main(): Promise<void> {
     console.log('');
   }
 
-  // Append this run to the local run log (review aid; gitignored).
+  // Append this run to the local run log (harvest-edits reads it; gitignored).
   const prior = fs.existsSync(RUNLOG_PATH)
     ? (JSON.parse(fs.readFileSync(RUNLOG_PATH, 'utf8')) as unknown[])
     : [];
   prior.push({ ranAt: new Date().toISOString(), dryRun, records });
+  fs.mkdirSync(path.dirname(RUNLOG_PATH), { recursive: true });
   fs.writeFileSync(RUNLOG_PATH, JSON.stringify(prior, null, 2));
 
   const created = records.filter((r) => r.outcome === 'created');
-  console.log(`Done: ${created.length} created, ${records.filter((r) => r.outcome === 'dry-run').length} dry-run, ${records.filter((r) => r.outcome === 'skipped').length} skipped, ${records.filter((r) => r.outcome === 'failed').length} failed`);
+  console.log(
+    `Done: ${created.length} created, ${records.filter((r) => r.outcome === 'dry-run').length} dry-run, ${records.filter((r) => r.outcome === 'skipped').length} skipped, ${records.filter((r) => r.outcome === 'failed').length} failed`,
+  );
   for (const r of created) {
     console.log(`  → #${r.docNumber} ${r.customer} $${r.total} (estimate ${r.estimateId})`);
   }
-}
-
-/**
- * Post a conversation-panel note on the customer's Quo contact announcing
- * the draft (owner request 2026-10-18). Fire-safe: note failures never
- * affect the draft outcome.
- */
-async function postDraftNote(quo: QuoClient, phone: string, text: string): Promise<void> {
-  try {
-    const contact = await quo.findContactByPhone(phone);
-    if (!contact) {
-      console.log('  ~ no Quo contact for note — skipped');
-      return;
-    }
-    await quo.createContactNote(contact.id, text);
-    console.log('  ✓ posted Quo note');
-  } catch (err) {
-    console.log(`  ⚠ Quo note failed (${(err as Error).message.slice(0, 80)}) — draft unaffected`);
-  }
-}
-
-async function generateWithRetry(
-  gemini: GeminiClient,
-  prompt: string,
-  opts: {
-    systemPrompt?: string;
-    imageParts?: Array<{ mimeType: string; base64: string }>;
-  },
-): Promise<string> {
-  let lastErr: Error | null = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      return await gemini.generateContent(prompt, {
-        systemPrompt: opts.systemPrompt,
-        temperature: 0,
-        maxOutputTokens: 8192,
-        thinkingBudget: 4096,
-        timeoutMs: 120_000,
-        imageParts: opts.imageParts?.length ? opts.imageParts : undefined,
-      });
-    } catch (err) {
-      lastErr = err as Error;
-      const msg = lastErr.message;
-      if (attempt < 2 && /429|500|503|timeout|aborted/i.test(msg)) {
-        await new Promise((r) => setTimeout(r, msg.includes('429') ? 65_000 : 5_000 * (attempt + 1)));
-        continue;
-      }
-      throw lastErr;
-    }
-  }
-  throw lastErr ?? new Error('Gemini returned nothing after retries');
-}
-
-async function draftOne(ctx: {
-  finding: Finding & { phone: string };
-  qb: QuickBooksClient;
-  quo: QuoClient;
-  gemini: GeminiClient;
-  snapshot: Snapshot;
-  rulesetText: string;
-  itemNames: string[];
-  items: Awaited<ReturnType<QuickBooksClient['listItems']>>;
-  library: Map<string, string>;
-  recentEstimates: QBEstimate[];
-  today: string;
-  dryRun: boolean;
-  docNumber: string;
-  sectionVText?: string;
-  exemplarLibrary: ExemplarLibraryEntry[];
-  redis: Redis;
-  fieldChannel: FieldChannel | null;
-  skipIfRecentEstimateDays?: number;
-  extraPhotoDir?: string;
-  threadParticipants?: string[];
-}): Promise<DraftRunRecord> {
-  const { finding, qb, quo, gemini } = ctx;
-  const phone = finding.phone;
-  const customerName = finding.customer?.trim() || phone;
-
-  // ── resolve the QBO customer (snapshot phone join → live Quo-contact name
-  //    → live QBO name search → create). The snapshot is built at 08:15, so
-  //    a same-day lead misses the phone join AND has no finding.customer —
-  //    falling through to a phone-number-named create while the middleware
-  //    has already made the real record (John Skinner dup, 2026-10-20).
-  const snapCustomer = ctx.snapshot.customers.find((c) => c.phones.includes(phone));
-  let customerId = snapCustomer?.id ?? null;
-  let resolvedName = snapCustomer?.name ?? customerName;
-  let liveName = finding.customer?.trim() || null;
-  if (!customerId && !liveName) {
-    // Middleware syncs the AI-extracted name onto the Quo contact within
-    // minutes of first touch — that's the freshest name source we have.
-    const contact = await quo.findContactByExternalId(phone);
-    const quoName = [contact?.defaultFields.firstName, contact?.defaultFields.lastName]
-      .filter(Boolean).join(' ').trim();
-    if (quoName && !/^[+\d\s().-]+$/.test(quoName)) liveName = quoName;
-  }
-  if (!customerId && liveName) {
-    const byName = await qb.searchCustomerByName(liveName);
-    if (byName?.Id) {
-      customerId = byName.Id;
-      resolvedName = byName.DisplayName ?? liveName;
-    } else {
-      resolvedName = liveName;
-    }
-  }
-
-  // ── ownership & idempotency (SyncToken one-way door, owner 2026-10-18)
-  // Existing BOT-OWNED pending draft → regenerate in place with the merged
-  // context. Any foreign SyncToken bump = HUMAN-OWNED forever: never write.
-  // No bot draft → the recent-estimate gate decides whether to create.
-  let updateTarget: QBEstimate | null = null;
-  if (customerId) {
-    const existing = await qb.getEstimatesByCustomer(customerId);
-    const botPending = existing.find((e) => e.TxnStatus === 'Pending' && isBotDraft(e));
-    if (botPending) {
-      const stored = await ctx.redis.get(keys.quoteDraftSyncToken(botPending.Id));
-      const botOwned = stored !== null && stored !== undefined && String(stored) === String(botPending.SyncToken);
-      if (botOwned) {
-        updateTarget = botPending;
-        console.log(`  ~ bot-owned draft #${botPending.DocNumber} — will regenerate in place`);
-      } else {
-        const msg = `bot draft #${botPending.DocNumber} is human-owned (owner edited, or pre-ownership era) — never touching it`;
-        if (!ctx.dryRun) {
-          console.log(`  ~ skipped: ${msg}`);
-          return { phone, customer: resolvedName, outcome: 'skipped', detail: msg };
-        }
-        console.log(`  ~ note: ${msg} — a live run would skip; continuing (dry-run)`);
-      }
-    } else if (ctx.skipIfRecentEstimateDays) {
-      const cutoff = new Date(Date.now() - ctx.skipIfRecentEstimateDays * 86_400_000).toISOString().slice(0, 10);
-      const recent = existing.find((e) => (e.TxnDate ?? '') >= cutoff);
-      if (recent) {
-        console.log(`  ~ skipped: estimate #${recent.DocNumber} (${recent.TxnDate}) within ${ctx.skipIfRecentEstimateDays}d — not stacking`);
-        return { phone, customer: resolvedName, outcome: 'skipped', detail: `recent estimate #${recent.DocNumber} (${recent.TxnDate})` };
-      }
-    }
-  }
-
-  // ── assemble the thread + photos fresh from Quo (snapshot has no media)
-  const page = await quo.listMessages({
-    participantE164: ctx.threadParticipants ?? phone,
-    maxResults: MAX_THREAD_MESSAGES,
-  });
-  const messages = [...page.data].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-  );
-  if (messages.length === 0) {
-    console.log('  ~ skipped: no Quo messages for this number');
-    return { phone, customer: resolvedName, outcome: 'skipped', detail: 'no Quo messages' };
-  }
-  const thread: DraftThreadMessage[] = messages.map((m) => ({
-    direction: m.direction === 'outgoing' ? 'outgoing' : 'incoming',
-    at: m.createdAt,
-    text: m.text || (m.media?.length ? '[photo]' : ''),
-  }));
-
-  const imageParts: Array<{ mimeType: string; base64: string }> = [];
-  for (const m of messages) {
-    if (m.direction !== 'incoming' || !m.media) continue;
-    for (const media of m.media) {
-      if (imageParts.length >= MAX_PHOTOS) break;
-      if (media.type && !media.type.startsWith('image/')) continue;
-      const dl = await quo.downloadMessageMedia(media.url).catch(() => null);
-      if (!dl || !dl.contentType.startsWith('image/')) continue;
-      imageParts.push({ mimeType: dl.contentType, base64: Buffer.from(dl.data).toString('base64') });
-    }
-  }
-  if (ctx.extraPhotoDir) {
-    const MIME: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.heic': 'image/heic' };
-    const names = fs.readdirSync(ctx.extraPhotoDir).sort();
-    let added = 0;
-    for (const name of names) {
-      if (imageParts.length >= MAX_PHOTOS) break;
-      const mimeType = MIME[path.extname(name).toLowerCase()];
-      if (!mimeType) continue;
-      imageParts.push({ mimeType, base64: fs.readFileSync(path.join(ctx.extraPhotoDir, name)).toString('base64') });
-      added++;
-    }
-    console.log(`  extra photos: ${added} loaded from ${ctx.extraPhotoDir}`);
-  }
-  console.log(`  thread: ${thread.length} messages, ${imageParts.length} photo(s)`);
-
-  // ── photo pre-pass: segment areas, retrieve similar historical areas
-  // (degrades to v1 behavior on any failure — never blocks the draft)
-  let photoContext: string | undefined;
-  if (imageParts.length > 0 && ctx.exemplarLibrary.length > 0) {
-    try {
-      const areaRaw = await generateWithRetry(
-        gemini,
-        buildAreaAnalysisPrompt({ thread, photoCount: imageParts.length, itemNames: ctx.itemNames }),
-        { imageParts },
-      );
-      const analysis = parseAreaAnalysis(areaRaw);
-      if (analysis) {
-        const situations = analysis.areas.map((a) => areaSituationText(a, analysis.photoReads));
-        const vectors = await gemini.embedContent(situations, { timeoutMs: 60_000 });
-        const retrieved = analysis.areas.map((area, i) => ({
-          area,
-          exemplars: retrieveSimilar(vectors[i], ctx.exemplarLibrary, EXEMPLARS_PER_AREA),
-        }));
-        photoContext = formatPhotoContext({ analysis, retrieved });
-        console.log(`  areas: ${analysis.areas.length}`);
-        for (const { area, exemplars } of retrieved) {
-          console.log(`    [${area.area}] ${area.description.slice(0, 90)}`);
-          for (const { item, score } of exemplars.slice(0, 1)) {
-            const what = item.quotedItems.length
-              ? item.quotedItems.map((q) => q.item).join(' + ')
-              : 'NOT QUOTED';
-            console.log(`        ≈ #${item.docNumber} (${score.toFixed(2)}): ${what}`);
-          }
-        }
-      } else {
-        console.log('  ⚠ photo pre-pass unparseable — drafting without area analysis');
-      }
-    } catch (err) {
-      console.log(`  ⚠ photo pre-pass failed (${(err as Error).message.slice(0, 100)}) — drafting without it`);
-    }
-  }
-
-  // ── runtime field context: the assessment chain, fetched live
-  // (never blocks the draft — degrades to photos+thread only)
-  let techParts: Array<{ mimeType: string; base64: string }> = [];
-  if (ctx.fieldChannel) {
-    try {
-      const field = await fetchFieldContext({
-        channel: ctx.fieldChannel,
-        quo,
-        gemini,
-        customerName: resolvedName,
-        customerPhotoCount: imageParts.length,
-      });
-      if (field.fieldBlock) {
-        photoContext = `${photoContext ?? ''}${field.fieldBlock}`;
-        techParts = field.techParts;
-        console.log(
-          `  field context: ${field.eventCount} matched event(s), ${techParts.length} technician photo(s)`,
-        );
-      }
-    } catch (err) {
-      console.log(`  ⚠ field context failed (${(err as Error).message.slice(0, 100)}) — drafting without it`);
-    }
-  }
-
-  // ── draft with Gemini (retry transient failures like analyze.ts does)
-  const { systemPrompt, userPrompt } = buildQuoteDraftPrompt({
-    customerName: resolvedName,
-    phone,
-    today: ctx.today,
-    rulesetText: ctx.rulesetText,
-    itemNames: ctx.itemNames,
-    thread,
-    photoCount: imageParts.length,
-    photoContext,
-    visualRulesetText: ctx.sectionVText,
-  });
-
-  const raw = await generateWithRetry(gemini, userPrompt, { systemPrompt, imageParts: [...imageParts, ...techParts] });
-
-  const parsed = parseQuoteDraftResponse(raw);
-  if (!parsed) {
-    throw new Error(`unparseable draft response: ${raw.slice(0, 200).replace(/\n/g, ' ')}`);
-  }
-  const validation = validateQuoteDraft(parsed, ctx.itemNames);
-  if (!validation.ok) {
-    console.log(`  ✗ validation failed: ${validation.errors.join('; ')}`);
-    return { phone, customer: resolvedName, outcome: 'failed', detail: validation.errors.join('; ') };
-  }
-  const draft = validation.draft;
-
-  const comparables = selectComparables(ctx.recentEstimates, draft);
-  const privateNote = buildDraftPrivateNote({
-    draft,
-    warnings: validation.warnings,
-    comparables,
-    generatedAt: ctx.today,
-  });
-  const lines = assembleEstimateLines({ draft, items: ctx.items, descriptionLibrary: ctx.library });
-
-  console.log(`  draft: $${draftTotal(draft)} (${draft.confidence}${draft.needsSiteVisit ? ', site visit' : ''})`);
-  for (const l of draft.lines) {
-    console.log(`    ${l.item}${l.scopeNote ? ` [${l.scopeNote}]` : ''} ×${l.qty} @ $${l.unitPrice}`);
-  }
-  for (const a of draft.scopeAccounting) {
-    console.log(
-      a.quotedItem
-        ? `    ✓ "${a.request}" → ${a.quotedItem}`
-        : `    ✗ "${a.request}" EXCLUDED: ${a.reason ?? '(no reason)'}`,
-    );
-  }
-  for (const w of validation.warnings) console.log(`    ⚠ ${w}`);
-  for (const q of draft.openQuestions) console.log(`    ? ${q}`);
-
-  if (ctx.dryRun) {
-    console.log(`  [dry-run] would ${updateTarget ? `regenerate #${updateTarget.DocNumber} in place` : 'create Pending estimate'}; PrivateNote:`);
-    console.log(privateNote.split('\n').map((l) => `    | ${l}`).join('\n'));
-    return { phone, customer: resolvedName, outcome: 'dry-run', detail: `$${draftTotal(draft)}`, total: draftTotal(draft) };
-  }
-
-  if (updateTarget) {
-    // Regenerate in place. Compare-and-swap on the SyncToken we verified
-    // ownership against — if the owner touched the draft between the check
-    // and this write, QBO rejects it and the draft becomes human-owned.
-    try {
-      const revised = await qb.replaceEstimateLines({
-        estimateId: updateTarget.Id,
-        syncToken: updateTarget.SyncToken,
-        customerId: customerId!,
-        lines,
-        privateNote: `REV ${ctx.today} — regenerated on new info (was $${updateTarget.TotalAmt}).\n${privateNote}`,
-        docNumber: updateTarget.DocNumber,
-      });
-      await ctx.redis.set(keys.quoteDraftSyncToken(revised.Id), String(revised.SyncToken));
-      console.log(`  ✓ regenerated Pending estimate #${revised.DocNumber} — $${revised.TotalAmt} (was $${updateTarget.TotalAmt})`);
-      await postDraftNote(quo, phone, buildDraftUpdatedNote({
-        docNumber: revised.DocNumber ?? ctx.docNumber,
-        estimateId: revised.Id,
-        total: revised.TotalAmt ?? draftTotal(draft),
-        previousTotal: updateTarget.TotalAmt ?? 0,
-        changes: diffDraftLines(updateTarget, draft.lines),
-      }));
-      return {
-        phone, customer: resolvedName, outcome: 'updated',
-        detail: `#${revised.DocNumber} regenerated`,
-        estimateId: revised.Id, docNumber: revised.DocNumber, total: revised.TotalAmt,
-        lines: draft.lines.map((l) => ({ item: l.item, qty: l.qty, unitPrice: l.unitPrice })),
-      };
-    } catch (err) {
-      const msg = (err as Error).message;
-      if (/stale|5010/i.test(msg)) {
-        console.log(`  ~ skipped: owner edited #${updateTarget.DocNumber} mid-flight — now human-owned, not touching`);
-        return { phone, customer: resolvedName, outcome: 'skipped', detail: `#${updateTarget.DocNumber} edited concurrently — human-owned` };
-      }
-      throw err;
-    }
-  }
-
-  if (!customerId) {
-    if (!liveName) {
-      // No real name anywhere yet. Creating here would mint a customer named
-      // after the phone number while middleware creates the real record the
-      // moment the name extracts — a guaranteed duplicate. Defer; the next
-      // trigger re-runs with the name available.
-      console.log('  ~ deferred: no customer name yet — not creating a phone-named QBO customer');
-      return { phone, customer: resolvedName, outcome: 'skipped', detail: 'no name yet — deferred create' };
-    }
-    try {
-      const created = await qb.createCustomer({ displayName: liveName, phone });
-      customerId = created.Id!;
-      console.log(`  + created QBO customer ${customerId} "${liveName}"`);
-    } catch (err) {
-      // 6240 Duplicate Name: QBO's uniqueness check also spans inactive
-      // customers and loose casing, which the exact DisplayName query above
-      // can miss — attach to the existing record instead of dying.
-      if (!/6240|Duplicate Name/i.test((err as Error).message)) throw err;
-      const existing = await qb.searchCustomerByName(liveName, { includeInactive: true });
-      if (!existing?.Id) throw err;
-      customerId = existing.Id;
-      resolvedName = existing.DisplayName ?? liveName;
-      console.log(`  ~ duplicate-name resolved to existing QBO customer ${customerId} "${resolvedName}"`);
-    }
-  }
-
-  const estimate = await qb.createEstimate({ customerId, lines, privateNote, docNumber: ctx.docNumber });
-  await ctx.redis.set(keys.quoteDraftSyncToken(estimate.Id), String(estimate.SyncToken));
-  console.log(`  ✓ created Pending estimate #${estimate.DocNumber} — $${estimate.TotalAmt}`);
-  await postDraftNote(quo, phone, buildDraftCreatedNote({
-    docNumber: estimate.DocNumber ?? ctx.docNumber,
-    estimateId: estimate.Id,
-    total: estimate.TotalAmt ?? draftTotal(draft),
-    confidence: draft.confidence,
-    needsSiteVisit: draft.needsSiteVisit,
-    lines: draft.lines,
-  }));
-  return {
-    phone,
-    customer: resolvedName,
-    outcome: 'created',
-    detail: `#${estimate.DocNumber}`,
-    estimateId: estimate.Id,
-    docNumber: estimate.DocNumber,
-    total: estimate.TotalAmt,
-    lines: draft.lines.map((l) => ({ item: l.item, qty: l.qty, unitPrice: l.unitPrice })),
-  };
 }
 
 main().catch((err) => {

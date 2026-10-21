@@ -69,15 +69,14 @@ async function main(): Promise<void> {
     },
   });
 
-  if (!fs.existsSync(RUNLOG_PATH)) {
-    console.log('no run log yet');
-    return;
-  }
-  const runs = JSON.parse(fs.readFileSync(RUNLOG_PATH, 'utf8')) as Array<{
-    ranAt: string;
-    dryRun: boolean;
-    records: Array<{ outcome: string; estimateId?: string; docNumber?: string; customer?: string; phone?: string; total?: number; lines?: Array<{ item: string; qty: number; unitPrice: number }> }>;
-  }>;
+  type DraftRecord = { outcome: string; estimateId?: string; docNumber?: string; customer?: string; phone?: string; total?: number; lines?: Array<{ item: string; qty: number; unitPrice: number }> };
+  const runs = fs.existsSync(RUNLOG_PATH)
+    ? (JSON.parse(fs.readFileSync(RUNLOG_PATH, 'utf8')) as Array<{
+        ranAt: string;
+        dryRun: boolean;
+        records: DraftRecord[];
+      }>)
+    : [];
 
   // latest bot-written state per estimate (updated supersedes created)
   const botDrafts = new Map<string, { at: string; customer?: string; phone?: string; total?: number; docNumber?: string; lines?: Array<{ item: string; qty: number; unitPrice: number }> }>();
@@ -89,7 +88,27 @@ async function main(): Promise<void> {
       }
     }
   }
-  console.log(`${botDrafts.size} bot draft(s) in run log`);
+
+  // Cloud-worker drafts (P2): the worker's Redis runlog carries the same
+  // record shape inside TriggerRunlogEntry. Older entries may have been
+  // LTRIMmed away, but harvest runs often enough (weekly) to catch them.
+  const redisLog = await redis.lrange<string | { at: string; mode: string; record?: DraftRecord }>(
+    keys.quoteDrafterRunlog, 0, -1,
+  );
+  for (const raw of redisLog ?? []) {
+    const entry = typeof raw === 'string' ? (JSON.parse(raw) as { at: string; mode: string; record?: DraftRecord }) : raw;
+    const r = entry.record;
+    if (entry.mode !== 'live' || !r || !r.estimateId) continue;
+    if (r.outcome !== 'created' && r.outcome !== 'updated') continue;
+    const prior = botDrafts.get(r.estimateId);
+    if (prior && prior.at > entry.at) continue; // local log already newer
+    botDrafts.set(r.estimateId, { at: entry.at, customer: r.customer, phone: r.phone, total: r.total, docNumber: r.docNumber, lines: r.lines });
+  }
+  console.log(`${botDrafts.size} bot draft(s) across local + worker run logs`);
+  if (botDrafts.size === 0) {
+    console.log('no run log yet');
+    return;
+  }
 
   const out: string[] = [];
   const counts: Record<string, number> = {};

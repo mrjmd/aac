@@ -501,6 +501,9 @@ importers:
       '@aac/message-drafts':
         specifier: workspace:*
         version: link:../packages/message-drafts
+      '@aac/quote-drafter':
+        specifier: workspace:*
+        version: link:../packages/quote-drafter
       '@aac/quoting':
         specifier: workspace:*
         version: link:../packages/quoting
@@ -513,6 +516,9 @@ importers:
       '@upstash/redis':
         specifier: ^1.38.0
         version: 1.38.0
+      '@vercel/blob':
+        specifier: ^0.27.3
+        version: 0.27.3
       googleapis:
         specifier: ^171.4.0
         version: 171.4.0
