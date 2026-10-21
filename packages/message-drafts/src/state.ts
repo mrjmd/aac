@@ -113,7 +113,10 @@ export class RedisDraftState implements DraftState {
 
   async appendRecord(record: Record<string, unknown>): Promise<void> {
     try {
-      await this.redis.lpush(keys.messageDraftRunlog, JSON.stringify(record));
+      // stamp when the record landed — triage uses this to age drafts and
+      // to check the Quo thread for an outgoing text after the note posted
+      const stamped = { at: new Date(this.now()).toISOString(), ...record };
+      await this.redis.lpush(keys.messageDraftRunlog, JSON.stringify(stamped));
       await this.redis.ltrim(keys.messageDraftRunlog, 0, 499);
     } catch {
       // audit trail is best-effort
@@ -184,6 +187,6 @@ export class MemoryDraftState implements DraftState {
   }
 
   async appendRecord(record: Record<string, unknown>): Promise<void> {
-    this.records.push(record);
+    this.records.push({ at: new Date(this.now()).toISOString(), ...record });
   }
 }

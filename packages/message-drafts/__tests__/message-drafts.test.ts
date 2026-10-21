@@ -86,6 +86,16 @@ function makeDeps(overrides: {
 }
 
 describe('state claims', () => {
+  it('appendRecord stamps `at` so triage can age drafts and sent-check them', async () => {
+    const state = new MemoryDraftState(() => NOW);
+    await state.appendRecord({ type: 'followup', outcome: 'drafted' });
+    expect(state.records[0]).toMatchObject({
+      at: new Date(NOW).toISOString(),
+      type: 'followup',
+      outcome: 'drafted',
+    });
+  });
+
   it('isDone: final markers are done, fresh pending claims are done, stale pending claims are not', () => {
     expect(isDone(null, NOW)).toBe(false);
     expect(isDone('2026-10-21T14:00:00Z', NOW)).toBe(true);

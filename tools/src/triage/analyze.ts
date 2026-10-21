@@ -68,6 +68,7 @@ export type Section =
   | 'cash_not_sent'
   | 'cash_overdue'
   | 'stale_estimate'
+  | 'message_draft'
   | 'conversation'
   | 'solicitation';
 
@@ -108,9 +109,13 @@ export interface FindingsFile {
     stubAwaitingReviewCount: number;
     offeredHoldCount: number;
     incompleteUpcomingCount: number;
+    draftsAwaitingSendCount: number;
     jobsNext7: number;
     jobsNext30: number;
   };
+  /** Quote-drafter trigger runlog passthrough (newest-first) — render's
+   *  bot-drafts section reads this now that the laptop shadow-log is dead. */
+  quoteDrafterRunlog?: Array<Record<string, unknown>>;
   stats: Record<string, number>;
 }
 
@@ -1291,6 +1296,108 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
     }
   }
 
+  // ── D15: cloud-worker message drafts + heartbeats ───────────────────
+  // The aac-worker-monorepo crons post AI drafts as Quo contact notes
+  // (post-quote follow-up, first-touch intake, CT→Luc routing) for Matt to
+  // copy/paste. Surface what's waiting: a drafted note with no outgoing
+  // text after it is unsent; a gave-up record means the customer may have
+  // received no first reply at all. Stale heartbeats = the crons are dead.
+  const worker = snapshot.worker ?? {
+    messageDraftRecords: [],
+    quoteDrafterRunlog: [],
+    messageDraftsHeartbeat: null,
+    quoteDrafterHeartbeat: null,
+    quoteDrafterModeOverride: null,
+  };
+
+  const heartbeatCheck = (name: string, iso: string | null, detail: string): void => {
+    const ageMin = iso ? (now - new Date(iso).getTime()) / 60_000 : Infinity;
+    if (ageMin > 20) {
+      findings.push({
+        id: `system-heartbeat-${name}`,
+        section: 'system',
+        severity: 'red',
+        title: `${name} worker heartbeat ${iso ? `stale (${Math.round(ageMin)} min)` : 'missing'} — cron likely dead`,
+        detail,
+        action: 'Check the aac-worker-monorepo crons + function logs in Vercel.',
+        source: 'D15',
+      });
+    }
+  };
+  heartbeatCheck(
+    'message-drafts',
+    worker.messageDraftsHeartbeat,
+    'The per-minute tick on aac-worker-monorepo drains the follow-up/intake queues. A stale heartbeat means no AI drafts are being posted to Quo.',
+  );
+  if (worker.quoteDrafterModeOverride !== 'off') {
+    heartbeatCheck(
+      'quote-drafter',
+      worker.quoteDrafterHeartbeat,
+      'The per-minute quote-tick classifies T1/T2/T3 triggers and drafts bot estimates. A stale heartbeat means trigger events are buffering in Redis without drafting.',
+    );
+  }
+
+  const phoneName = new Map<string, string>();
+  for (const c of snapshot.customers ?? []) {
+    for (const p of c.phones) if (!phoneName.has(p)) phoneName.set(p, c.name);
+  }
+  const threadByPhone = new Map(snapshot.threads.map((t) => [t.phone, t]));
+  const DRAFT_KIND_LABEL: Record<string, string> = {
+    followup: 'Post-quote follow-up',
+    intake: 'First-touch intake',
+    'ct-routing': 'CT→Luc routing',
+  };
+  const seenDraftIds = new Set<string>();
+  for (const r of worker.messageDraftRecords) {
+    const at = typeof r.at === 'string' ? r.at : null;
+    // records predating the at-stamp (2026-10-21) can't be aged — skip
+    if (!at || now - new Date(at).getTime() > 7 * DAY) continue;
+    const phone = typeof r.phone === 'string' ? r.phone : undefined;
+    const kind = DRAFT_KIND_LABEL[String(r.type)] ?? String(r.type);
+    const name = (phone && phoneName.get(phone)) || undefined;
+    const ageH = Math.round((now - new Date(at).getTime()) / 3_600_000);
+
+    if (r.outcome === 'drafted') {
+      // runlog is newest-first — the first record per customer wins
+      const id = `d15:${String(r.type)}:${phone ?? String(r.estimateId ?? at)}`;
+      if (seenDraftIds.has(id)) continue;
+      seenDraftIds.add(id);
+      const thread = phone ? threadByPhone.get(phone) : undefined;
+      const sentAfter = thread?.messages.some((m) => m.direction === 'outgoing' && m.at > at) ?? false;
+      if (sentAfter) continue; // Matt sent something since the note posted — handled
+      findings.push({
+        id,
+        section: 'message_draft',
+        severity: 'yellow',
+        title: `${kind} draft waiting${r.doc ? ` — quote #${String(r.doc)}` : ''}`,
+        customer: name,
+        phone,
+        ageDays: Math.floor((now - new Date(at).getTime()) / DAY),
+        evidence: typeof r.draft === 'string' ? r.draft : undefined,
+        detail: `Posted as a Quo contact note ${ageH < 48 ? `${ageH}h` : `${Math.floor(ageH / 24)}d`} ago; no outgoing text since.${r.fallback ? ` Fallback skeleton used (${String(r.fallback)}).` : ''}`,
+        action: 'Open the Quo thread, copy the note, send (edit first if it needs it).',
+        source: 'D15',
+      });
+    } else if (r.outcome === 'no-quo-contact-gave-up') {
+      const id = `d15:gaveup:${phone ?? at}`;
+      if (seenDraftIds.has(id)) continue;
+      seenDraftIds.add(id);
+      findings.push({
+        id,
+        section: 'message_draft',
+        severity: 'red',
+        title: `${kind} draft could NOT be posted — no Quo contact`,
+        customer: name,
+        phone,
+        detail:
+          'The drafter retried and gave up because Quo has no contact for this number — the customer may have received no first reply at all.',
+        action: 'Find the thread in Quo and reply manually.',
+        source: 'D15',
+      });
+    }
+  }
+  stats.messageDraftRecords = worker.messageDraftRecords.length;
+
   // ── dismissals ────────────────────────────────────────────────────
   // analysis/data/triage/dismissals.json: owner-curated suppressions for
   // findings resolved outside the system or explicitly not worth chasing
@@ -1350,9 +1457,13 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
       stubAwaitingReviewCount: findings.filter((f) => f.source === 'D10').length,
       offeredHoldCount: findings.filter((f) => f.source === 'D13').length,
       incompleteUpcomingCount: findings.filter((f) => f.source === 'D11').length,
+      draftsAwaitingSendCount: findings.filter(
+        (f) => f.section === 'message_draft' && f.severity === 'yellow',
+      ).length,
       jobsNext7: jobsBetween(now, now + 7 * DAY),
       jobsNext30: jobsBetween(now, now + 30 * DAY),
     },
+    quoteDrafterRunlog: worker.quoteDrafterRunlog,
     stats: { ...snapshot.stats, ...stats, findings: findings.length },
   };
 

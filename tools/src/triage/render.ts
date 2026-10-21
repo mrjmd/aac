@@ -16,17 +16,43 @@ const ET = 'America/New_York';
 
 /**
  * Bot quote drafts section (photo-quote-training Phase 6): last 7 days of
- * trigger-runner activity plus the edit-harvester's ownership states. Both
- * files are optional — the section renders empty-safe when absent.
+ * trigger-runner activity plus the edit-harvester's ownership states. The
+ * drafter moved to the cloud worker 2026-10-21 (launchd→workers P2), so
+ * live rows come from its Redis runlog (passed through findings.json);
+ * the legacy laptop shadow-log.jsonl still feeds pre-migration rows until
+ * it ages out of the 7d window. Everything renders empty-safe when absent.
  */
-function botDraftsSection(): string {
+function botDraftsSection(workerLog: Array<Record<string, unknown>>): string {
   const logPath = 'analysis/data/quote-trigger/shadow-log.jsonl';
   const labelsPath = 'analysis/data/quote-trigger/edit-labels.jsonl';
   const weekAgo = Date.now() - 7 * 86_400_000;
-  const rows: Array<Record<string, unknown>> = fs.existsSync(logPath)
+  const legacyRows: Array<Record<string, unknown>> = fs.existsSync(logPath)
     ? fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
         .filter((r) => new Date(String(r.at)).getTime() >= weekAgo && r.outcome !== 'no-trigger')
     : [];
+  // Worker TriggerRunlogEntry → the row shape this section always rendered.
+  const workerRows: Array<Record<string, unknown>> = workerLog
+    .filter((e) => e.trigger && e.trigger !== 'none' && new Date(String(e.at)).getTime() >= weekAgo)
+    .map((e) => {
+      const rec = (e.record ?? {}) as Record<string, unknown>;
+      const outcome = String(rec.outcome ?? 'failed');
+      return {
+        at: e.at,
+        trigger: e.trigger,
+        phone: e.phone,
+        outcome: outcome === 'failed' ? 'draft-failed' : outcome,
+        createdDoc: rec.docNumber,
+        total: rec.total,
+        why: (e.why as string | undefined) ?? (rec.detail as string | undefined),
+        scopeItems: Array.isArray(rec.lines)
+          ? (rec.lines as Array<{ item: string }>).map((l) => l.item)
+          : undefined,
+        gate: { label: `worker · ${String(e.mode ?? '')}`, wouldAutoCreate: outcome === 'created' || outcome === 'updated' },
+      };
+    });
+  const rows = [...legacyRows, ...workerRows].sort((a, b) =>
+    String(a.at).localeCompare(String(b.at)),
+  );
   const labels = new Map<string, Record<string, unknown>>(
     fs.existsSync(labelsPath)
       ? fs.readFileSync(labelsPath, 'utf8').split('\n').filter(Boolean).map((l) => {
@@ -131,6 +157,11 @@ const SECTIONS: SectionDef[] = [
     blurb: 'Promised or approved work that is NOT on the calendar. Close these first.',
   },
   {
+    key: ['message_draft'],
+    title: 'AI drafts to send',
+    blurb: 'Quo contact notes the cloud drafter posted (quote follow-ups, first-touch intake, CT routing) with no outgoing text since — open the thread, copy, send. Red means the note could not even be posted.',
+  },
+  {
     key: ['incomplete_event'],
     title: 'Incomplete upcoming events',
     blurb: 'Work events in the next 7 days missing an address, a description, or Mike as attendee. Fix these before the morning Mike rolls out (the Shivani-address incident).',
@@ -205,6 +236,7 @@ function main(): void {
     { label: 'Approved, unscheduled', value: String(pulse.approvedUnscheduledCount), bad: pulse.approvedUnscheduledCount > 0 },
     { label: 'Stale quotes', value: `${usd(pulse.staleEstimateTotal)} · ${pulse.staleEstimateCount}`, bad: false },
     { label: 'Quotes promised', value: String(pulse.quotePromisedCount ?? 0), bad: (pulse.quotePromisedCount ?? 0) > 0 },
+    { label: 'Drafts to send', value: String(pulse.draftsAwaitingSendCount ?? 0), bad: (pulse.draftsAwaitingSendCount ?? 0) > 0 },
     { label: 'Assessed, unquoted', value: String(pulse.assessedUnquotedCount), bad: pulse.assessedUnquotedCount > 0 },
     { label: 'Stubs to review', value: String(pulse.stubAwaitingReviewCount ?? 0), bad: (pulse.stubAwaitingReviewCount ?? 0) > 0 },
     { label: 'Offers on hold', value: String(pulse.offeredHoldCount ?? 0), bad: (pulse.offeredHoldCount ?? 0) > 0 },
@@ -301,7 +333,7 @@ footer { color:#9aa4af; font-size:12px; margin:34px 0 20px; text-align:center; }
 ${pulseTiles}
 </div>
 ${sectionsHtml}
-${botDraftsSection()}
+${botDraftsSection(data.quoteDrafterRunlog ?? [])}
 <footer>
   Snapshot ${esc(data.snapshotAt)} · ${esc(String(data.stats.threads ?? 0))} threads + ${esc(String(data.stats.emailThreads ?? 0))} email threads swept, ${esc(String(data.stats.llmThreads ?? 0))} LLM-triaged (${esc(String(data.stats.llmErrors ?? 0))} errors) ·
   regen: <code>./tools/src/triage/refresh.sh</code> · doc: docs/projects/triage-dashboard.md

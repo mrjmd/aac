@@ -136,6 +136,19 @@ export interface Snapshot {
     review: Array<Record<string, unknown>>;
   };
   todos: Array<Record<string, unknown>>;
+  /** Cloud-worker observability (added 2026-10-21, launchd→workers P1/P2):
+   *  runlogs are newest-first; heartbeats are ISO timestamps set per cron
+   *  tick, so a stale one means the worker cron is dead. */
+  worker: {
+    /** message-drafts runlog (followup/intake/ct-routing records). */
+    messageDraftRecords: Array<Record<string, unknown>>;
+    /** quote-drafter trigger runlog (T1/T2/T3 firings + draft outcomes). */
+    quoteDrafterRunlog: Array<Record<string, unknown>>;
+    messageDraftsHeartbeat: string | null;
+    quoteDrafterHeartbeat: string | null;
+    /** Redis kill-switch override (off|shadow|live) — null = env default (live). */
+    quoteDrafterModeOverride: string | null;
+  };
   threads: ThreadSnapshot[];
   emails: EmailThreadSnapshot[];
   /** Set when the Gmail sweep failed (e.g. token lacks gmail.readonly). */
@@ -355,6 +368,28 @@ async function main(): Promise<void> {
   stats.schedulingPending = pending.length;
   stats.schedulingReview = review.length;
   stats.todos = todos.length;
+
+  // 3c ── cloud-worker runlogs + heartbeats (message-drafts + quote drafter).
+  // Upstash may hand back parsed objects or raw JSON strings depending on
+  // how the entry was written — normalize both (same as harvest-edits).
+  const parseLog = (rows: Array<string | Record<string, unknown>>): Array<Record<string, unknown>> =>
+    rows.map((r) => (typeof r === 'string' ? (JSON.parse(r) as Record<string, unknown>) : r));
+  const [mdLogRaw, qdLogRaw, mdHeartbeat, qdHeartbeat, qdModeOverride] = await Promise.all([
+    redis.lrange<string | Record<string, unknown>>(keys.messageDraftRunlog, 0, 199),
+    redis.lrange<string | Record<string, unknown>>(keys.quoteDrafterRunlog, 0, 199),
+    redis.get<string>(keys.heartbeat('worker')),
+    redis.get<string>(keys.heartbeat('quote-drafter')),
+    redis.get<string>(keys.quoteDrafterMode),
+  ]);
+  const worker: Snapshot['worker'] = {
+    messageDraftRecords: parseLog(mdLogRaw),
+    quoteDrafterRunlog: parseLog(qdLogRaw),
+    messageDraftsHeartbeat: mdHeartbeat,
+    quoteDrafterHeartbeat: qdHeartbeat,
+    quoteDrafterModeOverride: qdModeOverride,
+  };
+  stats.messageDraftRecords = worker.messageDraftRecords.length;
+  stats.quoteDrafterRunlog = worker.quoteDrafterRunlog.length;
 
   // 4 ── Quo threads
   const activeSince = now - QUO_ACTIVE_DAYS * DAY;
@@ -585,6 +620,7 @@ async function main(): Promise<void> {
     completions,
     scheduling: { pending, review },
     todos,
+    worker,
     threads,
     emails,
     ...(emailSweepError ? { emailSweepError } : {}),
