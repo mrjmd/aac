@@ -134,6 +134,35 @@ describe('matchEventToDealAndPerson', () => {
       expect(mockGetPerson).toHaveBeenCalledWith(1337);
     });
 
+    it('strips a trailing [cont] marker before name search (multi-day final day)', async () => {
+      mockSearchPersonByName.mockResolvedValueOnce({ id: 77, name: 'Teddy Watler' });
+      mockGetPerson.mockResolvedValueOnce({ id: 77, name: 'Teddy Watler' });
+
+      const result = await matchEventToDealAndPerson(
+        eventWith('Pool deck resurfacing', 'Teddy Watler [cont]'),
+        pipedrive as any,
+      );
+
+      expect(mockSearchPersonByName).toHaveBeenCalledWith('Teddy Watler');
+      expect(result.person?.id).toBe(77);
+    });
+
+    it('expands nicknames on the stripped name, not the raw [cont] title', async () => {
+      mockSearchPersonByName.mockResolvedValueOnce(null); // "Bob Doherty" direct miss
+      mockSearchPersonByName.mockImplementation(async (name: string) =>
+        name === 'Robert Doherty' ? { id: 88, name: 'Robert Doherty' } : null,
+      );
+      mockGetPerson.mockResolvedValueOnce({ id: 88, name: 'Robert Doherty' });
+
+      const result = await matchEventToDealAndPerson(
+        eventWith('Day two of pad repairs', 'Bob Doherty [cont]'),
+        pipedrive as any,
+      );
+
+      expect(result.person?.id).toBe(88);
+      expect(mockSearchPersonByName).toHaveBeenCalledWith('Robert Doherty');
+    });
+
     it('returns {deal: null, person: null} when no match anywhere', async () => {
       mockSearchPersonByName.mockResolvedValue(null);
 

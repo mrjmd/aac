@@ -36,15 +36,24 @@ export const CONTINUATION_WINDOW_DAYS = 10;
 const DAY_MS = 86_400_000;
 
 /**
+ * Title with any trailing bracketed/parenthesized marker stripped,
+ * case preserved: "Teddy Watler [cont]" → "Teddy Watler". Use this when
+ * the title is a customer name destined for a lookup (Pipedrive, QB)
+ * rather than an equality key.
+ */
+export function stripTitleMarker(summary: string | undefined): string {
+  return (summary ?? '')
+    .replace(/\s*[[(][^\])]*[\])]\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Title with any trailing bracketed/parenthesized marker stripped:
  * "Ed Spooner [cont]" → "ed spooner". Lowercased, whitespace collapsed.
  */
 export function baseTitle(summary: string | undefined): string {
-  return (summary ?? '')
-    .replace(/\s*[[(][^\])]*[\])]\s*$/, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
+  return stripTitleMarker(summary).toLowerCase();
 }
 
 /**

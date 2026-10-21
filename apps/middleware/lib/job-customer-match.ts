@@ -16,6 +16,7 @@ import {
 import type { QuickBooksClient, QBCustomer } from '@aac/api-clients/quickbooks';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
+import { stripTitleMarker } from '@aac/shared-utils/multiday';
 import { expandCompoundName } from './followup.js';
 
 const log = createLogger('job-customer-match');
@@ -218,15 +219,20 @@ export async function matchEventToDealAndPerson(
     if (person) return { deal: null, person };
   }
 
-  const direct = await pipedrive.searchPersonByName(event.summary);
+  // Multi-day continuation days are titled "NAME [cont]" — strip any
+  // trailing marker so they match the same person as day one
+  // (Teddy Watler follow-up miss, 2026-10-18).
+  const searchName = stripTitleMarker(event.summary);
+
+  const direct = await pipedrive.searchPersonByName(searchName);
   if (direct) {
     const person = await pipedrive.getPerson(direct.id);
     if (person) return { deal: null, person };
   }
 
   const nameCandidates = [
-    ...expandNicknames(event.summary),
-    ...expandCompoundName(event.summary).flatMap((c) => [c, ...expandNicknames(c)]),
+    ...expandNicknames(searchName),
+    ...expandCompoundName(searchName).flatMap((c) => [c, ...expandNicknames(c)]),
   ];
   for (const candidate of nameCandidates) {
     const found = await pipedrive.searchPersonByName(candidate);

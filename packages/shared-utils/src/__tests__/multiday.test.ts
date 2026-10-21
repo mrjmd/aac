@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   baseTitle,
+  stripTitleMarker,
   normalizedStreet,
   findContinuation,
   hasContinuation,
@@ -12,6 +13,20 @@ const ev = (over: Partial<MultidayEvent> & { id: string; start: string }): Multi
   location: '188 King Street, Hanover, Massachusetts, 02339',
   colorId: '10',
   ...over,
+});
+
+describe('stripTitleMarker', () => {
+  it('strips a trailing [cont] marker, preserving case', () => {
+    expect(stripTitleMarker('Teddy Watler [cont]')).toBe('Teddy Watler');
+    expect(stripTitleMarker('Kevin Malderelli  (cont) ')).toBe('Kevin Malderelli');
+  });
+  it('leaves plain titles alone and handles undefined', () => {
+    expect(stripTitleMarker('Lisa Martin')).toBe('Lisa Martin');
+    expect(stripTitleMarker(undefined)).toBe('');
+  });
+  it('only strips a marker at the END of the title', () => {
+    expect(stripTitleMarker('[rush] Ed Spooner')).toBe('[rush] Ed Spooner');
+  });
 });
 
 describe('baseTitle', () => {
