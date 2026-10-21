@@ -96,6 +96,45 @@ export const keys = {
   /** Per-customer lock serializing racing triggers — 300s TTL */
   quoteTriggerLock: (phone: string) => `quote-trigger:lock:${phone}` as const,
 
+  // ── Quote Drafter (shared state: worker + manual CLI, P2 migration) ─
+
+  /**
+   * Per-phone event buffer across ticks (HASH: phone → JSON TriggerEvent[]).
+   * Events drain here from quoteTriggerQueue and sit until the debounce
+   * window closes.
+   */
+  quoteTriggerPending: 'quote-trigger:pending' as const,
+
+  /**
+   * ZSET debounce clock: member = phone, score = epoch ms when the settle
+   * window closes (newest event + 15 min; plain ZADD so new events push
+   * the due time out). Drained by the worker's quote-tick cron.
+   */
+  quoteTriggerDue: 'quote-trigger:due' as const,
+
+  /** HASH: phone → ISO of last T2 (Mike-debrief) draft — 24h dedupe. */
+  quoteTriggerT2Done: 'quote-trigger:t2-done' as const,
+
+  /** Serializes quote-tick runs (NX lock, TTL) — doc numbers must not race. */
+  quoteDrafterRunLock: 'quote-drafter:run-lock' as const,
+
+  /**
+   * Kill-switch override: 'off' | 'shadow' | 'live'. Checked each run
+   * before the QUOTE_DRAFTER_MODE env default — lets us flip modes
+   * without a redeploy.
+   */
+  quoteDrafterMode: 'quote-drafter:mode' as const,
+
+  /**
+   * Asset manifest (HASH): ruleset/sectionV/exemplars → Vercel Blob URL,
+   * plus updatedAt. Written by tools/src/quote-trigger/sync-assets.ts,
+   * read+cached by the worker at cold start.
+   */
+  quoteDrafterAssets: 'quote-drafter:assets' as const,
+
+  /** Audit trail of trigger-run outcomes (LPUSH + LTRIM 500). */
+  quoteDrafterRunlog: 'quote-drafter:runlog' as const,
+
   // ── Message Drafts (shared state: worker + laptop backstop) ────────
 
   /**

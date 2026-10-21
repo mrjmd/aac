@@ -1145,5 +1145,68 @@ describe('QuickBooksClient', () => {
       expect(await client.listAllCustomers()).toHaveLength(1);
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
+
+    it('includes inactive customers when asked', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: { Customer: [] } }));
+      await client.listAllCustomers({ includeInactive: true });
+      const url = decodeURIComponent(mockFetch.mock.calls[0][0] as string);
+      expect(url).toContain('WHERE Active IN (true, false)');
+    });
+  });
+
+  describe('findCustomerByPhone', () => {
+    it('matches E.164 input against free-form QBO phone fields', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: {
+          Customer: [
+            { Id: '1', DisplayName: 'Wrong', PrimaryPhone: { FreeFormNumber: '(617) 555-0000' } },
+            { Id: '2', DisplayName: 'John Skinner', PrimaryPhone: { FreeFormNumber: '(508) 361-1747' } },
+          ],
+        },
+      }));
+      const found = await client.findCustomerByPhone('+15083611747');
+      expect(found?.Id).toBe('2');
+    });
+
+    it('matches on Mobile when PrimaryPhone differs', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: {
+          Customer: [{
+            Id: '3',
+            DisplayName: 'Mobile Match',
+            PrimaryPhone: { FreeFormNumber: '617-555-1111' },
+            Mobile: { FreeFormNumber: '508.361.1747' },
+          }],
+        },
+      }));
+      const found = await client.findCustomerByPhone('+15083611747');
+      expect(found?.Id).toBe('3');
+    });
+
+    it('prefers an active customer over an inactive duplicate', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        QueryResponse: {
+          Customer: [
+            { Id: '4', DisplayName: 'Deactivated dup', Active: false, PrimaryPhone: { FreeFormNumber: '5083611747' } },
+            { Id: '5', DisplayName: 'Real', Active: true, PrimaryPhone: { FreeFormNumber: '+1 508 361 1747' } },
+          ],
+        },
+      }));
+      const found = await client.findCustomerByPhone('5083611747');
+      expect(found?.Id).toBe('5');
+    });
+
+    it('returns null when nothing matches or input is unparseable', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValue(mockResponse({
+        QueryResponse: { Customer: [{ Id: '6', DisplayName: 'N', PrimaryPhone: { FreeFormNumber: '6175550000' } }] },
+      }));
+      expect(await client.findCustomerByPhone('+15083611747')).toBeNull();
+      expect(await client.findCustomerByPhone('not-a-phone')).toBeNull();
+    });
   });
 });

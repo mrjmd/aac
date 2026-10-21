@@ -9,6 +9,7 @@
  */
 
 import { createLogger } from '@aac/shared-utils/logger';
+import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
 
 const log = createLogger('quickbooks');
@@ -53,6 +54,12 @@ export interface QBCustomer {
   FamilyName?: string;
   CompanyName?: string;
   PrimaryPhone?: {
+    FreeFormNumber: string;
+  };
+  Mobile?: {
+    FreeFormNumber: string;
+  };
+  AlternatePhone?: {
     FreeFormNumber: string;
   };
   PrimaryEmailAddr?: {
@@ -423,14 +430,38 @@ export class QuickBooksClient {
   }
 
   /**
-   * Page through all customers (QBO caps a query page at 1000 rows).
-   * Loops STARTPOSITION until a short page.
+   * Find a customer by phone number (E.164-normalized match across
+   * PrimaryPhone/Mobile/AlternatePhone). QBO phone fields are free-form
+   * and not SQL-queryable, so this pages all customers and filters
+   * client-side — use for low-volume flows (the quote drafter), not hot
+   * paths. Active customers win over inactive on a tie.
    */
-  async listAllCustomers(): Promise<QBCustomer[]> {
+  async findCustomerByPhone(phone: string): Promise<QBCustomer | null> {
+    const target = quickNormalizePhone(phone);
+    if (!target) return null;
+    const all = await this.listAllCustomers({ includeInactive: true });
+    const matches = all.filter((c) =>
+      [c.PrimaryPhone, c.Mobile, c.AlternatePhone].some(
+        (p) => quickNormalizePhone(p?.FreeFormNumber) === target,
+      ),
+    );
+    if (matches.length === 0) return null;
+    const active = matches.filter((c) => c.Active !== false);
+    const pick = (active.length ? active : matches)[0];
+    log.debug('Found customer by phone', { phone: target, customerId: pick.Id });
+    return pick;
+  }
+
+  /**
+   * Page through all customers (QBO caps a query page at 1000 rows).
+   * Loops STARTPOSITION until a short page. Active-only by default.
+   */
+  async listAllCustomers(opts?: { includeInactive?: boolean }): Promise<QBCustomer[]> {
     const pageSize = 1000;
     const all: QBCustomer[] = [];
+    const activeClause = opts?.includeInactive ? " WHERE Active IN (true, false)" : '';
     for (let start = 1; ; start += pageSize) {
-      const sql = `SELECT * FROM Customer STARTPOSITION ${start} MAXRESULTS ${pageSize}`;
+      const sql = `SELECT * FROM Customer${activeClause} STARTPOSITION ${start} MAXRESULTS ${pageSize}`;
       const result = await this.request<QBResponse<QBCustomer>>(
         `/query?query=${encodeURIComponent(sql)}&minorversion=70`,
       );
