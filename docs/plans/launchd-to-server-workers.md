@@ -1,8 +1,63 @@
 # Plan: Retire the Laptop — launchd Jobs → Server-Side Workers
 
-**Date:** 2026-10-20 · **Status:** PROPOSED
+**Date:** 2026-10-20 · **Updated:** 2026-10-21 · **Status:** ACTIVE (Matt re-affirmed 10/21)
 **Driver:** Matt — "I don't like the idea of everything being dependent on
-this laptop running launchd. That's not sustainable."
+this laptop running launchd. That's not sustainable." And 10/21: "When I send
+a quote in QuickBooks, the very next thing I do is switch back over to Quo
+and the follow-up text. This needs to be drafted for me almost instantly."
+
+## Field evidence — the Vinay Kalyani miss (2026-10-21)
+
+Quote #1564 emailed 8:54:42 AM; Matt switched to Quo within seconds; no
+draft note. The note landed at 8:56:33 — the 10-min sweep got lucky. Forensics:
+
+- **8:54:02** — Intuit delivered an `estimate.update` CloudEvent (~2s after
+  Matt's save in QBO — Intuit delivery is FAST). Middleware fetched the
+  estimate, but `EmailStatus` was not yet `EmailSent` (QBO recorded
+  DeliveryTime 8:54:42, forty seconds later) → fast-path enqueue skipped.
+- **Never** — no second QB webhook arrived (checked 10+ min later; day count
+  stayed at 1). Intuit has a distinct **Emailed operation**
+  (`estimate.emailed` event type) separate from Update. Our webhook
+  subscription doesn't include it, and `isEstimateUpdate()` in
+  `qb-webhook.ts` would ignore it even if it arrived.
+- **8:56:22** — laptop sweep (10-min QBO poll) found EmailSent and drafted.
+
+**Root cause: the one event that means "quote email went out" is the one
+event we're not subscribed to.** The fast lane as built can only win when
+the update event happens to arrive after QBO finishes dispatching the email
+— i.e., rarely. Everything else (laptop, polling) compounded on top.
+
+## Detection gaps — what's not using webhooks properly
+
+| Signal | How we detect it today | The webhook that exists for it | Fix |
+|---|---|---|---|
+| Quote email sent | QBO poll every 10 min (sweep); update-event race rarely wins | `estimate.emailed` CloudEvent — **not subscribed, not handled** | Subscribe in Intuit dashboard + handle in qb-webhook → enqueue/publish |
+| New inbound text (intake ask) | Quo conversations poll every 10 min, so the 10-min product window becomes 10–20 min | Quo message webhook — middleware already receives it | On first inbound, publish QStash `delay=10m`; window becomes exactly 10 min |
+| Voicemail-only lead | Same 10-min sweep probing calls for transcripts | Quo call events — middleware already receives them | Same push model (transcript may lag — worker retries) |
+| Quote trigger (T1 photos / T3 promise) | Webhook enqueues ✓, but laptop drains every 10 min | Already webhook-fed | QStash `delay=settle window` → worker (P2) |
+| Scheduling dispatch | Runs INLINE in the Quo webhook (13s Gemini calls inside the ack path — the 10/19 auto-disable incident) | n/a — it IS the webhook | Move to fast-lane worker; webhook acks in ms (P1) |
+
+Middleware's five Vercel crons (invoice-create 11:00, job-reminders 12:00,
+job-followups 13:00, deal-reconcile 14:00, qb-reconcile 15:00 UTC) are
+already cloud-side daily product windows — no change.
+
+## Quote-follow-up latency budget (after P1 + emailed subscription)
+
+T+0 = Matt clicks Send in QBO.
+
+| Step | Cost | Notes |
+|---|---|---|
+| QBO dispatches the email | ~0–40s | QBO-internal; observed 40s on #1564 (may partly be edit-save → send-click gap). Out of our control. |
+| `estimate.emailed` → middleware | ~2–5s | Intuit delivered today's update event in 2s |
+| QStash publish → worker invoke | ~1–2s | |
+| Gemini draft + Quo note | ~5–20s | Pre-generate the draft at the *update* event (T+2s, parallel with QBO's email dispatch), cache in Redis, post-only on emailed → this step drops to ~2s |
+| **Total** | **~45–60s** (≈10s of it ours) | vs. 0–10 min today |
+
+**Stretch option — beat QBO's own dispatch (~10–15s total):** trigger on the
+update event itself when EmailStatus flips to send-intent. The deliverable is
+a draft NOTE (never auto-sent), so a false positive costs one stray note.
+Blocked on data: we don't log EmailStatus at event time. P1 adds that logging;
+if send-intent proves reliable after ~a week of events, flip the trigger.
 
 ## Current inventory (everything on launchd)
 
@@ -88,6 +143,14 @@ worker, which closes the ack-fast hardening item from the incident while
 keeping seconds-level latency.
 
 ## Phasing
+
+**P0 — the emailed event (do first, tiny, independent of the migration).**
+(a) Enable the **Emailed** operation for Estimate on the webhook subscription
+at developer.intuit.com; (b) qb-webhook: match `estimate.emailed` in addition
+to update, enqueue on it, and log EmailStatus on every event (instruments the
+send-intent stretch option). With just P0, the existing laptop 60s tick gets
+the note posted in **under ~90s** of the send — the 10-minute worst case dies
+immediately. Unit-tested, minimal diff (middleware is sacrosanct).
 
 **P1 — fast lane + message-drafts worker** (highest value: time-sensitive,
 dies when laptop sleeps). QStash wiring in middleware webhook + qb-webhook,

@@ -292,4 +292,48 @@ describe('message-drafts fast-path enqueue', () => {
     await POST(makeRequest([makeEvent()]));
     expect(enqueueEmailedEstimate).not.toHaveBeenCalled();
   });
+
+  it('queues on an estimate.emailed event (dashboard naming scheme)', async () => {
+    mockQb.getEstimate.mockResolvedValue(
+      makeAcceptedEstimate({ TxnStatus: 'Pending', EmailStatus: 'EmailSent' }),
+    );
+    const res = await POST(makeRequest([makeEvent({ type: 'qbo.estimate.emailed.v1' })]));
+    expect(res.status).toBe(200);
+    expect(enqueueEmailedEstimate).toHaveBeenCalledWith('est-1234');
+  });
+
+  it('trusts the emailed event even when the fetch races the EmailStatus write', async () => {
+    mockQb.getEstimate.mockResolvedValue(
+      makeAcceptedEstimate({ TxnStatus: 'Pending', EmailStatus: 'NeedToSend' }),
+    );
+    await POST(makeRequest([makeEvent({ type: 'qbo.estimate.emailed.v1' })]));
+    expect(enqueueEmailedEstimate).toHaveBeenCalledWith('est-1234');
+  });
+
+  it('does not queue an emailed event for a non-Pending estimate', async () => {
+    mockQb.getEstimate.mockResolvedValue(
+      makeAcceptedEstimate({ TxnStatus: 'Accepted', EmailStatus: 'EmailSent' }),
+    );
+    await POST(makeRequest([makeEvent({ type: 'qbo.estimate.emailed.v1' })]));
+    expect(enqueueEmailedEstimate).not.toHaveBeenCalled();
+  });
+
+  it('processes estimate.created events without queueing an unsent quote', async () => {
+    mockQb.getEstimate.mockResolvedValue(
+      makeAcceptedEstimate({ TxnStatus: 'Pending', EmailStatus: 'NotSet' }),
+    );
+    const res = await POST(makeRequest([makeEvent({ type: 'qbo.estimate.created.v1' })]));
+    expect(res.status).toBe(200);
+    expect(mockQb.getEstimate).toHaveBeenCalledWith('est-1234');
+    expect(enqueueEmailedEstimate).not.toHaveBeenCalled();
+    expect(writePendingDirective).not.toHaveBeenCalled();
+  });
+
+  it('still matches the com.intuit naming scheme for updates', async () => {
+    mockQb.getEstimate.mockResolvedValue(
+      makeAcceptedEstimate({ TxnStatus: 'Pending', EmailStatus: 'EmailSent' }),
+    );
+    await POST(makeRequest([makeEvent({ type: 'qbo.estimate.updated.v1' })]));
+    expect(enqueueEmailedEstimate).toHaveBeenCalledWith('est-1234');
+  });
 });

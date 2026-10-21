@@ -1,12 +1,17 @@
 /**
- * QuickBooks Webhook Handler — Estimate.Update  (route: /api/qb-webhook)
+ * QuickBooks Webhook Handler — Estimate events  (route: /api/qb-webhook)
  *
- * Intuit fires this when an Estimate changes state (Pending → Accepted etc).
- * In Crawl scope we receive the event, fetch the full Estimate, run it
- * through `@aac/scheduling.normalizeQbApproval`, and shadow-queue the
- * resulting directive for review in apps/command-center. No calendar
- * writes, no customer SMS, no PD writes — this is the data-collection
- * stage of the SchedulingDirective pipeline.
+ * Intuit fires this on Estimate operations we subscribe to: updated,
+ * emailed, created (subscription expanded 2026-10-21 — the Vinay Kalyani
+ * miss: update events arrive ~2s after a QBO save, BEFORE the quote email
+ * is dispatched, so EmailSent was never visible to the fast path and
+ * follow-up drafts waited on the 10-min sweep. `estimate.emailed` is the
+ * event that actually means "quote email went out").
+ * We fetch the full Estimate, enqueue the message-drafts fast path when a
+ * quote email went out, and run `@aac/scheduling.normalizeQbApproval` to
+ * shadow-queue the resulting directive for review in apps/command-center.
+ * No calendar writes, no customer SMS, no PD writes — this is the
+ * data-collection stage of the SchedulingDirective pipeline.
  *
  * CloudEvents payload format (post-migration; legacy `eventNotifications`
  * shape ends 2026-07-31). One notification may contain multiple events.
@@ -71,9 +76,18 @@ function extractEvents(payload: unknown): QbCloudEvent[] {
   return [];
 }
 
-function isEstimateUpdate(evt: QbCloudEvent): boolean {
+type EstimateOp = 'update' | 'emailed' | 'created';
+
+/** Matches both naming schemes Intuit uses for CloudEvents types
+ *  (`com.intuit.quickbooks.online.estimate.update` and
+ *  `qbo.estimate.updated.v1`). Returns null for anything we don't handle. */
+function estimateOp(evt: QbCloudEvent): EstimateOp | null {
   const t = evt.type?.toLowerCase() ?? '';
-  return t.includes('estimate') && t.includes('update');
+  if (!t.includes('estimate')) return null;
+  if (t.includes('update')) return 'update';
+  if (t.includes('email')) return 'emailed';
+  if (t.includes('create')) return 'created';
+  return null;
 }
 
 // ── Signature verification ────────────────────────────────────────
@@ -161,8 +175,9 @@ export async function POST(request: Request): Promise<Response> {
 type ProcessOutcome = 'directive' | 'filtered' | 'duplicate' | 'ignored' | 'cleaned';
 
 async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
-  if (!isEstimateUpdate(evt)) {
-    log.debug('Skipping non-estimate-update event', { type: evt.type });
+  const op = estimateOp(evt);
+  if (!op) {
+    log.debug('Skipping unhandled event type', { type: evt.type });
     return 'ignored';
   }
   if (!evt.intuitentityid) {
@@ -185,9 +200,25 @@ async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
       return 'ignored';
     }
 
-    // Quote email just went out → queue for the message-drafts fast path
-    // (runner dedupes per estimate, so repeat Update events are harmless).
-    if (estimate.EmailStatus === 'EmailSent' && estimate.TxnStatus === 'Pending') {
+    // Instrumentation for the send-intent trigger decision (plan: launchd →
+    // server workers, stretch option): what does EmailStatus show at each op?
+    log.info('Estimate event', {
+      op,
+      estimateId: evt.intuitentityid,
+      docNumber: estimate.DocNumber,
+      txnStatus: estimate.TxnStatus,
+      emailStatus: estimate.EmailStatus,
+    });
+
+    // Quote email went out → queue for the message-drafts fast path. The
+    // emailed event is authoritative even if our fetch raced the EmailStatus
+    // write; the runner re-validates EmailSent before drafting, and the
+    // sweep backstops anything dropped. Runner dedupes per estimate, so
+    // repeat events are harmless.
+    if (
+      estimate.TxnStatus === 'Pending' &&
+      (op === 'emailed' || estimate.EmailStatus === 'EmailSent')
+    ) {
       await enqueueEmailedEstimate(evt.intuitentityid);
       log.info('Queued emailed estimate for follow-up draft', {
         estimateId: evt.intuitentityid,
