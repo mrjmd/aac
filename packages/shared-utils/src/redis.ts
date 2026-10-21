@@ -121,6 +121,9 @@ export const keys = {
   /** First activation timestamp — guards against drafting stale backlog. */
   messageDraftFirstRunAt: 'message-drafts:first-run-at' as const,
 
+  /** Last full-sweep timestamp (laptop runner gates its 10-min sweep on it). */
+  messageDraftLastSweep: 'message-drafts:last-sweep' as const,
+
   /** Audit trail of draft outcomes (LPUSH + LTRIM 500). */
   messageDraftRunlog: 'message-drafts:runlog' as const,
 

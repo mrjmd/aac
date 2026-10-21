@@ -433,6 +433,9 @@ importers:
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../packages/api-clients
+      '@aac/message-drafts':
+        specifier: workspace:*
+        version: link:../packages/message-drafts
       '@aac/quoting':
         specifier: workspace:*
         version: link:../packages/quoting
