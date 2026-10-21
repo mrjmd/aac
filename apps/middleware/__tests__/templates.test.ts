@@ -8,6 +8,7 @@ describe('templates', () => {
         firstName: 'John',
         time: '8:00 AM',
         date: 'Friday, April 4',
+        multiDayNote: '',
       });
 
       expect(result).toContain('Hi John');
@@ -15,6 +16,21 @@ describe('templates', () => {
       expect(result).toContain('Friday, April 4');
       expect(result).toContain('Attack A Crack');
       expect(result).toContain('let me know');
+      // Empty note must leave no double space behind
+      expect(result).toContain('Friday, April 4. Please let me know');
+    });
+
+    it('renders jobReminder with a multi-day note', () => {
+      const result = renderTemplate('jobReminder', {
+        firstName: 'John',
+        time: '8:00 AM',
+        date: 'Friday, April 4',
+        multiDayNote:
+          ' This job will take multiple days — we also have you booked for 2 more days after that to continue the work.',
+      });
+
+      expect(result).toContain('Friday, April 4. This job will take multiple days');
+      expect(result).toContain('2 more days after that to continue the work. Please let me know');
     });
 
     it('renders jobFollowUp with all variables', () => {

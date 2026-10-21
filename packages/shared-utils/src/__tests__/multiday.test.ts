@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   baseTitle,
   stripTitleMarker,
+  isContinuationTitle,
+  countContinuationDays,
   normalizedStreet,
   findContinuation,
   hasContinuation,
@@ -26,6 +28,39 @@ describe('stripTitleMarker', () => {
   });
   it('only strips a marker at the END of the title', () => {
     expect(stripTitleMarker('[rush] Ed Spooner')).toBe('[rush] Ed Spooner');
+  });
+});
+
+describe('isContinuationTitle', () => {
+  it('matches [cont] and (cont.) trailing markers, any case', () => {
+    expect(isContinuationTitle('Teddy Watler [cont]')).toBe(true);
+    expect(isContinuationTitle('Ed Spooner (cont.)')).toBe(true);
+    expect(isContinuationTitle('Ed Spooner [CONT]')).toBe(true);
+    expect(isContinuationTitle('Ed Spooner [continued]')).toBe(true);
+  });
+  it('does not match plain titles, other markers, or mid-title brackets', () => {
+    expect(isContinuationTitle('Lisa Martin')).toBe(false);
+    expect(isContinuationTitle('Ed Spooner [rush]')).toBe(false);
+    expect(isContinuationTitle('[cont] Ed Spooner')).toBe(false);
+    expect(isContinuationTitle(undefined)).toBe(false);
+  });
+});
+
+describe('countContinuationDays', () => {
+  it('walks a chain and counts the remaining days', () => {
+    const chain = [
+      ev({ id: 'd1', start: '2026-10-12T08:00:00-04:00', summary: 'Teddy Watler' }),
+      ev({ id: 'd2', start: '2026-10-14T08:00:00-04:00', summary: 'Teddy Watler [cont]' }),
+      ev({ id: 'd3', start: '2026-10-16T08:00:00-04:00', summary: 'Teddy Watler [cont]' }),
+      ev({ id: 'd4', start: '2026-10-17T08:00:00-04:00', summary: 'Teddy Watler [cont]' }),
+    ];
+    expect(countContinuationDays(chain[0], chain)).toBe(3);
+    expect(countContinuationDays(chain[2], chain)).toBe(1);
+  });
+  it('returns 0 for a single-day job', () => {
+    const single = ev({ id: 's1', start: '2026-10-12T08:00:00-04:00', summary: 'Lisa Martin' });
+    const other = ev({ id: 'o1', start: '2026-10-13T08:00:00-04:00', summary: 'Someone Else', location: '9 Oak St' });
+    expect(countContinuationDays(single, [single, other])).toBe(0);
   });
 });
 

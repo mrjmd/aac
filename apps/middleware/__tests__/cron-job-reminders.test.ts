@@ -135,6 +135,53 @@ describe('cron/job-reminders', () => {
     expect(message).toContain('Attack A Crack');
   });
 
+  it('skips continuation days of multi-day jobs entirely', async () => {
+    const contEvent = { ...sampleEvent, id: 'evt-cont', summary: 'John Smith [cont]' };
+    mockListEvents.mockResolvedValue([contEvent]);
+
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.summary.sent).toBe(0);
+    expect(body.summary.skipped).toBe(1);
+    expect(body.results[0].status).toBe('skipped_multiday_continuation');
+    expect(mockSearchPersonByName).not.toHaveBeenCalled();
+    expect(mockSendMessage).not.toHaveBeenCalled();
+  });
+
+  it("day one of a multi-day job announces the full booking in the reminder", async () => {
+    const day1 = sampleEvent;
+    const cont1 = { ...sampleEvent, id: 'evt-c1', summary: 'John Smith [cont]', start: '2026-04-06T08:00:00-04:00', end: '2026-04-06T12:00:00-04:00' };
+    const cont2 = { ...sampleEvent, id: 'evt-c2', summary: 'John Smith [cont]', start: '2026-04-07T08:00:00-04:00', end: '2026-04-07T12:00:00-04:00' };
+    mockListEvents
+      .mockResolvedValueOnce([day1]) // tomorrow's events
+      .mockResolvedValueOnce([day1, cont1, cont2]); // continuation lookup
+    mockSearchPersonByName.mockResolvedValue(samplePerson);
+    mockGetPerson.mockResolvedValue(samplePerson);
+
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockSendMessage).toHaveBeenCalledOnce();
+    const [, message] = mockSendMessage.mock.calls[0];
+    expect(message).toContain('multiple days');
+    expect(message).toContain('2 more days');
+  });
+
+  it('single-day reminder carries no multi-day note', async () => {
+    mockListEvents.mockResolvedValue([sampleEvent]);
+    mockSearchPersonByName.mockResolvedValue(samplePerson);
+    mockGetPerson.mockResolvedValue(samplePerson);
+
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    const [, message] = mockSendMessage.mock.calls[0];
+    expect(message).not.toContain('booked');
+    expect(message).toContain('tomorrow, Sunday, April 5. Please let me know');
+  });
+
   it('skips events with no matching Pipedrive person', async () => {
     mockListEvents.mockResolvedValue([sampleEvent]);
     mockSearchPersonByName.mockResolvedValue(null);

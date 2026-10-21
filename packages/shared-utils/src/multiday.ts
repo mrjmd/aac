@@ -116,3 +116,31 @@ export function findContinuation<T extends MultidayEvent>(
 export function hasContinuation(event: MultidayEvent, candidates: MultidayEvent[]): boolean {
   return findContinuation(event, candidates) !== null;
 }
+
+/**
+ * True when the title itself is marked as a continuation day —
+ * "Teddy Watler [cont]", "Ed Spooner (cont.)". Only a trailing marker
+ * that starts with "cont" counts; other markers ("[rush]") don't.
+ */
+export function isContinuationTitle(summary: string | undefined): boolean {
+  return /[[(]\s*cont[^\])]*[\])]\s*$/i.test((summary ?? '').trim());
+}
+
+/**
+ * Number of later same-job days that follow `event` — the rest of its
+ * multi-day chain. 0 for a single-day job. Walks findContinuation hop by
+ * hop, so `candidates` should cover the whole expected chain span.
+ */
+export function countContinuationDays(event: MultidayEvent, candidates: MultidayEvent[]): number {
+  const seen = new Set<string>([event.id]);
+  let current = event;
+  let count = 0;
+  while (count < 30) {
+    const next = findContinuation(current, candidates);
+    if (!next || seen.has(next.id)) break;
+    seen.add(next.id);
+    current = next;
+    count++;
+  }
+  return count;
+}

@@ -93,9 +93,14 @@ produce duplicate invoices. But Ed's/Kevin's invoices are single and dated
 **Audit its recent runs first** (`cron:runs` in Redis / logs) before touching
 it; the likely fix is "create only on the final day," using the same helper.
 
-## Explicitly out of scope
-- `job-reminders` keeps sending day-before reminders for continuation days —
-  those are helpful ("Mike will be at your home tomorrow"). A nicer
-  "we'll be back tomorrow to continue" template is a future polish item.
+## Reminder policy (revised 2026-10-21, Matt's call)
+A multi-day customer gets exactly TWO automated texts: one reminder before
+day one — which announces the full booking ("we also have you booked for N
+more days") — and one follow-up after the final day. Continuation days get
+no reminder of their own (`skipped_multiday_continuation` in job-reminders).
+The original "keep sending day-before reminders for continuation days" note
+below was written when those reminders were silently failing anyway (the
+`[cont]` title broke Pipedrive person matching, fixed same day); when the
+match fix would have un-broken them, Matt ruled daily reminders out.
 - No calendar-schema change (no extended properties). The title/location
   convention is the source of truth; the helper encodes it.

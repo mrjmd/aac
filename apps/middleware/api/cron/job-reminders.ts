@@ -18,6 +18,11 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
+import {
+  isContinuationTitle,
+  countContinuationDays,
+  CONTINUATION_WINDOW_DAYS,
+} from '@aac/shared-utils/multiday';
 import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { getCalendar, getPipedrive, getQuo } from '../../lib/clients.js';
 import { getEnv } from '../../lib/env.js';
@@ -36,8 +41,27 @@ interface ReminderResult {
   location: string;
   personName: string | null;
   phone: string | null;
-  status: 'sent' | 'skipped_dedup' | 'skipped_no_person' | 'skipped_no_phone' | 'error';
+  status:
+    | 'sent'
+    | 'skipped_dedup'
+    | 'skipped_no_person'
+    | 'skipped_no_phone'
+    | 'skipped_multiday_continuation'
+    | 'error';
   error?: string;
+}
+
+/**
+ * Reminder sentence for a multi-day job's day-one message. Empty for
+ * single-day jobs: the customer gets ONE reminder (before day one, telling
+ * them the full booking) and then nothing until the post-job follow-up.
+ */
+export function multiDayNote(extraDays: number): string {
+  if (extraDays <= 0) return '';
+  if (extraDays === 1) {
+    return ' This job will take more than one day — we also have you booked for the following day to continue the work.';
+  }
+  return ` This job will take multiple days — we also have you booked for ${extraDays} more days after that to continue the work.`;
 }
 
 /**
@@ -101,11 +125,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     log.info('Calendar events found', { count: events.length });
 
+    // Multi-day jobs get ONE reminder, before day one, which announces the
+    // full booking (note below). Continuation days ("NAME [cont]") get no
+    // reminder of their own. Chain lookup failure degrades to a plain
+    // single-day reminder rather than blocking.
+    let upcomingJobs: CalendarEvent[] = [];
+    if (events.some((e) => e.colorId === '10' && !isContinuationTitle(e.summary))) {
+      try {
+        upcomingJobs = await calendar.listEvents({
+          timeMin,
+          timeMax: new Date(
+            new Date(timeMax).getTime() + 3 * CONTINUATION_WINDOW_DAYS * 86_400_000
+          ).toISOString(),
+          attendeeEmails: env.google.technicianEmails,
+          colorIds: ['10'],
+        });
+      } catch (err) {
+        log.warn('Continuation lookup failed — multi-day note disabled this run', {
+          error: (err as Error).message,
+        });
+      }
+    }
+
     // Deduplicate by summary (customer name) — if multiple events for the
     // same person tomorrow, only remind once
     const seenNames = new Set<string>();
 
     for (const event of events) {
+      if (isContinuationTitle(event.summary)) {
+        log.info('Reminder skipped — continuation day of a multi-day job', {
+          eventId: event.id,
+          summary: event.summary,
+        });
+        results.push({
+          eventId: event.id,
+          summary: event.summary,
+          time: formatTime(event.start),
+          location: event.location || '',
+          personName: null,
+          phone: null,
+          status: 'skipped_multiday_continuation',
+        });
+        skipped++;
+        continue;
+      }
+
       const nameKey = event.summary.toLowerCase().trim();
       if (seenNames.has(nameKey)) {
         results.push({
@@ -122,7 +186,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       seenNames.add(nameKey);
 
-      const result = await processReminder(event, pipedrive, isDryRun, env);
+      const result = await processReminder(
+        event,
+        pipedrive,
+        isDryRun,
+        env,
+        multiDayNote(countContinuationDays(event, upcomingJobs))
+      );
       results.push(result);
 
       if (result.status === 'sent') sent++;
@@ -160,7 +230,8 @@ async function processReminder(
   event: CalendarEvent,
   pipedrive: ReturnType<typeof getPipedrive>,
   isDryRun: boolean,
-  env: ReturnType<typeof getEnv>
+  env: ReturnType<typeof getEnv>,
+  multiDayNoteText: string
 ): Promise<ReminderResult> {
   const baseResult = {
     eventId: event.id,
@@ -210,6 +281,7 @@ async function processReminder(
       firstName,
       time: formatTime(event.start),
       date: formatDate(event.start),
+      multiDayNote: multiDayNoteText,
     });
 
     if (isDryRun) {
