@@ -8,13 +8,20 @@ docs/plans/launchd-to-server-workers.md).
 ## What This Is
 
 Plain Vercel Serverless Functions (no framework) that run the
-`@aac/message-drafts` pipeline:
+`@aac/message-drafts` and `@aac/quote-drafter` pipelines:
 
 - `api/tick.ts` — per-minute cron: drains the webhook-fed fast queues
   (emailed-estimate LIST + intake-due ZSET).
 - `api/sweep.ts` — 10-minute cron: full backstop sweep.
 - `api/draft-followup.ts` — fast lane, POSTed by middleware's qb-webhook
   the moment a quote email goes out (`x-worker-secret`).
+- `api/quote-tick.ts` — per-minute cron: quote-trigger debounce →
+  classify (T1/T2/T3) → drafter (Pending QBO estimate + 🤖 Quo note).
+  Gated by `QUOTE_DRAFTER_MODE` env / `quote-drafter:mode` Redis override
+  (off | shadow | live). maxDuration 800 / memory 1024 — drafts are slow
+  (Gemini with photos) and the exemplar library is large.
+- `api/quote-draft.ts` — manual one-phone draft/dry-run (escape hatch +
+  validation probe).
 - `api/health.ts` — liveness.
 
 ## Rules

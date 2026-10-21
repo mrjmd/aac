@@ -274,6 +274,9 @@ importers:
       '@aac/message-drafts':
         specifier: workspace:*
         version: link:../../packages/message-drafts
+      '@aac/quote-drafter':
+        specifier: workspace:*
+        version: link:../../packages/quote-drafter
       '@aac/shared-utils':
         specifier: workspace:*
         version: link:../../packages/shared-utils
