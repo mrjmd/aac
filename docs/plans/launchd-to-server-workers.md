@@ -1,6 +1,6 @@
 # Plan: Retire the Laptop — launchd Jobs → Server-Side Workers
 
-**Date:** 2026-10-20 · **Updated:** 2026-10-21 · **Status:** ACTIVE (Matt re-affirmed 10/21)
+**Date:** 2026-10-20 · **Updated:** 2026-10-21 · **Status:** P0 + P1 SHIPPED 2026-10-21 (see Implementation notes); P2 (quote drafter) pending; P3 (triage) stays local
 **Driver:** Matt — "I don't like the idea of everything being dependent on
 this laptop running launchd. That's not sustainable." And 10/21: "When I send
 a quote in QuickBooks, the very next thing I do is switch back over to Quo
@@ -170,6 +170,37 @@ customers. Optional later: cloud cron builds snapshot.json to Blob so other
 workers/agents can consume it, laptop keeps only the render+open.
 
 **Endgame:** launchd runs nothing but the triage browser-open (or nothing).
+
+## Implementation notes (P1 as shipped, 2026-10-21)
+
+**Deviation from the proposal: no QStash.** Same latency targets, zero new
+external services/secrets/consoles, using infrastructure we already run:
+
+- **Fast lane** = middleware → worker direct HTTPS (`x-worker-secret`).
+  The worker's `draft-followup` acks **202 in milliseconds** and drafts
+  via `waitUntil`, so the qb-webhook only pays one round-trip.
+- **Intake 10-min window** = Redis ZSET delay queue
+  (`message-drafts:intake-due`, ZADD NX on first inbound text/unanswered
+  call) drained by the worker's **per-minute cron tick** — window fires at
+  10–11 min instead of QStash-exact 10:00. Burst texts don't reset it.
+- **Retries** = the Redis LIST/ZSET queues + the 10-min sweep cron + the
+  laptop backstop, all re-validating through shared Redis HSETNX claims
+  (`message-drafts:followup-done` / `intake-done`) — nothing double-posts,
+  nothing is lost if any single actor dies.
+- **Ack-fast dispatch** = `defer()`/`waitUntil` inside the Quo webhook
+  (maxDuration 300) rather than a cross-app move — the dispatch logic
+  stays in middleware lib, zero relocation risk.
+
+Pieces: `packages/message-drafts` (all logic, exemplars bundled as code),
+`apps/worker` (Vercel project `aac-worker-monorepo`: tick */1, sweep
+*/10, draft-followup, health; CRON_SECRET + WORKER_SHARED_SECRET), the
+laptop runner is now a thin backstop over the same package + Redis state
+(state.json migrated). Verified live: tick heartbeat, sync fast-lane call
+(noop on done estimate), manual sweep.
+
+**Parallel run:** laptop launchd stays loaded as backstop. After ~a week
+of the worker drafting everything first (laptop records shows only claims
+lost to the worker), unload `com.aac.message-drafts`.
 
 ## Gotchas (from memory, so we don't re-learn them)
 

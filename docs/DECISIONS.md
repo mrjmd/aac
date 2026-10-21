@@ -6,6 +6,30 @@ When a decision gets reversed, ADD a new entry with the reversal — don't delet
 
 ---
 
+## 2026-10-21 — Message-drafts execution moves to the cloud WITHOUT QStash (direct invoke + Redis delay queue + waitUntil)
+
+**Decision:** The launchd → server-workers P1 migration shipped with three mechanisms instead of the originally proposed Upstash QStash:
+1. **Fast lane:** middleware webhooks POST directly to `apps/worker` (`x-worker-secret`); the worker acks 202 in milliseconds and finishes via `waitUntil`.
+2. **Delayed work (intake 10-min preemption window):** Redis ZSET (`message-drafts:intake-due`, ZADD NX) drained by the worker's per-minute Vercel cron tick.
+3. **Ack-fast for heavy webhook work (scheduling dispatch):** `defer()`/`waitUntil` inside the Quo webhook itself — respond first, classify after.
+
+Correctness under concurrency (worker push + tick + sweep + laptop backstop) comes from shared Redis HSETNX claims in `@aac/message-drafts`, not from delivery guarantees of a queue product.
+
+**Why:**
+- QStash would add a second external control plane (console, tokens, signing keys, SSO/401 gotchas) for capabilities we already get from infrastructure in production: Upstash Redis + Vercel crons + `waitUntil`.
+- Latency targets are met either way: emailed-event → note is bounded by QBO's own email dispatch (~40s observed), and the direct-invoke lane adds ~1s on top. The intake window fires at 10–11 min vs QStash-exact 10:00 — the window is a minimum, so this is immaterial.
+- Retries/at-least-once: the Redis queues never lose work (LPUSH before notify), and the 10-min sweep + laptop backstop re-drain anything a crashed actor left behind (stale `pending:` claims are reclaimable after 15 min).
+- Standing principle (memory: no unnecessary frameworks): plain functions + what we already run beats adding a managed queue for one delay param.
+
+**Alternatives considered:**
+- **QStash (as planned 2026-10-20).** Rejected for now — new secrets + console + webhook-verification surface for marginal gain. Revisit if we need true scheduled fan-out (e.g., per-customer drip cadences) where a ZSET-drain pattern gets hairy.
+- **Inline drafting in the qb-webhook via waitUntil (no worker app).** Rejected — pulls Gemini drafting and its dependency surface into the sacrosanct middleware; the worker app keeps middleware thin.
+- **Vercel queues.** Still beta/limited at decision time; same new-surface objection.
+
+**How to apply:**
+- New out-of-band work follows the same pattern: webhook writes a Redis queue entry (source of truth), optionally pings the worker fast lane, worker cron drains as backstop, HSETNX claim before side effects.
+- P2 (quote drafter) should reuse exactly this shape; its settle window is another ZSET score.
+
 ## 2026-05-29 — SchedulingDirective carries the full DurationPrediction, not just the hours number
 
 **Decision:** `BaseDirective` exposes two duration fields:
