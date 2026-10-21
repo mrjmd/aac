@@ -14,7 +14,11 @@
  * `normalizeQbApproval` the webhook uses — with `source: 'qb_reconciliation'`
  * for traceability.
  *
- * Schedule: daily ~9am ET (after deal-reconcile).
+ * Schedule: every 30 min (was daily ~9am ET; tightened 2026-10-21 after
+ * the John Skinner approval — Intuit fired NO webhook for the estimate
+ * acceptance even though delivery was verified healthy minutes later, so
+ * this backstop is the only guaranteed path for approvals and a daily
+ * cadence left an accepted quote invisible for up to 24h).
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';

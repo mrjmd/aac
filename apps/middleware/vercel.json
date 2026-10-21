@@ -34,7 +34,7 @@
     },
     {
       "path": "/api/cron/qb-reconcile",
-      "schedule": "0 15 * * *"
+      "schedule": "*/30 * * * *"
     }
   ]
 }
