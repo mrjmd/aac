@@ -109,6 +109,16 @@ export interface EnvConfig {
     url: string;
     token: string;
   };
+  worker: {
+    /**
+     * Base URL + shared secret of apps/worker (launchd → server-workers
+     * P1). When set, webhooks hand time-sensitive work (follow-up drafts)
+     * to the worker's fast lane; when null, the Redis queues alone carry
+     * it and the worker/laptop tick picks it up within ~60s.
+     */
+    baseUrl: string | null;
+    sharedSecret: string | null;
+  };
   nodeEnv: 'development' | 'production';
 }
 
@@ -184,6 +194,10 @@ export function getEnv(): EnvConfig {
     redis: {
       url: requireEnv('UPSTASH_REDIS_REST_URL'),
       token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
+    },
+    worker: {
+      baseUrl: process.env.WORKER_BASE_URL || null,
+      sharedSecret: process.env.WORKER_SHARED_SECRET || null,
     },
     nodeEnv: (process.env.NODE_ENV as 'development' | 'production') || 'development',
   };

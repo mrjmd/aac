@@ -28,7 +28,9 @@ import {
   trackWebhookProcessed,
   logHealthError,
   enqueueQuoteTrigger,
+  scheduleIntakeDraft,
 } from '../../lib/redis.js';
+import { defer } from '../../lib/defer.js';
 import { getEnv } from '../../lib/env.js';
 import { getCalendar, getDrive, getGmail, getPipedrive, getGemini, getQuickBooks, getQuo } from '../../lib/clients.js';
 import { ensureInboundLeadDeal } from '../../lib/inbound-deal.js';
@@ -379,6 +381,21 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     // ============================================
+    // FIRST-TOUCH INTAKE SCHEDULING (message-drafts)
+    // Start the 10-min preemption window (INTAKE_REPLY_WINDOW_MIN in
+    // @aac/message-drafts) the moment a first inbound lands — the worker
+    // tick drains it exactly on time instead of a sweep finding it up to
+    // 10 min late. ZADD NX: burst texts don't reset the window. The
+    // worker re-validates everything (Matt replied, spam, internal, …).
+    // ============================================
+    if (
+      event.type === 'message.received' ||
+      (event.type === 'call.completed' && eventData.direction === 'incoming' && !(eventData.duration ?? 0) && !eventData.answeredAt)
+    ) {
+      await scheduleIntakeDraft(e164Phone, Date.now() + 10 * 60_000);
+    }
+
+    // ============================================
     // FIND OR CREATE PIPEDRIVE PERSON
     // ============================================
     const pd = getPipedrive();
@@ -598,49 +615,53 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     // ============================================
-    // SCHEDULING-INTENT CLASSIFICATION
+    // SCHEDULING-INTENT CLASSIFICATION (deferred — ack-fast)
     // ============================================
     // Dispatch helper runs the classifier (one or two calls depending on
     // event type), resolves callback parent via calendar when needed, calls
     // the right normalizer, and writes any resulting directives to the
-    // shadow queue. Failures inside the helper are logged + counted but
-    // never propagate — middleware stays alive.
+    // shadow queue. It can take 10s+ (Gemini + Calendar), which is how the
+    // 2026-10-19 timeout → webhook auto-disable incident happened — so it
+    // now runs AFTER the response via defer(); the ack never waits on it.
+    // Failures are logged + surfaced to /api/health, never propagate.
     const dispatchCtx = buildDispatchContext(event, eventData, e164Phone, pipedrivePersonId);
     if (dispatchCtx) {
-      try {
-        const summary = await dispatchSchedulingIntent(
-          {
-            pd,
-            cal: getCalendar(),
-            gemini: getGemini(),
-            quo: getQuo(),
-            qb: getQuickBooks(),
-            stub: {
-              enabled: env.scheduling.stubEventsEnabled,
-              technicianEmails: env.scheduling.stubAttendeeEmails,
-              drive: getDrive(),
-              gmail: getGmail(),
-              fetchFieldCompletion: readFieldCompletion,
+      defer((async () => {
+        try {
+          const summary = await dispatchSchedulingIntent(
+            {
+              pd,
+              cal: getCalendar(),
+              gemini: getGemini(),
+              quo: getQuo(),
+              qb: getQuickBooks(),
+              stub: {
+                enabled: env.scheduling.stubEventsEnabled,
+                technicianEmails: env.scheduling.stubAttendeeEmails,
+                drive: getDrive(),
+                gmail: getGmail(),
+                fetchFieldCompletion: readFieldCompletion,
+              },
+              holds: {
+                enabled: env.scheduling.holdEventsEnabled,
+              },
+              postSuggestionNote: maybePostSuggestionNote,
             },
-            holds: {
-              enabled: env.scheduling.holdEventsEnabled,
-            },
-            postSuggestionNote: maybePostSuggestionNote,
-          },
-          dispatchCtx,
-        );
-        log.info('Scheduling dispatch complete', {
-          eventId: event.id,
-          eventType: event.type,
-          summary,
-        });
-      } catch (error) {
-        log.error('Scheduling dispatch threw', error as Error, { eventId: event.id });
-        await logHealthError('quo', `Scheduling dispatch threw: ${(error as Error).message.substring(0, 200)}`, {
-          eventId: event.id,
-          eventType: event.type,
-        });
-      }
+            dispatchCtx,
+          );
+          log.info('Scheduling dispatch complete', {
+            eventId: event.id,
+            eventType: event.type,
+            summary,
+          });
+        } catch (error) {
+          log.error('Scheduling dispatch threw', error as Error, { eventId: event.id });
+          await logHealthError('quo', `Scheduling dispatch threw: ${(error as Error).message.substring(0, 200)}`, {
+            eventId: event.id,
+            eventType: event.type,
+          });
+        }
+      })());
     }
 
     await trackWebhookProcessed('quo');

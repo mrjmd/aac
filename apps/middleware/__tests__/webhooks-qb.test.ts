@@ -19,6 +19,10 @@ vi.mock('../lib/env.js', () => ({
   })),
 }));
 
+vi.mock('../lib/worker-notify.js', () => ({
+  notifyWorkerFollowup: vi.fn().mockResolvedValue(undefined),
+}));
+
 const mockQb = {
   getEstimate: vi.fn(),
   getCustomer: vi.fn().mockResolvedValue({
@@ -37,6 +41,7 @@ vi.mock('../lib/clients.js', () => ({
 }));
 
 import { POST, verifyIntuitSignature } from '../api/qb-webhook.js';
+import { notifyWorkerFollowup } from '../lib/worker-notify.js';
 import {
   enqueueEmailedEstimate,
   getDirectiveIdByEstimate,
@@ -300,6 +305,22 @@ describe('message-drafts fast-path enqueue', () => {
     const res = await POST(makeRequest([makeEvent({ type: 'qbo.estimate.emailed.v1' })]));
     expect(res.status).toBe(200);
     expect(enqueueEmailedEstimate).toHaveBeenCalledWith('est-1234');
+  });
+
+  it('hands the emailed estimate to the worker fast lane alongside the queue', async () => {
+    mockQb.getEstimate.mockResolvedValue(
+      makeAcceptedEstimate({ TxnStatus: 'Pending', EmailStatus: 'EmailSent' }),
+    );
+    await POST(makeRequest([makeEvent({ type: 'qbo.estimate.emailed.v1' })]));
+    expect(notifyWorkerFollowup).toHaveBeenCalledWith('est-1234');
+  });
+
+  it('does not ping the worker when nothing was enqueued', async () => {
+    mockQb.getEstimate.mockResolvedValue(
+      makeAcceptedEstimate({ TxnStatus: 'Pending', EmailStatus: 'NotSet' }),
+    );
+    await POST(makeRequest([makeEvent()]));
+    expect(notifyWorkerFollowup).not.toHaveBeenCalled();
   });
 
   it('trusts the emailed event even when the fetch races the EmailStatus write', async () => {

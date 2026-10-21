@@ -59,7 +59,7 @@ describe('auth', () => {
   });
 
   it('draft-followup requires the middleware shared secret', async () => {
-    expect((await draftFollowup(req({ 'x-worker-secret': 'worker-secret' }, { estimateId: '2828' }))).status).toBe(200);
+    expect((await draftFollowup(req({ 'x-worker-secret': 'worker-secret' }, { estimateId: '2828' }))).status).toBe(202);
     expect((await draftFollowup(req({ 'x-worker-secret': 'nope' }, { estimateId: '2828' }))).status).toBe(401);
   });
 });
@@ -78,9 +78,16 @@ describe('behavior', () => {
     expect(mockState.setFirstRunAt).not.toHaveBeenCalled();
   });
 
-  it('draft-followup processes the posted estimate and reports the outcome', async () => {
+  it('draft-followup acks 202 immediately and still runs the draft', async () => {
     const res = await draftFollowup(req({ 'x-worker-secret': 'worker-secret' }, { estimateId: '2828' }));
-    expect(mockDrain.processFollowupById).toHaveBeenCalledWith(expect.anything(), '2828');
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ status: 'accepted', estimateId: '2828' });
+    await vi.waitFor(() => expect(mockDrain.processFollowupById).toHaveBeenCalledWith(expect.anything(), '2828'));
+  });
+
+  it('draft-followup sync mode waits and reports the outcome', async () => {
+    const res = await draftFollowup(req({ 'x-worker-secret': 'worker-secret' }, { estimateId: '2828', sync: true }));
+    expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ status: 'ok', outcome: 'drafted' });
   });
 

@@ -255,6 +255,22 @@ export async function enqueueEmailedEstimate(estimateId: string): Promise<void> 
   }
 }
 
+/**
+ * First-touch intake delay queue: ZADD NX so the FIRST inbound from a
+ * number starts the 10-minute preemption window and later texts in the
+ * same burst don't reset it. The worker's per-minute tick drains members
+ * whose window elapsed and re-validates everything (did Matt reply, is
+ * it spam, …). Never throws — intake drafting is best-effort.
+ */
+export async function scheduleIntakeDraft(phone: string, dueMs: number): Promise<void> {
+  try {
+    const redis = getRedis();
+    await redis.zadd(keys.messageDraftIntakeDue, { nx: true }, { score: dueMs, member: phone });
+  } catch (err) {
+    log.warn('intake-draft schedule failed', { error: (err as Error).message });
+  }
+}
+
 export async function trackWebhookProcessed(
   source: 'pipedrive' | 'quo' | 'google-ads' | 'qb'
 ): Promise<void> {

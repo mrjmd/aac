@@ -40,6 +40,7 @@ import {
   enqueueEmailedEstimate,
 } from '../lib/redis.js';
 import { maybePostSuggestionNote } from '../lib/suggestion-note.js';
+import { notifyWorkerFollowup } from '../lib/worker-notify.js';
 
 const log = createLogger('qb-webhook');
 
@@ -220,6 +221,10 @@ async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
       (op === 'emailed' || estimate.EmailStatus === 'EmailSent')
     ) {
       await enqueueEmailedEstimate(evt.intuitentityid);
+      // Fast lane: the worker acks 202 in ms and drafts out-of-band, so
+      // the note lands seconds after the send instead of on the next
+      // tick. Fails soft — the queue above is the source of truth.
+      await notifyWorkerFollowup(evt.intuitentityid);
       log.info('Queued emailed estimate for follow-up draft', {
         estimateId: evt.intuitentityid,
         docNumber: estimate.DocNumber,
