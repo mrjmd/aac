@@ -6,6 +6,16 @@ When a decision gets reversed, ADD a new entry with the reversal — don't delet
 
 ---
 
+## 2026-11-02 — Edward decision moves to spring 2027; books caveat dropped; categorization becomes an item type
+
+**Decision:** (1) The Edward keep/cut decision moves from end of November 2026 to spring 2027, made from the command center Marketing page's channel row. This reverses the timing in the 2026-05-27 entry below. (2) Dollar figures in the command center do NOT carry a "books trustworthy as of" warning; Matt says the 2026 books are close to fixed. (3) Transactions needing manual categorization become "Needs you" items with a "make this a rule" action, separate from the confirm-lane batch of obvious categorizations. (4) The stale-quote follow-up runner goes live next.
+
+**Why:** Matt's answers to the plans-inventory questions (`docs/plans/command-center/plans-inventory.md` §5). A November decision would come before the command center can show the channel row; spring gives a full winter of data.
+
+**Alternatives considered:** keep end of November with a hand-built readout (rejected by Matt); watermark every \$ figure until the books fix lands (rejected, books are close).
+
+---
+
 ## 2026-10-21 — Message-drafts execution moves to the cloud WITHOUT QStash (direct invoke + Redis delay queue + waitUntil)
 
 **Decision:** The launchd → server-workers P1 migration shipped with three mechanisms instead of the originally proposed Upstash QStash:
@@ -395,6 +405,21 @@ Hono was considered briefly but its value (routing, middleware chains, validatio
 - Standing rules per-user keyed by phone (`agent:rules:{phoneE164}`).
 - Audit log = Redis stream, every Q&A captured (caller identity + question + tool calls + response).
 - Customer-facing automation must remain tonally indistinguishable from human-authored automated messages. No "I'm an AI" framing, no freeform conversational tone.
+
+---
+
+## 2026-11-03 — Command center auth: Google sign-in + Redis sessions + email allowlist
+
+**Decision:** The command center signs in with Google (identity scopes only), checks the email against `CC_ALLOWED_EMAILS`, and keeps an opaque session ID in an HttpOnly cookie with the payload in Redis (`keys.ccSession`). The Edge middleware does a real Redis lookup on every request (pages redirect to /login, API routes get 401). The Google calls live in `GoogleSignInClient` (`@aac/api-clients/google-signin`). Closes audit P0-5 (the old gate checked cookie presence only; any cookie read financials).
+
+**Why:** The command center is about to hold financials, compliance documents and owner hours, and Matt wants it on his phone. Who logs in stays a config change (add Ed's email later) instead of a code change.
+
+**Alternatives considered:**
+- Fix the shared-password HMAC cookie — rejected: one password for everyone, no per-person revocation, and the same lib is copied byte-for-byte into marketing.
+- Copy field's `lib/google-oauth.ts` — rejected: it calls Google with inline `fetch` in the app (cardinal rule 2) and would be a third copy.
+- Presence-only cookie check in middleware like field — rejected: Upstash Redis is fetch-based and runs on the Edge, so the gate can do the real check.
+
+**How to apply:** New owner-facing apps use `GoogleSignInClient` plus this session pattern. Follow-ups: migrate `apps/field` and `apps/marketing` onto `GoogleSignInClient` (field keeps its offline Drive/Calendar scopes via `offline: true`); then extract the session helpers into a shared package if a third app needs them. Each deployed origin must be added as an authorized redirect URI (`<origin>/auth/google/callback`) on the web OAuth client.
 
 ---
 

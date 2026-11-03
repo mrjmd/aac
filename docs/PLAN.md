@@ -1,6 +1,6 @@
 # AAC Plan — Current State and Roadmap
 
-**Last updated:** 2026-10-18 (full rewrite — the 2026-05-30 version predated the triage dashboard, the quoting go-live, and the scheduling queue closeout; see git history for the old text)
+**Last updated:** 2026-10-27 (added internal-number skip list to deferred; last full rewrite 2026-10-18 — the 2026-05-30 version predated the triage dashboard, the quoting go-live, and the scheduling queue closeout; see git history for the old text)
 **Supersedes:** `_archive/2026-05-27/MASTER-PLAN.md` and `_archive/2026-05-27/middleware-phase-2.5-deal-spine.md`
 **Entry point for:** anyone (Matt, future Claude sessions) trying to understand "what are we doing and why" without re-deriving from scratch.
 
@@ -19,8 +19,9 @@ When this doc gets long, the answer is more project specs, not more sections her
 AAC is a foundation repair business in Massachusetts (~26 months old). The
 binding constraint is demand: calendar books 1–2 weeks out, needs 2–3. Close
 rate ~60% (above industry). No debt. Edward (outside salesperson, hired Dec
-2025) faces a final keep/cut decision at **end of November 2026** — attribution
-instrumentation has been live since March. Matt is the sole technician-manager +
+2025) faces a final keep/cut decision in **spring 2027** (moved from end of
+November 2026 by Matt on 2026-11-02) — attribution instrumentation has been
+live since March. Matt is the sole technician-manager +
 sole developer; Mike is the field tech. The operational frame remains
 **maximally automate Matt's day-to-day so demand-gen work has room to
 compound** — and as of October 2026 that automation has substantially landed:
@@ -63,12 +64,20 @@ Spec: `projects/triage-dashboard.md`.
 
 ## Near-term sequence (October–December 2026)
 
+0. **Stale-quote follow-up goes live — NEXT (Matt, 2026-11-02).** Phase 1 was
+   built 10/21 (`tools/src/stale-quotes/run.ts`, plan in
+   `analysis/02-strategy/stale-quote-followup-plan-2026-10.md`) but never ran
+   live: no output since 10/21, the code is uncommitted, and the worker never
+   calls it. About 88 open quotes (~\$250k) are untouched. Get it running,
+   then give it a "last live run" health check so a silent stall shows up.
 1. **Quoting flywheel: observe, don't build.** Watch the trigger log + edit
    labels; fold owner corrections into the next Section V re-distill; make the
    auto-send call when the simple-injection gate shows sustained precision.
-2. **Edward attribution readout — early November.** The keep/cut decision is
-   end of November; build the forensic readout (channel-attributed revenue vs
-   fully-loaded cost) so the decision is made from a document. The realtor
+2. **Edward attribution readout — before the spring 2027 decision.** The
+   keep/cut decision moved from end of November to spring 2027 (Matt,
+   2026-11-02); build the forensic readout (channel-attributed revenue vs
+   fully-loaded cost) so the decision is made from a document. It lands as
+   the Ed channel row on the command center's Marketing page. The realtor
    outreach program (`analysis/02-strategy/realtor-outreach-plan-2026-09.md`)
    is an amplifier on this channel and hangs on the same decision.
 3. **Message automation — ACTIVE (Matt's go 2026-10-18, straight to draft
@@ -101,6 +110,22 @@ Spec: `projects/triage-dashboard.md`.
    restructure → capture-gap mop-up → triage System-health section.
    Signal-not-noise contract: P1 texts only for broken business pipes,
    fingerprint-deduped, with recovery notices.
+5a. **Command center round 3 (Matt, 2026-11-03).** Own to-dos (quick add,
+   job anchors, backward lead times, first-time-job prep checklists), cards
+   he can add, the commissions + Ed view, and an "agreement" item class
+   (first case: Mike's truck repayment). Stopgap now: to-do CLI + a "Your
+   list" section on triage.html over the existing Redis store. Plan:
+   `docs/plans/command-center/round-3-todos-cards-ed.md`. Pinned: hand-review
+   a sample of funnel drop-offs for "declined, never closed out" (§5).
+5b. **Command center Phase 1 build — STARTED 2026-11-03.** Plan:
+   `docs/plans/command-center/README.md` §9 (data-reality decisions in §14).
+   Step 1 auth fix done in code (Google sign-in + Redis sessions, audit P0-5,
+   see DECISIONS 2026-11-03); deploy waits on the domain + OAuth client.
+5c. **Booking → QBO acceptance sync + stub/HOLD name-match bug (planned,
+   not green-lit).** Booked customers whose estimates stay Pending get
+   silently skipped by invoice-create (#1577, #1580 on 11/03). Plan:
+   `docs/plans/booking-acceptance-sync.md`. Until it ships, command-center
+   quote views treat "booked on the calendar" as closed.
 6. **Security: audit long tail.** P4-1 QB OAuth lock closed 2026-10-16
    (single-flight `refreshLock` wired into all QB consumers). Remaining are
    smaller: P4-5 QB pagination, P4-6 429/timeout handling.
@@ -143,11 +168,12 @@ already handled (`/api/qb-webhook` is CloudEvents-only).
 | **Agent layers 5–6** (conversational agent, customer/partner intake) | Matt, 2026-10-18: "come much later." Message-pattern automation is the near-term slice. |
 | **FHP back-end** (recurring billing, winter clustering) | Cat 3. Front-end pitch exists; back-end after marketing automation. |
 | **Funnel B (neighborhood blitz) / C (cold email) / D (lead magnet)** | Cat 3, held. Marketing automation (social) outranks all three. |
-| **Funnel F (partner portal)** | Only useful if Edward's bet is renewed in November. |
+| **Funnel F (partner portal)** | Only useful if Edward's bet is renewed in spring 2027. |
 | **Paid marketing rebuild** | 2026 spend cut ~80%; revisit after the Edward decision + social automation. |
 | **Virtual receptionist** | Brand value: humans answer. |
 | **2nd technician hire** | Planned Mar 1 2027, gated on winter 1.5× multiplier + \$60–70k vaulted (see `analysis/02-strategy/tech2-hiring-plan-2026-08.md`). |
 | **PD API v1→v2 migration** | No announced removal date; queued. |
+| **Internal-number skip list in the Quo webhook** | Needed: Matt↔Ed texts (Ed's cell +13392175091) flow through PD person sync, AI entity extraction, and scheduling dispatch as if Ed were a customer — on 2026-10-27 this minted a stub for the wrong person and had built a franken PD contact ("Mike Wohl") over months. Design the skip set (Ed's cell, technician cells, agent line +16177660151) and which pipeline stages it gates (activity logging? extraction? scheduling?) before implementing — middleware is sacrosanct. Contact cleanup itself was done 2026-10-27. |
 
 ---
 
