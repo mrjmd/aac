@@ -1,0 +1,5 @@
+{
+  "extends": "../packages/tsconfig/base.json",
+  "compilerOptions": { "noEmit": true, "allowImportingTsExtensions": true, "declaration": false, "declarationMap": false, "module": "ESNext", "moduleResolution": "bundler", "target": "ES2022", "lib": ["ES2023", "DOM"], "rootDir": "..", "typeRoots": ["../apps/field/node_modules/@types"], "types": ["node"] },
+  "include": ["src/triage/*.ts"]
+}

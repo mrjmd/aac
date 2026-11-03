@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import type { TodoItem } from '@aac/shared-utils/types';
 import type { Finding, FindingsFile, Section } from './analyze.ts';
 
 const ET = 'America/New_York';
@@ -79,6 +80,169 @@ ${r.total ? `<span class="amt">$${Number(r.total).toLocaleString()}</span>` : ''
 <h2><span class="pill pill-${created > 0 ? 'yellow' : 'green'}">${rows.length}</span> Bot quote drafts (7d)</h2>
 <p class="blurb">Event-triggered drafts: T1 photos · T2 Mike debrief · T3 quote promised. Edit a draft in QBO and it becomes yours forever; deletes and edits feed training.</p>
 ${cards || '<p class="empty">✓ No trigger activity this week.</p>'}
+</section>`;
+}
+
+/**
+ * Quote follow-ups section (stale-quote funnel Phase 1): reads the draft
+ * queue written by tools/src/stale-quotes/run.ts. Empty-safe when absent.
+ * Shows drafts to send today, drafts queued earlier but never sent, and
+ * action flags (booked→flip, recommend-close, capacity-hold, needs-call).
+ */
+function quoteFollowupsSection(): string {
+  const queuePath = 'analysis/data/stale-quotes/draft-queue.json';
+  if (!fs.existsSync(queuePath)) return '';
+  interface FupDraft { doc: string; customer: string; phone: string; amount: number; ageDays: number; tier: string; variant: string; draft: string; whyNow: string; queuedAt: string }
+  interface FupQueue {
+    generatedAt: string;
+    bookingHorizon: string;
+    toSend: FupDraft[];
+    waiting: FupDraft[];
+    flags: Array<{ kind: string; doc: string; customer: string; amount: number; detail: string }>;
+  }
+  let q: FupQueue;
+  try {
+    q = JSON.parse(fs.readFileSync(queuePath, 'utf8')) as FupQueue;
+  } catch {
+    return '';
+  }
+  const ageDaysQueue = Math.floor((Date.now() - new Date(q.generatedAt).getTime()) / 86_400_000);
+  const stale = ageDaysQueue > 3;
+  const draftCard = (d: FupDraft, waiting: boolean): string => `<div class="card ${waiting ? 'sev-yellow' : ''}" data-fid="fup-${esc(d.doc)}-${esc(d.queuedAt)}">
+<div class="card-head"><input type="checkbox" class="chk" title="Mark sent (visual only — next run re-verifies from the thread)"><strong>#${esc(d.doc)} ${esc(d.customer)}</strong> ${telLink(d.phone)}<span class="amt">${usd(d.amount)}</span><span class="meta">${esc(d.tier)} · ${d.ageDays}d old${waiting ? ` · queued ${esc(d.queuedAt.slice(0, 10))}, NOT YET SENT` : ''}</span><span class="src">${esc(d.variant)}</span></div>
+<blockquote>${esc(d.draft)}</blockquote>
+<p class="detail">${esc(d.whyNow)}</p>
+</div>`;
+  const flagCard = (f: FupQueue['flags'][number]): string => `<div class="card ${f.kind === 'flip-accepted' || f.kind === 'recommend-close' ? 'sev-yellow' : 'sev-info'}" data-fid="fupflag-${esc(f.kind)}-${esc(f.doc)}">
+<div class="card-head"><input type="checkbox" class="chk"><strong>[${esc(f.kind)}] #${esc(f.doc)} ${esc(f.customer)}</strong><span class="amt">${usd(f.amount)}</span></div>
+<p class="detail">${esc(f.detail)}</p>
+</div>`;
+  const actionFlags = q.flags.filter((f) => f.kind !== 'capacity-hold');
+  const held = q.flags.filter((f) => f.kind === 'capacity-hold');
+  const heldTotal = held.reduce((s, f) => s + f.amount, 0);
+  const n = q.toSend.length + q.waiting.length;
+  return `<section>
+<h2><span class="pill pill-${n > 0 ? 'yellow' : 'green'}">${n}</span> Quote follow-ups to send</h2>
+<p class="blurb">Stale-quote funnel drafts — copy/paste into Quo (also posted as contact notes). ${esc(q.bookingHorizon)}. Queue generated ${esc(q.generatedAt.slice(0, 10))}${stale ? ' — STALE, re-run tools/src/stale-quotes/run.ts' : ''}.</p>
+${q.toSend.map((d) => draftCard(d, false)).join('\n') || ''}
+${q.waiting.map((d) => draftCard(d, true)).join('\n') || ''}
+${n === 0 ? '<p class="empty">✓ Nothing to send.</p>' : ''}
+${actionFlags.length ? `<h2 style="font-size:14px;border:none;margin-top:18px">Funnel flags</h2>\n${actionFlags.map(flagCard).join('\n')}` : ''}
+${held.length ? `<p class="detail" style="margin-top:14px">Capacity-hold (large resurfacing, until tech #2): ${held.map((f) => `#${esc(f.doc)} ${esc(f.customer)} ${usd(f.amount)}`).join(' · ')} — ${usd(heldTotal)} parked.</p>` : ''}
+</section>`;
+}
+
+/**
+ * Pending quotes where the CUSTOMER spoke last and never got an answer — the
+ * follow-up bot stays out of these by design, which makes this the hottest
+ * human to-do list in the funnel. Reads awaiting-human.json, refreshed by
+ * every full scan of tools/src/stale-quotes/run.ts (dry or live). Empty-safe.
+ */
+function awaitingHumanSection(booked: NonNullable<FindingsFile['booked']>): string {
+  const awaitingPath = 'analysis/data/stale-quotes/awaiting-human.json';
+  if (!fs.existsSync(awaitingPath)) return '';
+  interface AwaitingEntry { doc: string; customer: string; phone: string; amount: number; channel: string; lastInboundAt: string; daysWaiting: number; snippet: string }
+  let data: { generatedAt: string; entries: AwaitingEntry[] };
+  try {
+    data = JSON.parse(fs.readFileSync(awaitingPath, 'utf8')) as typeof data;
+  } catch {
+    return '';
+  }
+  if (!Array.isArray(data.entries)) return '';
+  // Same booked-customer cross-reference analyze.ts applies to findings: a
+  // customer with an upcoming green job booked on/after (their last inbound
+  // − 7d) is closed business, not a quote waiting on a reply.
+  const allEntries = data.entries;
+  const bookedFor = (a: AwaitingEntry): NonNullable<FindingsFile['booked']>[number] | undefined =>
+    booked.find(
+      (b) =>
+        b.phones.includes(a.phone) &&
+        (!b.createdAt || new Date(b.createdAt).getTime() >= new Date(a.lastInboundAt).getTime() - 7 * 86_400_000),
+    );
+  const hiddenBooked = allEntries.filter((a) => bookedFor(a));
+  data.entries = allEntries.filter((a) => !bookedFor(a));
+  const ageDays = Math.floor((Date.now() - new Date(data.generatedAt).getTime()) / 86_400_000);
+  const stale = ageDays > 3;
+  const total = data.entries.reduce((s, a) => s + a.amount, 0);
+  const cards = data.entries
+    .map(
+      (a) => `<div class="card ${a.daysWaiting >= 14 ? 'sev-red' : 'sev-yellow'}" data-fid="fupwait-${esc(a.doc)}-${esc(a.lastInboundAt)}">
+<div class="card-head"><input type="checkbox" class="chk" title="Mark handled (visual only — next scan re-verifies from the thread)"><strong>#${esc(a.doc)} ${esc(a.customer)}</strong> ${telLink(a.phone)}<span class="amt">${usd(a.amount)}</span><span class="meta">waiting ${a.daysWaiting}d (since ${esc(a.lastInboundAt)}) · via ${esc(a.channel)}</span></div>
+${a.snippet ? `<blockquote>${esc(a.snippet)}</blockquote>` : ''}
+</div>`,
+    )
+    .join('\n');
+  return `<section>
+<h2><span class="pill pill-${data.entries.length > 0 ? 'red' : 'green'}">${data.entries.length}</span> Quotes awaiting YOUR reply</h2>
+<p class="blurb">Open quotes where the customer's last message went unanswered — the follow-up bot won't touch these until you respond. ${usd(total)} on the table. Scanned ${esc(data.generatedAt.slice(0, 10))}${stale ? ' — STALE, re-run tools/src/stale-quotes/run.ts' : ''}.${
+    hiddenBooked.length > 0
+      ? ` Hidden as already booked: ${hiddenBooked.map((a) => `#${esc(a.doc)} ${esc(a.customer)} (${esc(bookedFor(a)?.event ?? '')})`).join(', ')}.`
+      : ''
+  }</p>
+${cards || '<p class="empty">✓ Every customer has been answered.</p>'}
+</section>`;
+}
+
+/**
+ * Matt's own to-dos (Redis todo store, mirrored into snapshot.json by
+ * collect.ts and by tools/src/todos/cli.ts after every change). Pending
+ * items by due date; overdue red, due within 3 days yellow. Empty-safe.
+ */
+function yourListSection(): string {
+  const snapPath = 'analysis/data/triage/snapshot.json';
+  if (!fs.existsSync(snapPath)) return '';
+  let todos: TodoItem[];
+  try {
+    todos = ((JSON.parse(fs.readFileSync(snapPath, 'utf8')) as { todos?: TodoItem[] }).todos ?? []).filter(
+      (t) => t.status === 'pending',
+    );
+  } catch {
+    return '';
+  }
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: ET });
+  const daysUntil = (d: string): number => Math.round((Date.parse(d) - Date.parse(today)) / 86_400_000);
+  todos.sort((a, b) => (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999'));
+  const cards = todos
+    .map((t) => {
+      const days = t.dueDate ? daysUntil(t.dueDate) : null;
+      const sev = days === null ? 'sev-info' : days < 0 ? 'sev-red' : days <= 3 ? 'sev-yellow' : '';
+      const when =
+        days === null ? 'no date' : days < 0 ? `${-days}d overdue (${t.dueDate})` : days === 0 ? 'due today' : `due ${t.dueDate} (${days}d)`;
+      const steps = (t.steps ?? [])
+        .map((st, i) => `<div class="detail">${st.done ? '&#9745;' : '&#9744;'} ${i + 1}. ${st.done ? `<s>${esc(st.text)}</s>` : esc(st.text)}</div>`)
+        .join('');
+      const stepCount = t.steps?.length ? ` · ${t.steps.filter((st) => st.done).length}/${t.steps.length} steps` : '';
+      return `<div class="card ${sev}" data-fid="todo-${esc(t.id)}">
+<div class="card-head"><input type="checkbox" class="chk" title="Visual only. Close it with: todos/cli.ts done ${esc(t.id.slice(0, 8))}"><strong>${esc(t.title)}</strong><span class="meta">${esc(when)}${stepCount}</span><span class="src">${esc(t.id.slice(0, 8))}</span></div>
+${t.notes ? `<p class="detail">${esc(t.notes)}</p>` : ''}${steps}
+</div>`;
+    })
+    .join('\n');
+  const worst = cards.includes('sev-red') ? 'red' : cards.includes('sev-yellow') ? 'yellow' : 'green';
+  return `<section>
+<h2><span class="pill pill-${todos.length === 0 ? 'green' : worst}">${todos.length}</span> Your list</h2>
+<p class="blurb">Your own to-dos. Add or close with <code>npx tsx tools/src/todos/cli.ts add|done|list</code> (or ask Claude). Same store the command center will use.</p>
+${cards || '<p class="empty">✓ Nothing on your list.</p>'}
+</section>`;
+}
+
+/**
+ * Audit list for findings analyze.ts dropped because the customer already
+ * has an upcoming green job (identity.ts cross-reference). Collapsed so it
+ * costs nothing to ignore, but nothing disappears without a trace.
+ */
+function hiddenBookedSection(list: NonNullable<FindingsFile['suppressed']>): string {
+  if (list.length === 0) return '';
+  const rows = list
+    .map(
+      (s) =>
+        `<li><strong>${esc(s.title)}</strong>${s.customer && !s.title.includes(s.customer) ? ` <span class="meta">${esc(s.customer)}</span>` : ''} <span class="src">${esc(s.source)}</span><br><span class="meta">${esc(s.reason)}</span></li>`,
+    )
+    .join('\n');
+  return `<section>
+<details><summary class="blurb" style="cursor:pointer">${list.length} finding${list.length === 1 ? '' : 's'} hidden: customer already booked (click to audit)</summary>
+<ul class="hidden-list">${rows}</ul>
+</details>
 </section>`;
 }
 
@@ -175,6 +339,11 @@ const SECTIONS: SectionDef[] = [
     key: ['offer_hold'],
     title: 'Offered times on hold',
     blurb: 'Slots offered to customers who have not answered. Nudge them or delete the HOLD event to release the time — every one of these is calendar inventory someone else could book.',
+  },
+  {
+    key: ['scope_flag'],
+    title: 'Scope changes on open quotes',
+    blurb: 'Scope-relevant new info (text, voicemail, call, email) arrived after a quote went out, and the quote is human-owned so the bot did not touch it. Revise and resend, or dismiss if the info does not change the work.',
   },
   {
     key: ['quote_promised'],
@@ -305,6 +474,7 @@ blockquote { margin:8px 0 0; padding:6px 10px; border-left:3px solid var(--blue)
 .empty { color:var(--green); font-size:14px; }
 .chk { width:16px; height:16px; accent-color:var(--green); cursor:pointer; flex:none; align-self:center; }
 .chkcell { width:28px; }
+.hidden-list { font-size:13px; padding-left:18px; } .hidden-list li { margin-bottom:6px; } .hidden-list .src { margin-left:6px; }
 .card.done { opacity:.45; }
 .card.done .card-head strong, .card.done .detail, .card.done .action { text-decoration:line-through; }
 tr.done td { opacity:.45; }
@@ -332,7 +502,11 @@ footer { color:#9aa4af; font-size:12px; margin:34px 0 20px; text-align:center; }
 <div class="tiles">
 ${pulseTiles}
 </div>
+${yourListSection()}
 ${sectionsHtml}
+${hiddenBookedSection(data.suppressed ?? [])}
+${awaitingHumanSection(data.booked ?? [])}
+${quoteFollowupsSection()}
 ${botDraftsSection(data.quoteDrafterRunlog ?? [])}
 <footer>
   Snapshot ${esc(data.snapshotAt)} · ${esc(String(data.stats.threads ?? 0))} threads + ${esc(String(data.stats.emailThreads ?? 0))} email threads swept, ${esc(String(data.stats.llmThreads ?? 0))} LLM-triaged (${esc(String(data.stats.llmErrors ?? 0))} errors) ·

@@ -16,6 +16,14 @@ import { GeminiClient } from '@aac/api-clients/gemini';
 import { HOLD_TITLE_PREFIX, STUB_TITLE_PREFIX } from '@aac/scheduling';
 import { hasContinuation } from '@aac/shared-utils/multiday';
 import type { EmailThreadSnapshot, Snapshot, ThreadSnapshot } from './collect.ts';
+import {
+  IdentityIndex,
+  applyBookedSuppression,
+  nameTokens,
+  tokensAlike,
+  type SuppressedFinding,
+  type Xref,
+} from './identity.ts';
 
 // ── thresholds ───────────────────────────────────────────────────────
 
@@ -70,7 +78,8 @@ export type Section =
   | 'stale_estimate'
   | 'message_draft'
   | 'conversation'
-  | 'solicitation';
+  | 'solicitation'
+  | 'scope_flag';
 
 export interface Finding {
   id: string;
@@ -90,6 +99,9 @@ export interface Finding {
   lastContact?: string;
   /** Deep link to the source (Gmail thread for email findings). */
   link?: string;
+  /** Who this is about + when the evidence happened — feeds the shared
+   *  booked-customer cross-reference (identity.ts). */
+  xref?: Xref;
 }
 
 export interface FindingsFile {
@@ -116,24 +128,15 @@ export interface FindingsFile {
   /** Quote-drafter trigger runlog passthrough (newest-first) — render's
    *  bot-drafts section reads this now that the laptop shadow-log is dead. */
   quoteDrafterRunlog?: Array<Record<string, unknown>>;
+  /** Findings dropped because the customer is already booked (audit list). */
+  suppressed?: SuppressedFinding[];
+  /** Clusters with an upcoming green job — render filters the stale-quote
+   *  sections (awaiting-human) on these. */
+  booked?: Array<{ phones: string[]; emails: string[]; qboIds: string[]; event: string; start: string; createdAt: string | null }>;
   stats: Record<string, number>;
 }
 
-// ── name matching ────────────────────────────────────────────────────
-
-const STOP = new Set([
-  'the', 'and', 'llc', 'inc', 'job', 'assessment', 'estimate', 'quote', 'repair',
-  'crack', 'attack', 'foundation', 'basement', 'callback', 'call', 'with', 'for',
-  'cont', // multi-day continuation marker in calendar titles ("Ed Spooner [cont]")
-]);
-
-function nameTokens(name: string): string[] {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z\s]/g, ' ')
-    .split(/\s+/)
-    .filter((t) => t.length >= 3 && !STOP.has(t));
-}
+// ── name matching (nameTokens/tokensAlike live in identity.ts) ─────
 
 interface CalEvent {
   id: string;
@@ -144,35 +147,7 @@ interface CalEvent {
   start: string;
   end: string;
   colorId?: string;
-}
-
-/**
- * Surname-level equality tolerant of one-letter drift — calendar titles are
- * typed by ear and diverge from QBO ("Malderelli" vs "Maldarelli").
- */
-function tokensAlike(a: string, b: string): boolean {
-  if (a === b) return true;
-  if (a.length < 5 || Math.abs(a.length - b.length) > 1) return false;
-  if (a.length === b.length) {
-    let diff = 0;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff++;
-    return diff <= 1;
-  }
-  const [short, long] = a.length < b.length ? [a, b] : [b, a];
-  let i = 0;
-  let j = 0;
-  let skipped = 0;
-  while (i < short.length && j < long.length) {
-    if (short[i] === long[j]) {
-      i++;
-      j++;
-    } else if (skipped++ > 0) {
-      return false;
-    } else {
-      j++;
-    }
-  }
-  return true;
+  created?: string;
 }
 
 /** True when the event text plausibly refers to this customer. */
@@ -358,6 +333,22 @@ async function main(): Promise<void> {
   const invoices = snapshot.invoices as QboTxn[];
   const findings: Finding[] = [];
   const stats: Record<string, number> = {};
+
+  // One identity cross-reference for every detector: merges a customer's
+  // phones/emails/QBO records/company/address and knows which clusters
+  // already hold an upcoming green job (identity.ts).
+  const identity = new IdentityIndex({
+    customers: snapshot.customers ?? [],
+    estimates,
+    invoices,
+    threads: snapshot.threads,
+    emails: snapshot.emails ?? [],
+    calendar: events,
+    directives: [...snapshot.scheduling.pending, ...snapshot.scheduling.review],
+    // business line + agent line (internal, never a customer)
+    ownPhones: [process.env.QUO_PHONE_NUMBER ?? '', '+16177660151'],
+    now,
+  });
 
   // ── D0: Gemini default-model canary ────────────────────────────────
   // Constructs GeminiClient exactly like the prod middleware does — no
@@ -626,6 +617,7 @@ async function main(): Promise<void> {
             : `${quietDays}d ago`,
       ...(nudgeReady ? { action: 'Nudge' } : {}),
       source: 'D5',
+      xref: { qboId: est.CustomerRef?.value, phones, evidenceAt: est.TxnDate },
     });
   }
 
@@ -691,6 +683,12 @@ async function main(): Promise<void> {
       detail: `Assessed ${ev.end.slice(0, 10)}${ev.location ? ` at ${ev.location}` : ''}. No QBO estimate or invoice matches by name or street, and no job event followed.`,
       action: 'Send the quote (or dismiss if declined on site)',
       source: 'D9',
+      xref: {
+        names: [ev.summary],
+        ...(ev.location ? { address: ev.location } : {}),
+        ...(cust ? { qboId: cust.id } : {}),
+        evidenceAt: ev.end,
+      },
     });
   }
   stats.assessedUnquoted = assessedUnquoted;
@@ -777,8 +775,28 @@ async function main(): Promise<void> {
     const ageH = Number.isFinite(offeredAtMs) ? Math.round((now - offeredAtMs) / 3_600_000) : null;
     const when = `${ev.start.slice(0, 16).replace('T', ' ')}${ev.location ? ` at ${ev.location}` : ''}`;
 
+    // Already booked (green job created after the offer, matched through the
+    // shared identity index) → the hold is dead inventory the stub flow
+    // failed to remove. Say exactly that instead of "nudge them".
+    const booking = identity.bookingFor(
+      { phones: holdPhone ? [holdPhone] : [], names: customer ? [customer] : [], ...(ev.location ? { address: ev.location } : {}) },
+      ev.id,
+    );
+    const offeredMs = Number.isFinite(offeredAtMs) ? offeredAtMs : ev.created ? new Date(ev.created).getTime() : NaN;
+    const bookedSince = booking && Number.isFinite(offeredMs) && booking.createdMs >= offeredMs;
+
     let finding: Finding;
-    if (replied) {
+    if (booking && bookedSince) {
+      finding = {
+        id: `d13:${ev.id}`,
+        section: 'offer_hold',
+        severity: startMs - now < STUB_IMMINENT_HOURS * 3_600_000 ? 'red' : 'yellow',
+        title: `Stale HOLD — ${customer || summary} is already booked (${booking.summary}, ${booking.start.slice(0, 10)})`,
+        detail: `${when}. The customer booked after this offer, but the hold was never removed, so the slot still looks taken to suggestSlot and to you.`,
+        action: 'Delete the HOLD event to release the slot',
+        source: 'D13',
+      };
+    } else if (replied) {
       finding = {
         id: `d13:${ev.id}`,
         section: 'offer_hold',
@@ -895,13 +913,17 @@ async function main(): Promise<void> {
     // Lad false positive 2026-10-14 — agreed 11/09 in-thread, booked 11/11).
     const createdMs = new Date(String(d.createdAt ?? '')).getTime();
     const bookedAfterMs = Number.isFinite(createdMs) ? createdMs - DAY : startMs - 14 * DAY;
+    const nearSlot = (evMs: number): boolean => Math.abs(evMs - startMs) <= DAY || evMs >= bookedAfterMs;
     const matched =
-      tokens.length > 0 &&
-      events.some((ev) => {
-        if (!(eventMatchesName(ev, tokens) || looseMatch(ev))) return false;
-        const evMs = new Date(ev.start).getTime();
-        return Math.abs(evMs - startMs) <= DAY || evMs >= bookedAfterMs;
-      });
+      (tokens.length > 0 &&
+        events.some((ev) => (eventMatchesName(ev, tokens) || looseMatch(ev)) && nearSlot(new Date(ev.start).getTime()))) ||
+      // Identity cross-reference: a green job linked to this customer by the
+      // stub's own directive phone, address, or merged handles counts even
+      // when its title carries only a first name ("STUB — Sarah" for Sarah
+      // Dacey, 2026-11-03).
+      identity
+        .bookingsFor({ ...(phone ? { phones: [phone] } : {}), ...(d.qbCustomerId ? { qboId: String(d.qbCustomerId) } : {}) })
+        .some((j) => nearSlot(new Date(j.start).getTime()));
     if (matched) continue;
 
     const when = startIso.slice(0, 16).replace('T', ' ');
@@ -1126,9 +1148,23 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
     if (i % 20 === 0) console.log(`  LLM ${Math.min(i + LLM_CONCURRENCY, candidates.length)}/${candidates.length}`);
   }
 
+  // Evidence time for a thread = its last inbound touch (message or call).
+  const lastInboundAt = (t: ThreadSnapshot): string | undefined => {
+    const times = [
+      ...t.messages.filter((m) => m.direction === 'incoming').map((m) => m.at),
+      ...t.calls.filter((c) => c.direction === 'incoming').map((c) => c.at),
+    ].sort();
+    return times[times.length - 1] ?? t.lastActivityAt;
+  };
+
   for (const t of snapshot.threads) {
     const v = verdicts.get(t.phone);
     const det = detFlags.get(t.phone);
+    const threadXref: Xref = {
+      phones: [t.phone],
+      ...(v?.customer_name ? { names: [v.customer_name] } : {}),
+      evidenceAt: lastInboundAt(t),
+    };
     if (v?.category === 'solicitation') {
       // Someone selling TO Matt ("need more jobs?"). Never a priority, but
       // stays visible as info with its evidence per [[ai-quality-gates]] —
@@ -1160,6 +1196,7 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
         action: v.suggested_action,
         source: 'L1',
         confidence: v.confidence,
+        xref: threadXref,
       });
     } else if (det && (!v || det.kind === 'voicemail')) {
       // LLM failed for this thread — keep the deterministic flag. For
@@ -1182,6 +1219,7 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
         evidence: det.evidence,
         source: det.kind === 'awaiting' ? 'D6' : det.kind === 'voicemail' ? 'D8' : 'D7',
         confidence: det.kind === 'voicemail' ? 'medium' : 'low',
+        xref: threadXref,
       });
     }
   }
@@ -1221,6 +1259,13 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
     const v = emailVerdicts.get(t.threadId);
     const displayName = t.counterparty.replace(/<[^>]*>/, '').trim() || t.counterpartyAddress;
     const last = t.messages[t.messages.length - 1];
+    const lastIncoming = [...t.messages].reverse().find((m) => m.direction === 'incoming');
+    const emailXref: Xref = {
+      emailThreadId: t.threadId,
+      emails: [t.counterpartyAddress],
+      names: [displayName, ...(v?.customer_name ? [v.customer_name] : [])],
+      evidenceAt: lastIncoming?.at ?? t.lastActivityAt,
+    };
     if (v?.category === 'solicitation') {
       findings.push({
         id: `l2:${t.threadId}`,
@@ -1248,6 +1293,7 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
         source: 'L2',
         confidence: v.confidence,
         link: gmailThreadLink(t.threadId),
+        xref: emailXref,
       });
     } else if (!v && last.direction === 'incoming') {
       const ageH = Math.round((now - new Date(last.at).getTime()) / 3_600_000);
@@ -1262,39 +1308,12 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
           source: 'D12',
           confidence: 'low',
           link: gmailThreadLink(t.threadId),
+          xref: emailXref,
         });
       }
     }
   }
   stats.llmErrors = llmErrors;
-
-  // ── booked-customer downgrade ─────────────────────────────────────
-  // A customer with a job (green) event on the calendar today-or-later is
-  // closed business, not an open lead — QBO TxnStatus often stays Pending
-  // after Matt books the job, and the LLM detectors can't see the calendar
-  // (Karim Awad / Shivani false alarms, 2026-10-16). Downgrade rather than
-  // drop: a booked customer can still have a real question in-thread.
-  const upcomingJobs = events.filter(
-    (ev) => ev.colorId === '10' && new Date(ev.start).getTime() >= now - DAY,
-  );
-  const BOOKABLE_SECTIONS: Section[] = [
-    'stale_estimate',
-    'conversation',
-    'deal_closer',
-    'quote_promised',
-    'quote_gap',
-  ];
-  for (const f of findings) {
-    if (f.severity === 'info' || !f.customer) continue;
-    if (!BOOKABLE_SECTIONS.includes(f.section)) continue;
-    const tokens = nameTokens(f.customer);
-    if (tokens.length < 2) continue; // first-name-only matches are too loose
-    const booked = upcomingJobs.find((ev) => eventMatchesName(ev, tokens));
-    if (booked) {
-      f.severity = 'info';
-      f.detail = `[Already booked: "${booked.summary}" ${booked.start.slice(0, 10)}] ${f.detail ?? ''}`.trim();
-    }
-  }
 
   // ── D15: cloud-worker message drafts + heartbeats ───────────────────
   // The aac-worker-monorepo crons post AI drafts as Quo contact notes
@@ -1305,13 +1324,18 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
   const worker = snapshot.worker ?? {
     messageDraftRecords: [],
     quoteDrafterRunlog: [],
+    scopeFlags: [],
     messageDraftsHeartbeat: null,
     quoteDrafterHeartbeat: null,
     quoteDrafterModeOverride: null,
   };
 
+  // Heartbeats are frozen into the snapshot at collect time — age them
+  // against snapshot.generatedAt, not wall clock, or a standalone analyze
+  // re-run hours later reports healthy workers as dead.
+  const snapshotMs = new Date(snapshot.generatedAt).getTime();
   const heartbeatCheck = (name: string, iso: string | null, detail: string): void => {
-    const ageMin = iso ? (now - new Date(iso).getTime()) / 60_000 : Infinity;
+    const ageMin = iso ? (snapshotMs - new Date(iso).getTime()) / 60_000 : Infinity;
     if (ageMin > 20) {
       findings.push({
         id: `system-heartbeat-${name}`,
@@ -1342,6 +1366,7 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
     for (const p of c.phones) if (!phoneName.has(p)) phoneName.set(p, c.name);
   }
   const threadByPhone = new Map(snapshot.threads.map((t) => [t.phone, t]));
+  const estimateById = new Map(estimates.map((e) => [e.Id ?? '', e]));
   const DRAFT_KIND_LABEL: Record<string, string> = {
     followup: 'Post-quote follow-up',
     intake: 'First-touch intake',
@@ -1377,6 +1402,12 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
         detail: `Posted as a Quo contact note ${ageH < 48 ? `${ageH}h` : `${Math.floor(ageH / 24)}d`} ago; no outgoing text since.${r.fallback ? ` Fallback skeleton used (${String(r.fallback)}).` : ''}`,
         action: 'Open the Quo thread, copy the note, send (edit first if it needs it).',
         source: 'D15',
+        // A follow-up nudges a quote: judge the booking against the quote
+        // date, not the (later) draft time.
+        xref: {
+          ...(phone ? { phones: [phone] } : {}),
+          evidenceAt: estimateById.get(String(r.estimateId ?? ''))?.TxnDate ?? at,
+        },
       });
     } else if (r.outcome === 'no-quo-contact-gave-up') {
       const id = `d15:gaveup:${phone ?? at}`;
@@ -1393,10 +1424,52 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
           'The drafter retried and gave up because Quo has no contact for this number — the customer may have received no first reply at all.',
         action: 'Find the thread in Quo and reply manually.',
         source: 'D15',
+        xref: { ...(phone ? { phones: [phone] } : {}), evidenceAt: at },
       });
     }
   }
   stats.messageDraftRecords = worker.messageDraftRecords.length;
+
+  // ── T4 scope-change flags: new info on quotes the bot can't touch ────
+  // The quote-tick's scope gate posts these when scope-relevant inbound
+  // (text/voicemail/call transcript/email) lands on a human-owned open
+  // quote. The estimate was NOT updated — that's Matt's call.
+  const seenFlagEstimates = new Set<string>();
+  for (const f of worker.scopeFlags ?? []) {
+    const at = typeof f.at === 'string' ? f.at : null;
+    if (!at || now - new Date(at).getTime() > 14 * DAY) continue;
+    const estimateId = String(f.estimateId ?? '');
+    if (estimateId && seenFlagEstimates.has(estimateId)) continue; // newest-first — keep latest per quote
+    if (estimateId) seenFlagEstimates.add(estimateId);
+    const phone = typeof f.phone === 'string' ? f.phone : undefined;
+    findings.push({
+      id: `t4:${estimateId || phone || at}`,
+      section: 'scope_flag',
+      severity: 'yellow',
+      title: `Scope change on quote #${String(f.docNumber ?? '?')} — not auto-updated`,
+      customer: typeof f.customer === 'string' ? f.customer : undefined,
+      phone,
+      amount: typeof f.total === 'number' ? f.total : undefined,
+      ageDays: Math.floor((now - new Date(at).getTime()) / DAY),
+      evidence: typeof f.reason === 'string' ? f.reason : undefined,
+      detail: `New ${String(f.channel ?? 'inbound')} info arrived after this quote went out. The quote is human-owned, so the bot flagged instead of editing.`,
+      action: 'Open the estimate, revise for the new scope if real, and resend.',
+      source: 'T4',
+    });
+  }
+  stats.scopeFlags = (worker.scopeFlags ?? []).length;
+
+  // ── booked-customer cross-reference ─────────────────────────────
+  // A customer with an upcoming green job (STUBs included) is closed
+  // business: QBO TxnStatus often stays Pending after Matt books, and the
+  // LLM/draft detectors can't see the booking. One shared pass, one
+  // identity index (identity.ts) — phones, emails, QBO records, company,
+  // address all merged — instead of per-detector name matching (Dacey /
+  // Downey / Joffre noise, 2026-11-03). Cash findings are never touched.
+  const booked = applyBookedSuppression(findings, identity);
+  findings.length = 0;
+  findings.push(...booked.kept);
+  stats.bookedSuppressed = booked.suppressed.length;
 
   // ── dismissals ────────────────────────────────────────────────────
   // analysis/data/triage/dismissals.json: owner-curated suppressions for
@@ -1464,6 +1537,15 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
       jobsNext30: jobsBetween(now, now + 30 * DAY),
     },
     quoteDrafterRunlog: worker.quoteDrafterRunlog,
+    suppressed: booked.suppressed,
+    booked: identity.bookedClusters().map((c) => ({
+      phones: c.phones,
+      emails: c.emails,
+      qboIds: c.qboIds,
+      event: c.job.summary,
+      start: c.job.start,
+      createdAt: c.job.createdMs ? new Date(c.job.createdMs).toISOString() : null,
+    })),
     stats: { ...snapshot.stats, ...stats, findings: findings.length },
   };
 

@@ -103,6 +103,26 @@ Deterministic first, LLM second; every finding carries evidence.
 | L1 | Commitment gap | Gemini (2.5-flash) reads each active thread digest (messages + call transcript excerpts) and flags: scheduling commitments by Matt, approval signals from customer, unanswered questions, promised follow-ups. Each claimed commitment is then checked against the calendar by name-token match; "no matching event" ⇒ P0. Two refinements (2026-10-03): **quote_promised** — Matt said a quote was coming and no QBO estimate followed (the prompt carries the last-60d estimate list, mirroring the calendar context) ⇒ own section high in the ladder ("that's deal flow" — Matt); **solicitation** — the other party is selling *to* Matt ("need more jobs?" lead-gen, SEO, robo-texts) ⇒ info card at the bottom with evidence shown, never a yellow "awaiting reply". |
 | L2 | Email commitment gap | Same Gemini prompt (it carries the calendar + estimate context) over each email thread digest (subject, sender, last 12 messages, attachment names). Same categories/sections as L1; findings get an `✉` title prefix and a `link` to the Gmail thread. |
 
+**Booked-customer cross-reference (identity.ts, 2026-11-03).** One shared
+`IdentityIndex` merges a customer's handles (union-find over QBO id, E.164
+phone, email, unambiguous company/display name; addresses are attach-only
+so buyer/seller or a stray QBO address never fuse two people; keys on 3+
+customers are hubs and merge nothing). Email threads attach by address,
+then "Quote NNNN" in the subject, then a street address in the subject,
+then sender name (first-name prefix + surname: Artie = Arthur Downey).
+Green (colorId 10) events today-or-later, STUBs included, link to clusters
+via the stub/hold directive's `customerPhone`, `Customer-Phone:`, location,
+or name. `applyBookedSuppression` then drops closing/scheduling findings
+(stale_estimate, deal_closer, quote_promised, quote_gap, message_draft,
+conversation) for booked clusters when the booking was created after the
+evidence, or Matt has been in touch since, or (closing sections) the
+booking is within 7d of the evidence; otherwise the finding is downgraded
+to info with an "[Already booked …]" note. Dropped findings are listed in
+`findings.json.suppressed` and a collapsed "hidden: already booked" block.
+Cash (D1-D3), D4/D14, D10 and D11 are never suppressed. D13 re-titles a
+HOLD whose customer booked after the offer as "Stale HOLD — delete it",
+and D14 accepts an index-linked booking as its calendar match.
+
 LLM output is JSON-schema'd, temperature 0; threads with zero activity and no
 deterministic flag are skipped to keep the nightly Gemini bill trivial
 (~60–100 flash calls). Per `[[ai-quality-gates]]`, LLM findings render with

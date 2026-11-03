@@ -115,6 +115,14 @@ export interface CustomerSnapshot {
   name: string;
   /** E.164, deduped (Primary/Mobile/Alternate). Joins QBO txns → Quo threads. */
   phones: string[];
+  /** Lower-cased PrimaryEmailAddr entries (QBO allows comma-separated).
+   *  Identity cross-reference: joins email threads → customer. */
+  emails?: string[];
+  /** QBO CompanyName when set and different from DisplayName ("Tom Dacey"
+   *  → "Champion Builders") — merges a contact with their company record. */
+  companyName?: string;
+  /** Bill/Ship address lines (street lines only matter downstream). */
+  addresses?: string[];
 }
 
 export interface Snapshot {
@@ -142,8 +150,10 @@ export interface Snapshot {
   worker: {
     /** message-drafts runlog (followup/intake/ct-routing records). */
     messageDraftRecords: Array<Record<string, unknown>>;
-    /** quote-drafter trigger runlog (T1/T2/T3 firings + draft outcomes). */
+    /** quote-drafter trigger runlog (T1-T4 firings + draft outcomes). */
     quoteDrafterRunlog: Array<Record<string, unknown>>;
+    /** T4 scope-change flags on human-owned open quotes (newest first). */
+    scopeFlags: Array<Record<string, unknown>>;
     messageDraftsHeartbeat: string | null;
     quoteDrafterHeartbeat: string | null;
     /** Redis kill-switch override (off|shadow|live) — null = env default (live). */
@@ -319,10 +329,25 @@ async function main(): Promise<void> {
         ),
       ),
     ];
+    const emails = String((c.PrimaryEmailAddr as { Address?: string } | undefined)?.Address ?? '')
+      .split(/[,;\s]+/)
+      .map((e) => e.trim().toLowerCase())
+      .filter((e) => e.includes('@'));
+    const addresses = [c.BillAddr, c.ShipAddr].flatMap((a) => {
+      const addr = (a ?? {}) as Record<string, unknown>;
+      return ['Line1', 'Line2', 'Line3', 'Line4', 'Line5']
+        .map((k) => addr[k])
+        .filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+    });
+    const name = String(c.DisplayName ?? '');
+    const companyName = typeof c.CompanyName === 'string' ? c.CompanyName.trim() : '';
     return {
       id: String(c.Id ?? ''),
-      name: String(c.DisplayName ?? ''),
+      name,
       phones,
+      ...(emails.length > 0 ? { emails: [...new Set(emails)] } : {}),
+      ...(companyName && companyName !== name ? { companyName } : {}),
+      ...(addresses.length > 0 ? { addresses: [...new Set(addresses)] } : {}),
     };
   });
   stats.customers = customers.length;
@@ -374,9 +399,10 @@ async function main(): Promise<void> {
   // how the entry was written — normalize both (same as harvest-edits).
   const parseLog = (rows: Array<string | Record<string, unknown>>): Array<Record<string, unknown>> =>
     rows.map((r) => (typeof r === 'string' ? (JSON.parse(r) as Record<string, unknown>) : r));
-  const [mdLogRaw, qdLogRaw, mdHeartbeat, qdHeartbeat, qdModeOverride] = await Promise.all([
+  const [mdLogRaw, qdLogRaw, scopeFlagsRaw, mdHeartbeat, qdHeartbeat, qdModeOverride] = await Promise.all([
     redis.lrange<string | Record<string, unknown>>(keys.messageDraftRunlog, 0, 199),
     redis.lrange<string | Record<string, unknown>>(keys.quoteDrafterRunlog, 0, 199),
+    redis.lrange<string | Record<string, unknown>>(keys.quoteScopeFlags, 0, 99),
     redis.get<string>(keys.heartbeat('worker')),
     redis.get<string>(keys.heartbeat('quote-drafter')),
     redis.get<string>(keys.quoteDrafterMode),
@@ -384,12 +410,14 @@ async function main(): Promise<void> {
   const worker: Snapshot['worker'] = {
     messageDraftRecords: parseLog(mdLogRaw),
     quoteDrafterRunlog: parseLog(qdLogRaw),
+    scopeFlags: parseLog(scopeFlagsRaw),
     messageDraftsHeartbeat: mdHeartbeat,
     quoteDrafterHeartbeat: qdHeartbeat,
     quoteDrafterModeOverride: qdModeOverride,
   };
   stats.messageDraftRecords = worker.messageDraftRecords.length;
   stats.quoteDrafterRunlog = worker.quoteDrafterRunlog.length;
+  stats.scopeFlags = worker.scopeFlags.length;
 
   // 4 ── Quo threads
   const activeSince = now - QUO_ACTIVE_DAYS * DAY;
