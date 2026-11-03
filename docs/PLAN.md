@@ -121,6 +121,10 @@ Spec: `projects/triage-dashboard.md`.
    `docs/plans/command-center/README.md` §9 (data-reality decisions in §14).
    Step 1 auth fix done in code (Google sign-in + Redis sessions, audit P0-5,
    see DECISIONS 2026-11-03); deploy waits on the domain + OAuth client.
+   Step 2 item system v0 built: `packages/items` (stable keys, fingerprints,
+   done/snooze/dismiss/mute/pin/reorder, two lanes) + `/today` page fed by
+   the triage bridge `tools/src/items/push-triage.ts` until step 3 moves
+   the detectors into the worker.
 5c. **Booking → QBO acceptance sync + stub/HOLD name-match bug (planned,
    not green-lit).** Booked customers whose estimates stay Pending get
    silently skipped by invoice-create (#1577, #1580 on 11/03). Plan:

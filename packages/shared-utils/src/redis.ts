@@ -263,6 +263,15 @@ export const keys = {
   /** Short-lived OAuth state nonce → return-to path, for CSRF protection during Google sign-in */
   ccOAuthState: (state: string) => `cc:oauth-state:${state}` as const,
 
+  /** Latest detector output for the item system: JSON {at, source, candidates[]}. */
+  itemCandidates: 'cc:items:candidates' as const,
+
+  /** HASH: item key → JSON ItemState (what Matt did: done/snooze/dismiss/pin/rank). */
+  itemStates: 'cc:items:state' as const,
+
+  /** HASH: rule id → JSON MuteRule ("this kind is noise"). */
+  itemMutes: 'cc:items:mutes' as const,
+
   // ── Scheduling (SchedulingDirective Pipeline) ──────────────────────
 
   /** Individual SchedulingDirective JSON blob, written by middleware webhook/cron handlers in Crawl shadow mode. */

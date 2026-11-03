@@ -15,11 +15,13 @@ import {
   Menu,
   X,
   LogOut,
+  Sun,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@aac/ui";
 
 const nav = [
+  { href: "/today", label: "Today", icon: Sun },
   { href: "/", label: "Dashboard", icon: Activity },
   { href: "/health", label: "System Health", icon: Activity },
   { href: "/todos", label: "To-Do", icon: CheckSquare },
