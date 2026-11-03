@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fromAwaitingQuote, fromBotDraft, fromFollowupDraft, fromFunnelFlag } from '../src/index.js';
+import { fromAwaitingQuote, fromBotDraft, fromFollowupDraft, fromFunnelFlag, fromInvoiceNudge } from '../src/index.js';
 
 const awaiting = {
   doc: '1561',
@@ -51,5 +51,30 @@ describe('fromBotDraft', () => {
   it('failures need Matt; skips are not items', () => {
     expect(fromBotDraft({ ...row, outcome: 'draft-failed' })?.lane).toBe('needs-you');
     expect(fromBotDraft({ ...row, outcome: 'skipped' })).toBeNull();
+  });
+});
+
+describe('fromInvoiceNudge', () => {
+  const n = {
+    invoiceId: '2368',
+    doc: '2368',
+    customer: 'Emanuel Markis',
+    balance: 7800,
+    dueDate: '2026-07-03',
+    daysOverdue: 123,
+    next: { kind: 'reminder' as const, label: 'QBO reminder email', day: 7 },
+    behind: 3,
+    history: [],
+  };
+  it('takes over the D3 key, is a money item, and says how far behind', () => {
+    const c = fromInvoiceNudge(n);
+    expect(c).toMatchObject({ key: 'd3:2368', area: 'money', sensitive: 'money', severity: 'yellow', amount: 7800 });
+    expect(c.detail).toContain('3 steps behind');
+  });
+  it('a new rung or a payment reopens it; age does not', () => {
+    const f = fromInvoiceNudge(n).fingerprint;
+    expect(fromInvoiceNudge({ ...n, daysOverdue: 130 }).fingerprint).toBe(f);
+    expect(fromInvoiceNudge({ ...n, next: { kind: 'call', label: 'Phone call', day: 30 } }).fingerprint).not.toBe(f);
+    expect(fromInvoiceNudge({ ...n, balance: 3900 }).fingerprint).not.toBe(f);
   });
 });

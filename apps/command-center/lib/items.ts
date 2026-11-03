@@ -1,4 +1,5 @@
 import {
+  fromInvoiceNudge,
   fromTodo,
   ItemStore,
   nyDate,
@@ -10,7 +11,9 @@ import {
   type ItemCandidate,
   type ItemState,
 } from "@aac/items";
+import { cards, type NudgeRow } from "./cards";
 import { getRedis } from "./redis";
+import { readSnapshot } from "./snapshots";
 import { loadTodos } from "./todos";
 
 export function getItemStore(): ItemStore {
@@ -18,19 +21,27 @@ export function getItemStore(): ItemStore {
 }
 
 /**
- * Everything that can be an item right now: the latest detector run plus
- * Matt's pending to-dos.
+ * Everything that can be an item right now: the latest detector run, the
+ * saved invoice nudge ladder, and Matt's pending to-dos.
  */
 export async function loadCandidates(now = new Date()): Promise<{
   candidates: ItemCandidate[];
   detectedAt: string | null;
   source: string | null;
 }> {
-  const [snapshot, todos] = await Promise.all([getItemStore().getCandidates(), loadTodos()]);
+  const [snapshot, todos, nudges] = await Promise.all([
+    getItemStore().getCandidates(),
+    loadTodos(),
+    readSnapshot<NudgeRow[]>(cards.nudges().name),
+  ]);
   const today = nyDate(now);
+  // The saved nudge ladder replaces triage's plain overdue items (same d3:
+  // keys, so Matt's state carries over). Saved only: never fetched here.
+  const laddered = new Set(nudges?.data.map((n) => `d3:${n.invoiceId}`) ?? []);
   return {
     candidates: [
-      ...(snapshot?.candidates ?? []),
+      ...(snapshot?.candidates ?? []).filter((c) => !laddered.has(c.key)),
+      ...(nudges?.data ?? []).flatMap((n) => (n.next ? [fromInvoiceNudge({ ...n, next: n.next })] : [])),
       ...todos.filter((t) => t.status === "pending").map((t) => fromTodo(t, today)),
     ],
     detectedAt: snapshot?.at ?? null,

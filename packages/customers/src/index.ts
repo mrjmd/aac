@@ -22,3 +22,5 @@ export type {
   TimelineInputs,
   TimelineKind,
 } from './timeline.js';
+export { NUDGE_LADDER, nudgeStatus, nudgeTouch } from './nudge.js';
+export type { NudgeKind, NudgeStatus, NudgeTouch } from './nudge.js';

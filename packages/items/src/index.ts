@@ -8,5 +8,5 @@ export type { TriageFinding } from './from-triage.js';
 export { ItemStore } from './store.js';
 export type { CandidateSnapshot, ItemRedis } from './store.js';
 export { fromTodo, TODO_KEY_PREFIX } from './from-todo.js';
-export { fromAwaitingQuote, fromBotDraft, fromFollowupDraft, fromFunnelFlag } from './from-sections.js';
-export type { AwaitingQuote, BotDraft, FollowupDraft, FunnelFlag } from './from-sections.js';
+export { fromAwaitingQuote, fromBotDraft, fromFollowupDraft, fromFunnelFlag, fromInvoiceNudge } from './from-sections.js';
+export type { AwaitingQuote, BotDraft, FollowupDraft, FunnelFlag, InvoiceNudge } from './from-sections.js';

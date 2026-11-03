@@ -143,3 +143,53 @@ export function fromBotDraft(r: BotDraft): ItemCandidate | null {
     fingerprint: fp(r.outcome, r.total, r.at),
   };
 }
+
+export interface InvoiceNudge {
+  invoiceId: string;
+  doc: string;
+  customer: string;
+  phone?: string;
+  balance: number;
+  dueDate: string;
+  daysOverdue: number;
+  next: { kind: 'reminder' | 'text' | 'call' | 'final'; label: string; day: number };
+  /** Reached rungs still uncovered after `next`. */
+  behind: number;
+  history: Array<{ at: string; kind: string; note: string }>;
+}
+
+const NUDGE_ACTION: Record<InvoiceNudge['next']['kind'], string> = {
+  reminder: 'Send a QBO reminder, then Done',
+  text: 'Text them about the balance',
+  call: 'Call them',
+  final: 'Send the final written notice, then decide: collections or write-off',
+};
+
+/**
+ * An overdue invoice whose next nudge is due (the 7/14/30/45 ladder). Keyed
+ * like triage's D3 overdue item so state carries over. The fingerprint is
+ * the rung and balance: Done on a rung hides it until the next rung comes
+ * due or a payment changes the balance.
+ */
+export function fromInvoiceNudge(n: InvoiceNudge): ItemCandidate {
+  const last = n.history.at(-1);
+  const lastLine = last
+    ? `Last nudge: ${last.kind} ${last.at.slice(0, 10)}${last.note ? ` ("${last.note}")` : ''}. ${n.history.length} since it came due.`
+    : `No nudge from you since it came due ${n.dueDate}.`;
+  return {
+    key: `d3:${n.invoiceId}`,
+    detector: 'NUDGE',
+    area: 'money',
+    lane: 'needs-you',
+    severity: n.next.kind === 'call' || n.next.kind === 'final' ? 'red' : 'yellow',
+    title: `${n.next.label} due: ${n.customer} #${n.doc}, ${n.daysOverdue}d overdue`,
+    customer: n.customer,
+    ...(n.phone ? { phone: n.phone } : {}),
+    amount: n.balance,
+    detail: `${lastLine}${n.behind ? ` The ladder is ${n.behind} step${n.behind === 1 ? '' : 's'} behind.` : ''}`,
+    evidence: 'Confirm no unlogged cash or check before nudging.',
+    action: NUDGE_ACTION[n.next.kind],
+    fingerprint: fp(n.next.kind, n.balance),
+    sensitive: 'money',
+  };
+}

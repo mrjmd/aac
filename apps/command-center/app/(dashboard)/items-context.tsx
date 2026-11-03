@@ -136,6 +136,7 @@ export const KIND: Record<string, string> = {
   D1: "Done, not invoiced",
   D2: "Invoice not sent",
   D3: "Overdue invoice",
+  NUDGE: "Late invoice nudge",
   D4: "Accepted, not scheduled",
   D5: "Stale quote",
   D9: "Assessment, no quote",

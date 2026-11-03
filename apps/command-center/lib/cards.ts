@@ -1,6 +1,8 @@
 import type { QBCustomer } from "@aac/api-clients/quickbooks";
 import {
+  buildCustomerTimeline,
   customerProfile,
+  nudgeStatus,
   fetchEmailPart,
   fetchQboPart,
   fetchQuoPart,
@@ -11,7 +13,7 @@ import {
   type TimelineEmail,
   type TimelineEvent,
 } from "@aac/customers";
-import { nyDate } from "@aac/items";
+import { nyDate, type InvoiceNudge } from "@aac/items";
 import { getCashPosition, getTechUtilization, type CashPosition, type TechWeek } from "@aac/metrics";
 import { getCalendar, technicianEmails } from "./calendar";
 import { getGmail, getQuo } from "./customers";
@@ -19,6 +21,9 @@ import { getQuickBooks } from "./quickbooks";
 import { readSnapshot, refreshSnapshot, snapshot, type Snapshot } from "./snapshots";
 
 const MIN = 60_000;
+
+/** One overdue invoice on the nudge ladder; `next` is null when every reached rung is covered. */
+export type NudgeRow = Omit<InvoiceNudge, "next"> & { next: InvoiceNudge["next"] | null };
 
 /**
  * Every saved card the command center shows: its snapshot name, how old it
@@ -64,6 +69,12 @@ export const cards = {
         })
       ).map(trimEvent),
   }),
+  /** Every overdue invoice with its place on the 7/14/30/45 nudge ladder. */
+  nudges: (): Card<NudgeRow[]> => ({
+    name: "money:nudges",
+    maxAgeMs: 30 * MIN,
+    fetch: fetchNudges,
+  }),
   customerQbo: (id: string): Card<QboPart | null> => ({
     name: `customer:${id}:qbo`,
     maxAgeMs: 30 * MIN,
@@ -89,6 +100,58 @@ export const cards = {
   }),
 };
 
+/**
+ * Overdue invoices, each customer's texts, calls and email read through
+ * their saved customer cards (which also warms those pages), then the
+ * ladder. A customer whose QBO, Quo or Gmail part fails is laddered on what's left.
+ */
+async function fetchNudges(): Promise<NudgeRow[]> {
+  const today = nyDate(new Date());
+  const overdue = (await getQuickBooks().listOpenInvoices()).filter((i) => i.DueDate && i.DueDate < today && (i.Balance ?? 0) > 0);
+  const byCustomer = new Map<string, typeof overdue>();
+  for (const inv of overdue) byCustomer.set(inv.CustomerRef.value, [...(byCustomer.get(inv.CustomerRef.value) ?? []), inv]);
+  const rows: NudgeRow[] = [];
+  const ids = [...byCustomer.keys()];
+  // Four customers at a time keeps Quo and Gmail under their rate limits.
+  for (let i = 0; i < ids.length; i += 4) {
+    await Promise.all(
+      ids.slice(i, i + 4).map(async (id) => {
+        const qbo = await loadSafe(cards.customerQbo(id));
+        const part = qbo.snap?.data;
+        // No customer record: still ladder the invoice, on no touches, rather than drop it.
+        const [quo, email] = part
+          ? await Promise.all([loadSafe(cards.customerQuo(id)), loadSafe(cards.customerEmail(id))])
+          : [null, null];
+        const t = buildCustomerTimeline({
+          customer: part?.customer ?? { Id: id, DisplayName: byCustomer.get(id)![0].CustomerRef.name ?? id },
+          estimates: part?.estimates ?? [],
+          invoices: part?.invoices ?? [],
+          payments: part?.payments ?? [],
+          messages: quo?.snap?.data.messages ?? [],
+          calls: quo?.snap?.data.calls ?? [],
+          emails: email?.snap?.data ?? [],
+          events: [],
+          today,
+          now: new Date(),
+        });
+        for (const inv of byCustomer.get(id) ?? []) {
+          const s = nudgeStatus(inv.DueDate!, t.entries, today);
+          rows.push({
+            invoiceId: inv.Id!,
+            doc: inv.DocNumber ?? inv.Id!,
+            customer: inv.CustomerRef.name ?? t.profile.name,
+            ...(t.profile.phones[0] ? { phone: t.profile.phones[0] } : {}),
+            balance: inv.Balance ?? 0,
+            dueDate: inv.DueDate!,
+            ...s,
+          });
+        }
+      }),
+    );
+  }
+  return rows.sort((a, b) => b.daysOverdue - a.daysOverdue);
+}
+
 /** Phones and emails come from the saved QBO part (fetched if missing). */
 async function profileOf(id: string) {
   const qbo = (await readSnapshot<QboPart | null>(cards.customerQbo(id).name)) ?? (await load(cards.customerQbo(id)));
@@ -111,7 +174,9 @@ export async function loadSafe<T>(card: Card<T>): Promise<{ snap: Snapshot<T> | 
 
 /** Resolve a snapshot name from the refresh button back to its card. */
 export function cardByName(name: string): Card<unknown> | null {
-  const fixed = [cards.cash(), cards.techWeeks(), cards.customerIndex(), cards.calendarIndex()].find((c) => c.name === name);
+  const fixed = [cards.cash(), cards.techWeeks(), cards.customerIndex(), cards.calendarIndex(), cards.nudges()].find(
+    (c) => c.name === name,
+  );
   if (fixed) return fixed as Card<unknown>;
   const m = /^customer:(\d+):(qbo|quo|email)$/.exec(name);
   if (!m) return null;
