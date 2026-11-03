@@ -4,14 +4,12 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
+  Building2,
   CalendarClock,
   CheckSquare,
   DollarSign,
-  Users,
-  BarChart3,
+  LayoutGrid,
   Megaphone,
-  Calendar,
-  Settings,
   Menu,
   X,
   LogOut,
@@ -22,16 +20,13 @@ import { cn } from "@aac/ui";
 
 const nav = [
   { href: "/today", label: "Today", icon: Sun },
-  { href: "/", label: "Dashboard", icon: Activity },
-  { href: "/health", label: "System Health", icon: Activity },
-  { href: "/todos", label: "To-Do", icon: CheckSquare },
-  { href: "/scheduling", label: "Scheduling", icon: CalendarClock },
   { href: "/money", label: "Money", icon: DollarSign },
-  { href: "/leads", label: "Leads", icon: Users },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/campaigns", label: "Campaigns", icon: Megaphone },
-  { href: "/calendar", label: "Calendar", icon: Calendar },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/marketing", label: "Marketing", icon: Megaphone },
+  { href: "/commercial", label: "Commercial", icon: Building2 },
+  { href: "/scheduling", label: "Scheduling", icon: CalendarClock },
+  { href: "/todos", label: "To-Do", icon: CheckSquare },
+  { href: "/health", label: "System Health", icon: Activity },
+  { href: "/", label: "Old dashboard", icon: LayoutGrid },
 ];
 
 export function Sidebar() {
