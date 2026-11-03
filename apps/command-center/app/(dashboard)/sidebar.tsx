@@ -8,6 +8,7 @@ import {
   CalendarClock,
   CheckSquare,
   DollarSign,
+  Hammer,
   LayoutGrid,
   Megaphone,
   Menu,
@@ -20,6 +21,7 @@ import { cn } from "@aac/ui";
 
 const nav = [
   { href: "/today", label: "Today", icon: Sun },
+  { href: "/jobs", label: "Jobs", icon: Hammer },
   { href: "/money", label: "Money", icon: DollarSign },
   { href: "/marketing", label: "Marketing", icon: Megaphone },
   { href: "/commercial", label: "Commercial", icon: Building2 },

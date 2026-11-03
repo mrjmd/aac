@@ -16,7 +16,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@aac/api-clients": "workspace:*"
+    "@aac/api-clients": "workspace:*",
+    "@aac/scheduling": "workspace:*"
   },
   "devDependencies": {
     "@aac/tsconfig": "workspace:*",

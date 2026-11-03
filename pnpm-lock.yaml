@@ -402,6 +402,9 @@ importers:
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../api-clients
+      '@aac/scheduling':
+        specifier: workspace:*
+        version: link:../scheduling
     devDependencies:
       '@aac/tsconfig':
         specifier: workspace:*
