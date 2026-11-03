@@ -39,6 +39,53 @@ beforeEach(() => {
 });
 
 describe('QuickBooksClient', () => {
+  describe('listOpenInvoices', () => {
+    it('filters on Balance > 0 server-side', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: { Invoice: [{ Id: '1', Balance: 50 }] } }));
+      const result = await client.listOpenInvoices();
+      expect(result).toEqual([{ Id: '1', Balance: 50 }]);
+      expect(decodeURIComponent(mockFetch.mock.calls[0][0] as string)).toContain("WHERE Balance > '0'");
+    });
+  });
+
+  describe('latestPostingDates', () => {
+    it('takes the latest date per account across the report and transfers', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(
+        mockResponse({
+          Rows: {
+            Row: [
+              { ColData: [{ value: '2026-10-20' }, { value: 'Opex', id: '40' }] },
+              {
+                Rows: {
+                  Row: [
+                    { ColData: [{ value: '2026-10-27' }, { value: 'Opex', id: '40' }] },
+                    { ColData: [{ value: '2026-10-23' }, { value: 'Payroll', id: '44' }] },
+                  ],
+                },
+              },
+            ],
+          },
+        }),
+      );
+      mockFetch.mockReturnValueOnce(
+        mockResponse({
+          QueryResponse: {
+            Transfer: [
+              { TxnDate: '2026-10-25', FromAccountRef: { value: '39' }, ToAccountRef: { value: '44' } },
+              { TxnDate: '2026-10-21', FromAccountRef: { value: '39' }, ToAccountRef: { value: '41' } },
+            ],
+          },
+        }),
+      );
+      const result = await client.latestPostingDates('2026-09-01', '2026-11-03');
+      expect(result).toEqual({ '40': '2026-10-27', '44': '2026-10-25', '39': '2026-10-25', '41': '2026-10-21' });
+      expect(mockFetch.mock.calls[0][0]).toContain('/reports/TransactionList');
+      expect(decodeURIComponent(mockFetch.mock.calls[1][0] as string)).toContain("TxnDate >= '2026-09-01'");
+    });
+  });
+
   describe('searchCustomerByEmail', () => {
     it('finds a customer by email', async () => {
       const client = makeClient();

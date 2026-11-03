@@ -167,6 +167,8 @@ export interface QBInvoice {
   SyncToken: string;
   DocNumber?: string;
   TxnDate?: string;
+  /** YYYY-MM-DD payment due date. */
+  DueDate?: string;
   CustomerRef: QBRef;
   Line: QBLine[];
   TotalAmt?: number;
@@ -1111,6 +1113,59 @@ export class QuickBooksClient {
       log.error('Get payment failed', error as Error, { paymentId });
       return null;
     }
+  }
+
+  /** Invoices with an open balance (Balance is filterable server-side; verified live 11/03). */
+  async listOpenInvoices(): Promise<QBInvoice[]> {
+    const result = await this.request<{ QueryResponse?: { Invoice?: QBInvoice[] } }>(
+      `/query?query=${encodeURIComponent(`SELECT * FROM Invoice WHERE Balance > '0' MAXRESULTS 1000`)}&minorversion=70`
+    );
+    return result.QueryResponse?.Invoice ?? [];
+  }
+
+  /**
+   * Latest posted transaction date (YYYY-MM-DD) per account id between two
+   * dates: the "posted through" date for bank registers. Combines the
+   * TransactionList report (which lists a transfer only under its source
+   * account) with Transfer entities so transfer-only accounts (Profit
+   * First sub-accounts) get a date too. Accounts with nothing posted in
+   * the window are absent.
+   */
+  async latestPostingDates(startDate: string, endDate: string): Promise<Record<string, string>> {
+    const latest: Record<string, string> = {};
+    const bump = (accountId: string | undefined, date: string | undefined): void => {
+      if (!accountId || !date) return;
+      if (!latest[accountId] || date > latest[accountId]) latest[accountId] = date;
+    };
+
+    interface ReportRow {
+      Rows?: { Row?: ReportRow[] };
+      ColData?: Array<{ value?: string; id?: string }>;
+    }
+    const report = await this.report<{ Rows?: { Row?: ReportRow[] } }>('TransactionList', {
+      start_date: startDate,
+      end_date: endDate,
+      columns: 'tx_date,account_name',
+    });
+    const walk = (rows: ReportRow[] | undefined): void => {
+      for (const row of rows ?? []) {
+        if (row.Rows) walk(row.Rows.Row);
+        if (row.ColData) bump(row.ColData[1]?.id, row.ColData[0]?.value);
+      }
+    };
+    walk(report.Rows?.Row);
+
+    const sql = `SELECT * FROM Transfer WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}' MAXRESULTS 1000`;
+    const transfers = await this.request<{
+      QueryResponse?: {
+        Transfer?: Array<{ TxnDate: string; FromAccountRef?: { value: string }; ToAccountRef?: { value: string } }>;
+      };
+    }>(`/query?query=${encodeURIComponent(sql)}&minorversion=70`);
+    for (const t of transfers.QueryResponse?.Transfer ?? []) {
+      bump(t.FromAccountRef?.value, t.TxnDate);
+      bump(t.ToAccountRef?.value, t.TxnDate);
+    }
+    return latest;
   }
 
   async isConnected(): Promise<boolean> {
