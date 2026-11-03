@@ -205,6 +205,21 @@ describe('buildProposalForDirective', () => {
     expect(callArg).not.toHaveProperty('attendeeEmails');
   });
 
+  it('fetches busy events through the END of the last day suggestSlot scans (day-21 truncation, Ann Joffre 10/28)', async () => {
+    const deps = makeDeps();
+    mockGetPendingDirective.mockResolvedValueOnce(makeDirective());
+    await buildProposalForDirective(deps, 'dir_1');
+    const callArg = (deps.calendar.listEvents as unknown as {
+      mock: { calls: Array<[{ timeMin: string; timeMax: string }]> };
+    }).mock.calls[0][0];
+    const now = new Date('2026-05-30T12:00:00.000Z').getTime();
+    // Last scanned day = now + earliestDayOffset(1) + lookaheadDays(21) - 1
+    // = day 21. A timeMax of now + 21d lands MID-day-21 and hides that
+    // day's afternoon events; the window must reach past its end.
+    const endOfLastScannedDay = now + 22 * 86_400_000;
+    expect(new Date(callArg.timeMax).getTime()).toBeGreaterThanOrEqual(endOfLastScannedDay);
+  });
+
   describe('selectBusyEvents', () => {
     const TECH = ['mike@attackacrack.com', 'harrringtonm@gmail.com'];
     const ev = (summary: string, attendees: string[]) =>

@@ -29,7 +29,7 @@ import {
 } from '@aac/api-clients/gemini';
 import type { GmailClient } from '@aac/api-clients/gmail';
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
-import type { QuickBooksClient } from '@aac/api-clients/quickbooks';
+import type { QBEstimate, QuickBooksClient } from '@aac/api-clients/quickbooks';
 import type { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import {
   PIPEDRIVE_CROSS_SYSTEM_FIELDS,
@@ -43,6 +43,7 @@ import {
   collectFieldPhotoAttachments,
   collectStubPhotoAttachments,
   enrichStubEvent,
+  estimateDuration,
   mergePhotoAttachments,
   executeHoldEvent,
   executeStubEvent,
@@ -289,12 +290,13 @@ export async function dispatchSchedulingIntent(
         && !directive.qbEstimateId
         && deps.qb
       ) {
-        const estimateId = await findRecentEstimateId(
+        const estimate = await findRecentEstimate(
           deps.qb,
           directive.qbCustomerId,
           now().getTime(),
         );
-        if (estimateId) {
+        if (estimate) {
+          const estimateId = estimate.Id;
           const existing = await getDirectiveIdByEstimate(estimateId);
           if (existing) {
             summary.crossPathDuplicates++;
@@ -308,6 +310,16 @@ export async function dispatchSchedulingIntent(
           // Stamps the reverse index via writePendingDirective below, so
           // the QB webhook/reconcile dedups against THIS directive too.
           directive.qbEstimateId = estimateId;
+
+          // The normalizer had no estimate, so the directive carries no
+          // duration — without this, suggestSlot falls back to the 2h
+          // job default regardless of quoted scope (Chad Brown 10/23).
+          // Line can be absent on sparse payloads; skip rather than throw.
+          if (Array.isArray(estimate.Line)) {
+            const prediction = estimateDuration(estimate);
+            directive.durationPrediction = prediction;
+            directive.estimatedDurationHours = prediction.point;
+          }
 
           // The normalizer scored this directive without knowing an
           // estimate exists (the Quo path only looks it up here). Apply
@@ -910,11 +922,11 @@ const RECENT_ESTIMATE_WINDOW_DAYS = 90;
  * or null. Fail-open: a QB error just skips cross-path dedup for this
  * directive — same behavior as before the guard existed.
  */
-async function findRecentEstimateId(
+async function findRecentEstimate(
   qb: QuickBooksClient,
   qbCustomerId: string | undefined,
   nowMs: number,
-): Promise<string | null> {
+): Promise<QBEstimate | null> {
   if (!qbCustomerId) return null;
   try {
     if (!(await qb.isConnected())) return null;
@@ -925,7 +937,7 @@ async function findRecentEstimateId(
       const stamp = e.MetaData?.CreateTime ?? e.TxnDate;
       return stamp ? new Date(stamp).getTime() >= cutoff : false;
     });
-    return recent?.Id ?? null;
+    return recent ?? null;
   } catch (err) {
     log.warn('Cross-path estimate lookup failed — dedup skipped', {
       qbCustomerId,

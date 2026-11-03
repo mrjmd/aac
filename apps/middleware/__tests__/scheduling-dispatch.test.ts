@@ -268,6 +268,46 @@ describe('dispatchSchedulingIntent', () => {
       expect(mockWritePendingDirective.mock.calls[0][0].qbEstimateId).toBeUndefined();
     });
 
+    it('derives duration from the claimed estimate lines (quo-path 2h-default fix, Chad Brown 10/23)', async () => {
+      const qb = makeQb([
+        {
+          Id: 'est-55',
+          MetaData: { CreateTime: '2026-05-20T10:00:00Z' },
+          TotalAmt: 1175,
+          Line: [
+            {
+              DetailType: 'SalesItemLineDetail',
+              Amount: 1175,
+              Description:
+                'Inject high-grade hydrophobic urethane resin into the full-height foundation crack.',
+            },
+          ],
+        },
+      ]);
+      const summary = await dispatchSchedulingIntent(
+        { pd: makePd('John Smith', 'qb-cust-1'), cal: makeCal([]), gemini: quoteApproved(), quo: makeQuo(), qb, now: fixedNow },
+        ctxMsg(),
+      );
+      expect(summary.directivesWritten).toBe(1);
+      const written = mockWritePendingDirective.mock.calls[0][0];
+      expect(written.qbEstimateId).toBe('est-55');
+      expect(written.durationPrediction).not.toBeNull();
+      expect(written.durationPrediction.category).toBe('crack_injection');
+      expect(written.durationPrediction.point).toBeGreaterThan(0);
+      expect(written.estimatedDurationHours).toBe(written.durationPrediction.point);
+    });
+
+    it('leaves duration unset when the claimed estimate has no Line array (sparse payload)', async () => {
+      const qb = makeQb([recentEstimate]);
+      await dispatchSchedulingIntent(
+        { pd: makePd('John Smith', 'qb-cust-1'), cal: makeCal([]), gemini: quoteApproved(), quo: makeQuo(), qb, now: fixedNow },
+        ctxMsg(),
+      );
+      const written = mockWritePendingDirective.mock.calls[0][0];
+      expect(written.qbEstimateId).toBe('est-55');
+      expect(written.durationPrediction).toBeNull();
+    });
+
     it('fails open when the QB lookup throws', async () => {
       const qb = {
         isConnected: vi.fn().mockResolvedValue(true),

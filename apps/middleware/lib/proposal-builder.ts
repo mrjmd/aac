@@ -25,6 +25,7 @@ import type { QuoClient } from '@aac/api-clients/quo';
 import {
   buildEventDescription,
   DEFAULT_HOME_ADDRESS,
+  DEFAULT_POLICY,
   getTravelLeg,
   HOLD_TITLE_PREFIX,
   suggestSlot,
@@ -78,7 +79,13 @@ export interface ProposalBuilderResult {
 
 const PROPOSAL_PREFIX = 'prop_';
 const CONVERSATION_LOOKBACK_MS = 30 * 86_400_000; // 30 days
-const CALENDAR_LOOKAHEAD_MS = 21 * 86_400_000;
+// suggestSlot walks whole candidate days up to offset earliestDayOffset +
+// lookaheadDays - 1, so the fetch must reach the END of that last day —
+// now + lookaheadDays lands mid-day and hides the last day's afternoon
+// events (Ann Joffre double-book, 2026-10-28). +1 day covers the remainder
+// of the last day; the extra margin is harmless.
+const CALENDAR_LOOKAHEAD_MS =
+  (DEFAULT_POLICY.earliestDayOffset + DEFAULT_POLICY.lookaheadDays + 1) * 86_400_000;
 const CALENDAR_LOOKBACK_BUFFER_MS = 1 * 86_400_000;
 
 export async function buildProposalForDirective(

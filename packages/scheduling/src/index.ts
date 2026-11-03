@@ -29,6 +29,9 @@ export * from './resolve-callback-parent.js';
 export * from './name-match.js';
 export * from './replay.js';
 export * from './suggest-slot.js';
+// Duration prediction for directives — the Quo path resolves the estimate in
+// middleware's dispatch layer, so the predictor must be reachable from there.
+export { estimateDuration } from '@aac/quoting';
 export * from './build-event-description.js';
 export * from './proposal.js';
 export * from './travel-time.js';
