@@ -28,6 +28,7 @@ infrastructure used by ALL four apps and the tools directory.
 | GoogleAdsClient | google-ads.ts | aac-astro/scripts/google-ads-*.js |
 | GoogleAnalyticsClient | google-analytics.ts | aac-astro/scripts/ga4-report.js |
 | GoogleSearchConsoleClient | google-search-console.ts | aac-astro/scripts/gsc-report.js |
+| GoogleSignInClient | google-signin.ts | apps/field/lib/google-oauth.ts |
 
 ## Dependencies
 

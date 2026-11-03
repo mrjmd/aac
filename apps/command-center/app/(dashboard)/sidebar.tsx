@@ -38,7 +38,7 @@ export function Sidebar() {
   const [open, setOpen] = useState(false);
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await fetch("/auth/signout", { method: "POST" });
     router.push("/login");
   }
 

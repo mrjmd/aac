@@ -12,9 +12,13 @@ Shows system health, webhook audit trails, campaign stats, and provides
 
 - **Read-only by default.** This app does NOT write to external systems except
   for explicit "Approve" actions (e.g., approving a quote triggers a QBO workflow).
-- **No data of its own.** The Command Center aggregates state from Redis
-  (heartbeats, webhook audit, campaign stats) and Pipedrive (deals, renewals).
-  It does not maintain its own database.
+- **Owns item state (v2 plan).** Beyond aggregating Redis and the source
+  systems, the command center now owns its own items, sessions, and (planned)
+  the obligations registry and documents. See `docs/plans/command-center/`.
+- **Auth:** Google sign-in via `GoogleSignInClient`, email allowlist
+  `CC_ALLOWED_EMAILS`, Redis-backed sessions (`lib/session.ts`). The middleware
+  does a real session lookup on every request. Env: `CC_GOOGLE_OAUTH_CLIENT_ID`,
+  `CC_GOOGLE_OAUTH_CLIENT_SECRET`, `CC_ALLOWED_EMAILS`, Upstash vars.
 - **Import API clients from `@aac/api-clients`** for Pipedrive reads and
   approval actions.
 - **Import key schema from `@aac/shared-utils/redis`** to read the same keys

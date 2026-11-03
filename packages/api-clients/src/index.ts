@@ -61,6 +61,14 @@ export type {
   GetTravelTimeOptions,
 } from './google-maps.js';
 
+export { GoogleSignInClient, GOOGLE_IDENTITY_SCOPES } from './google-signin.js';
+export type {
+  GoogleSignInConfig,
+  AuthorizeUrlOptions,
+  GoogleTokens,
+  GoogleUserInfo,
+} from './google-signin.js';
+
 export { BufferClient } from './buffer.js';
 export type {
   BufferConfig,

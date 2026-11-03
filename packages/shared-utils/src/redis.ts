@@ -255,6 +255,14 @@ export const keys = {
   /** Per-user app config (home address, preferences). No TTL — user-owned, persists. */
   fieldUserConfig: (email: string) => `field:user-config:${email.toLowerCase()}` as const,
 
+  // ── Command Center ─────────────────────────────────────────────────
+
+  /** Session for the command center (opaque cookie ID → { email, name }) — renewed on each request */
+  ccSession: (sessionId: string) => `cc:session:${sessionId}` as const,
+
+  /** Short-lived OAuth state nonce → return-to path, for CSRF protection during Google sign-in */
+  ccOAuthState: (state: string) => `cc:oauth-state:${state}` as const,
+
   // ── Scheduling (SchedulingDirective Pipeline) ──────────────────────
 
   /** Individual SchedulingDirective JSON blob, written by middleware webhook/cron handlers in Crawl shadow mode. */
@@ -356,6 +364,8 @@ export const ttl = {
   attribution: 31_536_000,   // 1 year
   fieldSession: 31_536_000,  // 1 year (renewed on activity — effectively forever)
   fieldOAuthState: 600,      // 10 minutes (just long enough to complete the redirect)
+  ccSession: 2_592_000,      // 30 days (renewed on activity)
+  ccOAuthState: 600,         // 10 minutes
   fieldEventCustomer: 86_400, // 24h — PD address edits propagate within a day
   fieldTravelLeg: 2_592_000, // 30d — driving patterns at the same hour-of-week don't change fast
   agentProposal: 86_400,     // 24h — Matt either responds same day or we move on
