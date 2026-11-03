@@ -260,6 +260,14 @@ export const keys = {
   /** Session for the command center (opaque cookie ID → { email, name }) — renewed on each request */
   ccSession: (sessionId: string) => `cc:session:${sessionId}` as const,
 
+  /**
+   * Saved data snapshot for one command center card (gzip+base64 JSON
+   * {data, fetchedAt}), e.g. 'money:cash', 'calendar:index',
+   * 'customer:1303:quo'. Pages read these instead of calling the source
+   * live; each card refreshes on its own.
+   */
+  ccSnapshot: (name: string) => `cc:snap:${name}` as const,
+
   /** Short-lived OAuth state nonce → return-to path, for CSRF protection during Google sign-in */
   ccOAuthState: (state: string) => `cc:oauth-state:${state}` as const,
 
@@ -373,6 +381,7 @@ export const ttl = {
   attribution: 31_536_000,   // 1 year
   fieldSession: 31_536_000,  // 1 year (renewed on activity — effectively forever)
   fieldOAuthState: 600,      // 10 minutes (just long enough to complete the redirect)
+  ccSnapshot: 2_592_000,     // 30 days; refreshed long before that when viewed
   ccSession: 2_592_000,      // 30 days (renewed on activity)
   ccOAuthState: 600,         // 10 minutes
   fieldEventCustomer: 86_400, // 24h — PD address edits propagate within a day

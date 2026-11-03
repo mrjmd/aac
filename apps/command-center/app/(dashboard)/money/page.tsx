@@ -1,7 +1,7 @@
-import { getCashPosition, type CashAccount } from "@aac/metrics";
-import { nyDate } from "@aac/items";
+import type { CashAccount } from "@aac/metrics";
 import { cn } from "@aac/ui";
-import { getQuickBooks } from "@/lib/quickbooks";
+import { cards, loadSafe } from "@/lib/cards";
+import { Freshness } from "../components/freshness";
 
 export const dynamic = "force-dynamic";
 
@@ -16,19 +16,19 @@ function fmtDate(d: string): string {
 const STALE_DAYS = 7;
 
 export default async function MoneyPage() {
-  let position;
-  try {
-    position = await getCashPosition(getQuickBooks(), nyDate(new Date()));
-  } catch (err) {
+  const card = cards.cash();
+  const { snap, error } = await loadSafe(card);
+  if (!snap) {
     return (
       <div className="mx-auto max-w-3xl">
         <h1 className="font-display text-2xl font-bold text-aac-dark">Money</h1>
         <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          Couldn&apos;t reach QuickBooks: {(err as Error).message}
+          Couldn&apos;t reach QuickBooks: {error}
         </p>
       </div>
     );
   }
+  const position = snap.data;
   const relay = position.accounts.filter((a) => a.bank === "Relay");
   const other = position.accounts.filter((a) => a.bank !== "Relay");
 
@@ -36,7 +36,7 @@ export default async function MoneyPage() {
     <div className="mx-auto max-w-3xl">
       <header className="mb-5">
         <h1 className="font-display text-2xl font-bold text-aac-dark">Money</h1>
-        <p className="mt-1 text-xs text-zinc-400">Live from QuickBooks.</p>
+        <Freshness name={card.name} fetchedAt={snap.fetchedAt} label="From QuickBooks," className="mt-1" />
       </header>
 
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">

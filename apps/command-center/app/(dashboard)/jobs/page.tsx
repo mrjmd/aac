@@ -1,7 +1,8 @@
-import { getTechUtilization, type TechWeek } from "@aac/metrics";
+
 import { nyDate } from "@aac/items";
 import { cn } from "@aac/ui";
-import { getCalendar, technicianEmails } from "@/lib/calendar";
+import { cards, loadSafe } from "@/lib/cards";
+import { Freshness } from "../components/freshness";
 
 export const dynamic = "force-dynamic";
 
@@ -12,19 +13,19 @@ const pct = (p: number | null) => (p === null ? "OOO" : `${Math.round(p * 100)}%
 
 export default async function JobsPage() {
   const today = nyDate(new Date());
-  let weeks: TechWeek[];
-  try {
-    weeks = await getTechUtilization(getCalendar(), technicianEmails(), today);
-  } catch (err) {
+  const card = cards.techWeeks();
+  const { snap, error } = await loadSafe(card);
+  if (!snap) {
     return (
       <div className="mx-auto max-w-3xl">
         <h1 className="font-display text-2xl font-bold text-aac-dark">Jobs</h1>
         <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          Couldn&apos;t read the calendar: {(err as Error).message}
+          Couldn&apos;t read the calendar: {error}
         </p>
       </div>
     );
   }
+  const weeks = snap.data;
   const thisWeekIdx = weeks.findIndex((w, i) => w.weekStart <= today && (weeks[i + 1]?.weekStart ?? "9999") > today);
   const ahead = weeks.slice(thisWeekIdx + 1);
   const fullWeeksAhead = ahead.filter((w) => (w.bookedPct ?? 0) >= 0.75).length;
@@ -33,7 +34,7 @@ export default async function JobsPage() {
     <div className="mx-auto max-w-3xl">
       <header className="mb-5">
         <h1 className="font-display text-2xl font-bold text-aac-dark">Jobs</h1>
-        <p className="mt-1 text-xs text-zinc-400">Mike&apos;s calendar, live.</p>
+        <Freshness name={card.name} fetchedAt={snap.fetchedAt} label="Mike's calendar," className="mt-1" />
       </header>
 
       <div className="mb-6 rounded-xl border border-zinc-200 bg-white p-4">

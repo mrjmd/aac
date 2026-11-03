@@ -24,6 +24,14 @@ export default async function LoginPage({
         >
           Sign in with Google
         </a>
+        {process.env.NODE_ENV === "development" && (
+          <a
+            href={`/auth/dev${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+            className="mt-3 block text-center text-xs text-zinc-400 hover:text-aac-blue"
+          >
+            Local sign-in (this Mac only)
+          </a>
+        )}
       </div>
     </div>
   );

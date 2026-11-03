@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCustomerTimeline, type CustomerTimeline, type TimelineEntry } from "@aac/customers";
+import { buildCustomerTimeline, type TimelineEntry } from "@aac/customers";
 import { nyDate } from "@aac/items";
 import { EVENT_CLASS_COLOR_IDS, HOLD_TITLE_PREFIX, STUB_TITLE_PREFIX } from "@aac/scheduling";
 import { cn } from "@aac/ui";
-import { getTimelineDeps } from "@/lib/customers";
+import { cards, loadSafe } from "@/lib/cards";
+import { Freshness } from "../../components/freshness";
 
 export const dynamic = "force-dynamic";
 
@@ -113,23 +114,43 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "ba
 export default async function CustomerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!/^\d+$/.test(id)) notFound();
-  let t: CustomerTimeline | null;
-  try {
-    t = await getCustomerTimeline(getTimelineDeps(), id, { today: nyDate(new Date()) });
-  } catch (err) {
+  const qboCard = cards.customerQbo(id);
+  const qbo = await loadSafe(qboCard);
+  if (!qbo.snap) {
     return (
       <div className="mx-auto max-w-3xl">
         <h1 className="font-display text-2xl font-bold text-aac-dark">Customer</h1>
         <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          Couldn&apos;t reach QuickBooks: {(err as Error).message}
+          Couldn&apos;t reach QuickBooks: {qbo.error}
         </p>
       </div>
     );
   }
-  if (!t) notFound();
+  const part = qbo.snap.data;
+  if (!part) notFound();
+
+  const quoCard = cards.customerQuo(id);
+  const emailCard = cards.customerEmail(id);
+  const calCard = cards.calendarIndex();
+  const [quo, email, cal] = await Promise.all([loadSafe(quoCard), loadSafe(emailCard), loadSafe(calCard)]);
+  const t = buildCustomerTimeline({
+    ...part,
+    messages: quo.snap?.data.messages ?? [],
+    calls: quo.snap?.data.calls ?? [],
+    emails: email.snap?.data ?? [],
+    events: cal.snap?.data ?? [],
+    today: nyDate(new Date()),
+    now: new Date(),
+  });
+  const sources = [
+    { card: qboCard, label: "QuickBooks", r: qbo },
+    { card: quoCard, label: "Texts & calls", r: quo },
+    { card: emailCard, label: "Email", r: email },
+    { card: calCard, label: "Calendar", r: cal },
+  ];
   const { profile, totals } = t;
   const now = new Date().toISOString();
-  const failed = t.sources.filter((s) => !s.ok);
+  const failed = sources.filter((s) => s.r.error);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -155,6 +176,12 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
         </p>
       </header>
 
+      <div className="mb-4 flex flex-wrap gap-x-4 gap-y-1">
+        {sources.map((s) => (
+          <Freshness key={s.card.name} name={s.card.name} fetchedAt={s.r.snap?.fetchedAt} label={s.label} />
+        ))}
+      </div>
+
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Open quotes" value={money(totals.openQuotes)} />
         <Stat label="Accepted" value={money(totals.acceptedQuotes)} />
@@ -168,8 +195,7 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
 
       {failed.length > 0 && (
         <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-          Missing from this timeline:{" "}
-          {failed.map((s) => `${s.source} (${s.error ?? "error"})`).join("; ")}
+          Missing from this timeline: {failed.map((s) => `${s.label} (${s.r.error})`).join("; ")}
         </p>
       )}
 
@@ -185,8 +211,7 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
           </div>
         )}
         <p className="mt-3 text-xs leading-relaxed text-zinc-400">
-          Sources: {t.sources.map((s) => `${s.source} ${s.ok ? s.count : "failed"}`).join(" · ")}. Texts and calls are
-          the main business line only. Calendar visits match on address or phone; &ldquo;name match&rdquo; means only the
+          Texts and calls are the main business line only. Calendar visits match on address or phone; &ldquo;name match&rdquo; means only the
           name in the event title matched.
         </p>
       </section>

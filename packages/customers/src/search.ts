@@ -13,6 +13,22 @@ export interface CustomerHit {
   matchedBy: 'phone' | 'email' | 'name' | 'address';
 }
 
+/** Keep only the fields search and display use, so the full list stays small to store. */
+export function trimCustomer(c: QBCustomer): QBCustomer {
+  const keep = <K extends keyof QBCustomer>(k: K) => (c[k] !== undefined ? { [k]: c[k] } : {});
+  return {
+    Id: c.Id,
+    DisplayName: c.DisplayName,
+    ...keep('CompanyName'),
+    ...keep('PrimaryPhone'),
+    ...keep('Mobile'),
+    ...keep('AlternatePhone'),
+    ...keep('PrimaryEmailAddr'),
+    ...(c.BillAddr ? { BillAddr: { Line1: c.BillAddr.Line1, City: c.BillAddr.City } } : {}),
+    ...keep('Active'),
+  };
+}
+
 /**
  * Find customers by whatever Matt types: a name (typo-tolerant), a phone
  * in any format, an email, or part of an address. Best matches first.

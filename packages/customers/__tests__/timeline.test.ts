@@ -1,7 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import type { QBCustomer, QBEstimate, QBInvoice } from '@aac/api-clients/quickbooks';
-import { buildCustomerTimeline, eventMatch, customerProfile, getCustomerTimeline, searchCustomers } from '../src/index.js';
+import {
+  buildCustomerTimeline,
+  customerProfile,
+  eventMatch,
+  fetchEmailPart,
+  fetchQboPart,
+  fetchQuoPart,
+  searchCustomers,
+  trimCustomer,
+  trimEvent,
+} from '../src/index.js';
 
 const customer: QBCustomer & { Id: string } = {
   Id: '3771',
@@ -93,32 +103,60 @@ describe('buildCustomerTimeline', () => {
   });
 });
 
-describe('getCustomerTimeline', () => {
-  it('returns null for an unknown customer', async () => {
-    const qb = { getCustomer: vi.fn().mockResolvedValue(null), getEstimatesByCustomer: vi.fn(), getInvoicesByCustomer: vi.fn(), getPayment: vi.fn() };
-    expect(await getCustomerTimeline({ qb }, '1', { today: '2026-11-03' })).toBeNull();
-  });
-  it('degrades a failing source to a status row instead of throwing', async () => {
+describe('fetch parts', () => {
+  it('fetchQboPart returns null for an unknown customer', async () => {
     const qb = {
-      getCustomer: vi.fn().mockResolvedValue(customer),
+      getCustomer: vi.fn().mockResolvedValue(null),
       getEstimatesByCustomer: vi.fn().mockResolvedValue([]),
       getInvoicesByCustomer: vi.fn().mockResolvedValue([]),
       getPayment: vi.fn(),
     };
+    expect(await fetchQboPart(qb, '1')).toBeNull();
+  });
+  it('fetchQboPart loads the payments linked from invoices once each', async () => {
+    const qb = {
+      getCustomer: vi.fn().mockResolvedValue(customer),
+      getEstimatesByCustomer: vi.fn().mockResolvedValue([]),
+      getInvoicesByCustomer: vi.fn().mockResolvedValue([
+        inv({ Id: '1', LinkedTxn: [{ TxnId: 'p1', TxnType: 'Payment' }, { TxnId: 'e1', TxnType: 'Estimate' }] }),
+        inv({ Id: '2', LinkedTxn: [{ TxnId: 'p1', TxnType: 'Payment' }] }),
+      ]),
+      getPayment: vi.fn().mockResolvedValue({ Id: 'p1', SyncToken: '0', TotalAmt: 5, CustomerRef: { value: '3771' } }),
+    };
+    const part = await fetchQboPart(qb, '3771');
+    expect(qb.getPayment).toHaveBeenCalledTimes(1);
+    expect(part?.payments).toHaveLength(1);
+  });
+  it('fetchQuoPart pages through texts for each number', async () => {
     const quo = {
-      listMessages: vi.fn().mockRejectedValue(new Error('Quo 500')),
+      listMessages: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [{ id: 'a' }], nextPageToken: 'n' })
+        .mockResolvedValueOnce({ data: [{ id: 'b' }] }),
       listCalls: vi.fn().mockResolvedValue({ data: [] }),
     };
-    const gmail = { listMessages: vi.fn().mockResolvedValue([]) };
-    const t = await getCustomerTimeline({ qb, quo, gmail }, '3771', { today: '2026-11-03', now: new Date('2026-11-03T18:00:00Z') });
-    expect(t?.sources).toEqual([
-      { source: 'quickbooks', ok: true, count: 0 },
-      { source: 'gmail', ok: true, count: 0 },
-      { source: 'quo', ok: false, count: 0, error: 'Quo 500' },
-    ]);
+    const part = await fetchQuoPart(quo, ['+16175550101']);
+    expect(part.messages.map((m) => m.id)).toEqual(['a', 'b']);
+    expect(quo.listMessages.mock.calls[1][0].pageToken).toBe('n');
+  });
+  it('fetchEmailPart searches every address and drops bodies', async () => {
+    const gmail = {
+      listMessages: vi.fn().mockResolvedValue([
+        { id: 'g', threadId: 't', from: 'J', fromAddress: 'jill@example.com', to: [], subject: 's', at: 'x', labelIds: [], snippet: 'sn', body: 'long body', attachmentNames: [], attachments: [] },
+      ]),
+    };
+    const out = await fetchEmailPart(gmail, ['jill@example.com', 'jill.work@example.com']);
     expect(gmail.listMessages.mock.calls[0][0].query).toBe(
       '{from:jill@example.com to:jill@example.com cc:jill@example.com from:jill.work@example.com to:jill.work@example.com cc:jill.work@example.com} -in:spam -in:trash',
     );
+    expect(out).toEqual([{ id: 'g', threadId: 't', fromAddress: 'jill@example.com', subject: 's', at: 'x', snippet: 'sn' }]);
+    expect(await fetchEmailPart(gmail, [])).toEqual([]);
+  });
+  it('trimEvent keeps only phone numbers from the description, and still matches by phone', () => {
+    const t = trimEvent(ev({ summary: 'STUB — J', description: 'Long notes...\nCustomer phone: 617-555-0101\nGate code 1234' }));
+    expect(t.description).toBe('617-555-0101');
+    expect(eventMatch(t, customerProfile(customer))).toBe('phone');
+    expect(trimEvent(ev({ description: 'no phone here' })).description).toBeUndefined();
   });
 });
 
@@ -134,6 +172,11 @@ describe('searchCustomers', () => {
   it('finds by typo-tolerant name and by company', () => {
     expect(searchCustomers(all, 'fairwether')[0]?.id).toBe('3771');
     expect(searchCustomers(all, 'champion').map((h) => h.id)).toEqual(['2', '3']);
+  });
+  it('trimCustomer keeps what search needs', () => {
+    const t = trimCustomer({ ...customer, SyncToken: '9' });
+    expect(t.SyncToken).toBeUndefined();
+    expect(searchCustomers([t], '6175550101')).toHaveLength(1);
   });
   it('finds by address', () => {
     expect(searchCustomers(all, '39 hobart')[0]?.matchedBy).toBe('address');

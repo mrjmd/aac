@@ -1,11 +1,10 @@
-import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import type { GmailClient, GmailMessage } from '@aac/api-clients/gmail';
 import type { QBCustomer, QBEstimate, QBInvoice, QBPayment, QuickBooksClient } from '@aac/api-clients/quickbooks';
 import type { QuoCall, QuoClient, QuoMessage } from '@aac/api-clients/quo';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import { eventMatchesName, nameTokens, streetKey } from './match.js';
 
-const DAY = 86_400_000;
 
 /** Who the customer is, as QBO knows them, plus the handles we join on. */
 export interface CustomerProfile {
@@ -40,12 +39,17 @@ export interface TimelineEntry {
   visit?: { colorId?: string; end: string; matchedBy: 'address' | 'phone' | 'name' };
 }
 
-export interface SourceStatus {
-  source: 'quickbooks' | 'quo' | 'gmail' | 'calendar';
-  ok: boolean;
-  count: number;
-  error?: string;
-}
+/** The email fields the timeline uses (bodies are left out so parts stay small to store). */
+export type TimelineEmail = Pick<GmailMessage, 'id' | 'threadId' | 'fromAddress' | 'subject' | 'at' | 'snippet'>;
+
+/**
+ * The calendar fields the timeline uses. `description` holds only the
+ * phone numbers found in the real description (all eventMatch reads), so
+ * a whole calendar's worth of events stays small to store.
+ */
+export type TimelineEvent = Pick<CalendarEvent, 'id' | 'summary' | 'location' | 'start' | 'end' | 'colorId' | 'htmlLink'> & {
+  description?: string;
+};
 
 export interface CustomerTimeline {
   profile: CustomerProfile;
@@ -62,7 +66,6 @@ export interface CustomerTimeline {
   };
   lastContact?: TimelineEntry;
   nextVisit?: TimelineEntry;
-  sources: SourceStatus[];
 }
 
 export interface TimelineInputs {
@@ -72,12 +75,12 @@ export interface TimelineInputs {
   payments: QBPayment[];
   messages: QuoMessage[];
   calls: QuoCall[];
-  emails: GmailMessage[];
-  events: CalendarEvent[];
+  emails: TimelineEmail[];
+  /** Any calendar events; only the ones that match the customer are kept. */
+  events: TimelineEvent[];
   /** YYYY-MM-DD today (America/New_York), for overdue and upcoming. */
   today: string;
   now: Date;
-  sources?: SourceStatus[];
 }
 
 // ── profile ──────────────────────────────────────────────────────────
@@ -122,7 +125,7 @@ const PHONE_RE = /(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g;
  * at a different address, so a shared surname doesn't pull in a
  * stranger's job.
  */
-export function eventMatch(ev: CalendarEvent, profile: CustomerProfile): 'address' | 'phone' | 'name' | null {
+export function eventMatch(ev: TimelineEvent, profile: CustomerProfile): 'address' | 'phone' | 'name' | null {
   const evKey = streetKey(ev.location ?? '') ?? streetKey(ev.summary, true);
   if (sameStreet(evKey, profile.streetKey)) return 'address';
   const evPhones = (ev.description ?? '').match(PHONE_RE) ?? [];
@@ -272,27 +275,15 @@ export function buildCustomerTimeline(input: TimelineInputs): CustomerTimeline {
     },
     lastContact: contacts[0],
     nextVisit: upcoming[upcoming.length - 1],
-    sources: input.sources ?? [],
   };
 }
 
-// ── fetch ────────────────────────────────────────────────────────────
-
-export interface TimelineDeps {
-  qb: Pick<QuickBooksClient, 'getCustomer' | 'getEstimatesByCustomer' | 'getInvoicesByCustomer' | 'getPayment'>;
-  quo?: Pick<QuoClient, 'listMessages' | 'listCalls'>;
-  gmail?: Pick<GmailClient, 'listMessages'>;
-  calendar?: Pick<GoogleCalendarClient, 'listEvents'>;
-}
+// ── fetch (one part per source, so each can be saved and refreshed on its own) ──
 
 /** Quo pages are 50; a long customer relationship rarely passes a few hundred texts. */
 const QUO_MAX_PAGES = 6;
 const EMAIL_MAX = 40;
 const MAX_PAYMENTS = 25;
-/** Calendar window: from the first sign of the customer (capped) to this far ahead. */
-const CAL_LOOKBACK_CAP_DAYS = 3 * 365;
-const CAL_LOOKAHEAD_DAYS = 180;
-const CAL_LEAD_DAYS = 30;
 
 async function pages<T>(fetchPage: (token?: string) => Promise<{ data: T[]; nextPageToken?: string }>): Promise<T[]> {
   const out: T[] = [];
@@ -306,114 +297,66 @@ async function pages<T>(fetchPage: (token?: string) => Promise<{ data: T[]; next
   return out;
 }
 
-async function settle<T>(source: SourceStatus['source'], sources: SourceStatus[], run: () => Promise<T[]>): Promise<T[]> {
-  try {
-    const rows = await run();
-    sources.push({ source, ok: true, count: rows.length });
-    return rows;
-  } catch (err) {
-    sources.push({ source, ok: false, count: 0, error: (err as Error).message });
-    return [];
-  }
+export interface QboPart {
+  customer: QBCustomer & { Id: string };
+  estimates: QBEstimate[];
+  invoices: QBInvoice[];
+  payments: QBPayment[];
 }
 
-/**
- * Fetch everything we know about one QBO customer and build the timeline.
- * QBO is required (it defines the customer); every other source is
- * optional and degrades to a source error instead of failing the page.
- * Returns null when the customer doesn't exist.
- */
-export async function getCustomerTimeline(
-  deps: TimelineDeps,
+/** QBO defines the customer. Null when the id doesn't exist. */
+export async function fetchQboPart(
+  qb: Pick<QuickBooksClient, 'getCustomer' | 'getEstimatesByCustomer' | 'getInvoicesByCustomer' | 'getPayment'>,
   customerId: string,
-  opts: { today: string; now?: Date },
-): Promise<CustomerTimeline | null> {
-  const now = opts.now ?? new Date();
-  const customer = await deps.qb.getCustomer(customerId);
-  if (!customer?.Id) return null;
-  const withId = customer as QBCustomer & { Id: string };
-  const profile = customerProfile(withId);
-  const sources: SourceStatus[] = [];
-
-  const [estimates, invoices] = await Promise.all([
-    deps.qb.getEstimatesByCustomer(customerId),
-    deps.qb.getInvoicesByCustomer(customerId),
+): Promise<QboPart | null> {
+  const [customer, estimates, invoices] = await Promise.all([
+    qb.getCustomer(customerId),
+    qb.getEstimatesByCustomer(customerId),
+    qb.getInvoicesByCustomer(customerId),
   ]);
+  if (!customer?.Id) return null;
   const paymentIds = [
     ...new Set(invoices.flatMap((i) => (i.LinkedTxn ?? []).filter((l) => l.TxnType === 'Payment').map((l) => l.TxnId))),
   ].slice(0, MAX_PAYMENTS);
+  const payments = (await Promise.all(paymentIds.map((id) => qb.getPayment(id)))).filter((p): p is QBPayment => !!p);
+  return { customer: customer as QBCustomer & { Id: string }, estimates, invoices, payments };
+}
 
-  const quo = deps.quo;
-  const gmail = deps.gmail;
-  const [payments, messages, calls, emails] = await Promise.all([
-    Promise.all(paymentIds.map((id) => deps.qb.getPayment(id))).then((ps) => ps.filter((p): p is QBPayment => !!p)),
-    quo
-      ? settle('quo', sources, async () =>
-          (await Promise.all(profile.phones.map((p) => pages((pageToken) => quo.listMessages({ participantE164: p, maxResults: 50, pageToken }))))).flat(),
-        )
-      : Promise.resolve([] as QuoMessage[]),
-    quo
-      ? settle('quo', sources, async () =>
-          (await Promise.all(profile.phones.map((p) => pages((pageToken) => quo.listCalls({ participantE164: p, maxResults: 50, pageToken }))))).flat(),
-        )
-      : Promise.resolve([] as QuoCall[]),
-    gmail && profile.emails.length
-      ? settle('gmail', sources, () =>
-          gmail.listMessages({
-            query: `{${profile.emails.map((e) => `from:${e} to:${e} cc:${e}`).join(' ')}} -in:spam -in:trash`,
-            maxResults: EMAIL_MAX,
-          }),
-        )
-      : Promise.resolve([] as GmailMessage[]),
+export interface QuoPart {
+  messages: QuoMessage[];
+  calls: QuoCall[];
+}
+
+/** Texts and calls with each of the customer's numbers on the main line. */
+export async function fetchQuoPart(quo: Pick<QuoClient, 'listMessages' | 'listCalls'>, phones: string[]): Promise<QuoPart> {
+  const [messages, calls] = await Promise.all([
+    Promise.all(phones.map((p) => pages((pageToken) => quo.listMessages({ participantE164: p, maxResults: 50, pageToken })))),
+    Promise.all(phones.map((p) => pages((pageToken) => quo.listCalls({ participantE164: p, maxResults: 50, pageToken })))),
   ]);
-  sources.unshift({ source: 'quickbooks', ok: true, count: estimates.length + invoices.length + payments.length });
+  return { messages: messages.flat(), calls: calls.flat() };
+}
 
-  // Calendar window starts a month before the earliest thing we know about.
-  const known = [
-    ...estimates.map((e) => e.TxnDate),
-    ...invoices.map((i) => i.TxnDate),
-    ...messages.map((m) => m.createdAt.slice(0, 10)),
-    ...calls.map((c) => c.createdAt.slice(0, 10)),
-  ].filter((d): d is string => !!d).sort();
-  const floor = new Date(now.getTime() - CAL_LOOKBACK_CAP_DAYS * DAY).toISOString();
-  const first = known[0] ? new Date(Date.parse(`${known[0]}T00:00:00Z`) - CAL_LEAD_DAYS * DAY).toISOString() : floor;
-  const calendar = deps.calendar;
-  const events = calendar
-    ? await settle('calendar', sources, () =>
-        calendar.listEvents({
-          timeMin: first > floor ? first : floor,
-          timeMax: new Date(now.getTime() + CAL_LOOKAHEAD_DAYS * DAY).toISOString(),
-        }),
-      )
-    : [];
-
-  // Quo reported twice (texts + calls); fold into one status row.
-  const quoRows = sources.filter((s) => s.source === 'quo');
-  const merged: SourceStatus[] = sources.filter((s) => s.source !== 'quo');
-  if (quoRows.length) {
-    merged.push({
-      source: 'quo',
-      ok: quoRows.every((s) => s.ok),
-      count: quoRows.reduce((n, s) => n + s.count, 0),
-      error: quoRows.find((s) => s.error)?.error,
-    });
-  }
-
-  const timeline = buildCustomerTimeline({
-    customer: withId,
-    estimates,
-    invoices,
-    payments,
-    messages,
-    calls,
-    emails,
-    events,
-    today: opts.today,
-    now,
-    sources: merged,
+/** Mail to, from or cc'ing any of the customer's addresses. */
+export async function fetchEmailPart(gmail: Pick<GmailClient, 'listMessages'>, emails: string[]): Promise<TimelineEmail[]> {
+  if (emails.length === 0) return [];
+  const messages = await gmail.listMessages({
+    query: `{${emails.map((e) => `from:${e} to:${e} cc:${e}`).join(' ')}} -in:spam -in:trash`,
+    maxResults: EMAIL_MAX,
   });
-  // Calendar count = events that matched, not the window size.
-  const cal = timeline.sources.find((s) => s.source === 'calendar');
-  if (cal) cal.count = timeline.entries.filter((e) => e.kind === 'visit').length;
-  return timeline;
+  return messages.map(({ id, threadId, fromAddress, subject, at, snippet }) => ({ id, threadId, fromAddress, subject, at, snippet }));
+}
+
+/** Shrink a calendar event to what matching and display need. */
+export function trimEvent(ev: CalendarEvent): TimelineEvent {
+  const phones = (ev.description ?? '').match(PHONE_RE) ?? [];
+  return {
+    id: ev.id,
+    summary: ev.summary,
+    location: ev.location,
+    start: ev.start,
+    end: ev.end,
+    colorId: ev.colorId,
+    htmlLink: ev.htmlLink,
+    ...(phones.length ? { description: phones.join(' ') } : {}),
+  };
 }

@@ -1,27 +1,25 @@
 import Link from "next/link";
 import { searchCustomers, type CustomerHit } from "@aac/customers";
 import { cn } from "@aac/ui";
-import { allCustomers } from "@/lib/customers";
+import { cards, loadSafe } from "@/lib/cards";
+import { Freshness } from "../components/freshness";
 
 export const dynamic = "force-dynamic";
 
 export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const q = ((await searchParams).q ?? "").trim();
-  let hits: CustomerHit[] = [];
-  let error: string | null = null;
-  if (q) {
-    try {
-      hits = searchCustomers(await allCustomers(), q);
-    } catch (err) {
-      error = (err as Error).message;
-    }
-  }
+  const index = cards.customerIndex();
+  const { snap, error } = await loadSafe(index);
+  const hits: CustomerHit[] = q && snap ? searchCustomers(snap.data, q) : [];
 
   return (
     <div className="mx-auto max-w-3xl">
       <header className="mb-5">
         <h1 className="font-display text-2xl font-bold text-aac-dark">Customers</h1>
-        <p className="mt-1 text-xs text-zinc-400">Search by name, phone, email or address.</p>
+        <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-zinc-400">
+          Search by name, phone, email or address.
+          <Freshness name={index.name} fetchedAt={snap?.fetchedAt} label={`${snap?.data.length ?? 0} QuickBooks customers`} />
+        </p>
       </header>
 
       <form action="/customers" className="mb-5">
