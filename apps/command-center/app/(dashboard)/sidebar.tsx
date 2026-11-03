@@ -26,7 +26,7 @@ const nav = [
   { href: "/health", label: "System Health", icon: Activity },
   { href: "/todos", label: "To-Do", icon: CheckSquare },
   { href: "/scheduling", label: "Scheduling", icon: CalendarClock },
-  { href: "/financials", label: "Financials", icon: DollarSign },
+  { href: "/money", label: "Money", icon: DollarSign },
   { href: "/leads", label: "Leads", icon: Users },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/campaigns", label: "Campaigns", icon: Megaphone },
