@@ -20,7 +20,7 @@ import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { QuoClient, type QuoMessage, type QuoCall, type QuoConversation } from '@aac/api-clients/quo';
 import { GoogleCalendarClient, type CalendarEvent } from '@aac/api-clients/google-calendar';
 import { GmailClient, type GmailMessage } from '@aac/api-clients/gmail';
-import { quickNormalizePhone } from '@aac/shared-utils/phone';
+import { isInternalPhone, quickNormalizePhone } from '@aac/shared-utils/phone';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
 
@@ -424,7 +424,7 @@ async function main(): Promise<void> {
   const historySince = now - THREAD_HISTORY_DAYS * DAY;
   console.log(`Quo conversations active since ${new Date(activeSince).toISOString().slice(0, 10)}…`);
 
-  const ourDigits = requireEnv('QUO_PHONE_NUMBER').replace(/\D/g, '');
+  const ownLine = requireEnv('QUO_PHONE_NUMBER');
   // Quo's list is NOT ordered by lastActivityAt (measured 2026-09-08: a
   // thread active that day sat on page 8), so never early-break on row order.
   // Bound the sweep server-side with updatedAfter and page to exhaustion.
@@ -459,14 +459,11 @@ async function main(): Promise<void> {
 
   // One thread per external participant phone. Internal AAC lines are not
   // customers — the agent platform's comms line carries test/agent traffic
-  // (e.g. the fake "Jim Smith" thread) and must never surface in triage.
-  const INTERNAL_DIGITS = new Set([
-    ourDigits,
-    '16177660151', // QUO_AGENT_PHONE_NUMBER — apps/agent comms line
-  ]);
+  // (e.g. the fake "Jim Smith" thread) and Ed's cell is a partner, so
+  // neither may surface in triage (@aac/shared-utils INTERNAL_PHONES).
   const byPhone = new Map<string, QuoConversation>();
   for (const c of activeConvos) {
-    const others = (c.participants ?? []).filter((p) => !INTERNAL_DIGITS.has(p.replace(/\D/g, '')));
+    const others = (c.participants ?? []).filter((p) => !isInternalPhone(p, ownLine));
     for (const phone of others) {
       const prev = byPhone.get(phone);
       if (!prev || c.lastActivityAt > prev.lastActivityAt) byPhone.set(phone, c);

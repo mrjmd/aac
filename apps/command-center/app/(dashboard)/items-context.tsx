@@ -148,5 +148,9 @@ export const KIND: Record<string, string> = {
   L1: "Text thread",
   L2: "Email thread",
   T4: "Scope change",
+  AW: "Waiting on your reply",
+  FUP: "Follow-up draft",
+  FUPF: "Funnel flag",
+  QD: "Bot quote draft",
   TODO: "Your to-do",
 };

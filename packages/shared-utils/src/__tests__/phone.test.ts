@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  isInternalPhone,
   normalizePhone,
   parsePhone,
   phonesMatch,
@@ -133,5 +134,15 @@ describe('quickNormalizePhone', () => {
   it('returns null for null/undefined', () => {
     expect(quickNormalizePhone(null)).toBeNull();
     expect(quickNormalizePhone(undefined)).toBeNull();
+  });
+});
+
+describe('isInternalPhone', () => {
+  it('matches internal lines in any format, and the own line when given', () => {
+    expect(isInternalPhone('(339) 217-5091')).toBe(true);
+    expect(isInternalPhone('+16177660151')).toBe(true);
+    expect(isInternalPhone('+16175551234')).toBe(false);
+    expect(isInternalPhone('617-668-1677', '+16176681677')).toBe(true);
+    expect(isInternalPhone(null)).toBe(false);
   });
 });

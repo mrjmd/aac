@@ -41,13 +41,11 @@ retry() {
 }
 
 retry npx tsx tools/src/triage/collect.ts
-retry npx tsx tools/src/triage/analyze.ts
-# refresh bot-draft edit labels so the dashboard section shows ownership
-# states (best-effort — the section renders fine without it)
+# refresh bot-draft edit labels first: render shows ownership states and
+# analyze's item push drops drafts Matt already handled (best-effort)
 npx tsx tools/src/quote-trigger/harvest-edits.ts || true
-# publish findings as command-center items (best-effort bridge until the
-# detectors run in the cloud worker — tools/src/items/push-triage.ts)
-npx tsx tools/src/items/push-triage.ts || true
+# analyze.ts also publishes the run as command-center items (push-items.ts)
+retry npx tsx tools/src/triage/analyze.ts
 npx tsx tools/src/triage/render.ts
 echo "Open: analysis/triage.html"
 open_dashboard

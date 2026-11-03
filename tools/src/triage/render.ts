@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { TodoItem } from '@aac/shared-utils/types';
 import type { Finding, FindingsFile, Section } from './analyze.ts';
+import { botDraftRows, loadAwaiting, loadDraftLabels, loadFollowupQueue, type FupDraft, type FupQueue } from './sections.ts';
 
 const ET = 'America/New_York';
 
@@ -24,44 +25,8 @@ const ET = 'America/New_York';
  * it ages out of the 7d window. Everything renders empty-safe when absent.
  */
 function botDraftsSection(workerLog: Array<Record<string, unknown>>): string {
-  const logPath = 'analysis/data/quote-trigger/shadow-log.jsonl';
-  const labelsPath = 'analysis/data/quote-trigger/edit-labels.jsonl';
-  const weekAgo = Date.now() - 7 * 86_400_000;
-  const legacyRows: Array<Record<string, unknown>> = fs.existsSync(logPath)
-    ? fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
-        .filter((r) => new Date(String(r.at)).getTime() >= weekAgo && r.outcome !== 'no-trigger')
-    : [];
-  // Worker TriggerRunlogEntry → the row shape this section always rendered.
-  const workerRows: Array<Record<string, unknown>> = workerLog
-    .filter((e) => e.trigger && e.trigger !== 'none' && new Date(String(e.at)).getTime() >= weekAgo)
-    .map((e) => {
-      const rec = (e.record ?? {}) as Record<string, unknown>;
-      const outcome = String(rec.outcome ?? 'failed');
-      return {
-        at: e.at,
-        trigger: e.trigger,
-        phone: e.phone,
-        outcome: outcome === 'failed' ? 'draft-failed' : outcome,
-        createdDoc: rec.docNumber,
-        total: rec.total,
-        why: (e.why as string | undefined) ?? (rec.detail as string | undefined),
-        scopeItems: Array.isArray(rec.lines)
-          ? (rec.lines as Array<{ item: string }>).map((l) => l.item)
-          : undefined,
-        gate: { label: `worker · ${String(e.mode ?? '')}`, wouldAutoCreate: outcome === 'created' || outcome === 'updated' },
-      };
-    });
-  const rows = [...legacyRows, ...workerRows].sort((a, b) =>
-    String(a.at).localeCompare(String(b.at)),
-  );
-  const labels = new Map<string, Record<string, unknown>>(
-    fs.existsSync(labelsPath)
-      ? fs.readFileSync(labelsPath, 'utf8').split('\n').filter(Boolean).map((l) => {
-          const d = JSON.parse(l);
-          return [String(d.docNumber ?? d.estimateId), d] as const;
-        })
-      : [],
-  );
+  const rows = botDraftRows(workerLog);
+  const labels = loadDraftLabels();
   const created = rows.filter((r) => r.outcome === 'created' || r.outcome === 'updated').length;
   const cards = rows.slice(-25).reverse().map((r) => {
     const gate = (r.gate ?? {}) as Record<string, unknown>;
@@ -90,22 +55,8 @@ ${cards || '<p class="empty">✓ No trigger activity this week.</p>'}
  * action flags (booked→flip, recommend-close, capacity-hold, needs-call).
  */
 function quoteFollowupsSection(): string {
-  const queuePath = 'analysis/data/stale-quotes/draft-queue.json';
-  if (!fs.existsSync(queuePath)) return '';
-  interface FupDraft { doc: string; customer: string; phone: string; amount: number; ageDays: number; tier: string; variant: string; draft: string; whyNow: string; queuedAt: string }
-  interface FupQueue {
-    generatedAt: string;
-    bookingHorizon: string;
-    toSend: FupDraft[];
-    waiting: FupDraft[];
-    flags: Array<{ kind: string; doc: string; customer: string; amount: number; detail: string }>;
-  }
-  let q: FupQueue;
-  try {
-    q = JSON.parse(fs.readFileSync(queuePath, 'utf8')) as FupQueue;
-  } catch {
-    return '';
-  }
+  const q = loadFollowupQueue();
+  if (!q) return '';
   const ageDaysQueue = Math.floor((Date.now() - new Date(q.generatedAt).getTime()) / 86_400_000);
   const stale = ageDaysQueue > 3;
   const draftCard = (d: FupDraft, waiting: boolean): string => `<div class="card ${waiting ? 'sev-yellow' : ''}" data-fid="fup-${esc(d.doc)}-${esc(d.queuedAt)}">
@@ -139,28 +90,9 @@ ${held.length ? `<p class="detail" style="margin-top:14px">Capacity-hold (large 
  * every full scan of tools/src/stale-quotes/run.ts (dry or live). Empty-safe.
  */
 function awaitingHumanSection(booked: NonNullable<FindingsFile['booked']>): string {
-  const awaitingPath = 'analysis/data/stale-quotes/awaiting-human.json';
-  if (!fs.existsSync(awaitingPath)) return '';
-  interface AwaitingEntry { doc: string; customer: string; phone: string; amount: number; channel: string; lastInboundAt: string; daysWaiting: number; snippet: string }
-  let data: { generatedAt: string; entries: AwaitingEntry[] };
-  try {
-    data = JSON.parse(fs.readFileSync(awaitingPath, 'utf8')) as typeof data;
-  } catch {
-    return '';
-  }
-  if (!Array.isArray(data.entries)) return '';
-  // Same booked-customer cross-reference analyze.ts applies to findings: a
-  // customer with an upcoming green job booked on/after (their last inbound
-  // − 7d) is closed business, not a quote waiting on a reply.
-  const allEntries = data.entries;
-  const bookedFor = (a: AwaitingEntry): NonNullable<FindingsFile['booked']>[number] | undefined =>
-    booked.find(
-      (b) =>
-        b.phones.includes(a.phone) &&
-        (!b.createdAt || new Date(b.createdAt).getTime() >= new Date(a.lastInboundAt).getTime() - 7 * 86_400_000),
-    );
-  const hiddenBooked = allEntries.filter((a) => bookedFor(a));
-  data.entries = allEntries.filter((a) => !bookedFor(a));
+  const data = loadAwaiting(booked);
+  if (!data) return '';
+  const hiddenBooked = data.hiddenBooked;
   const ageDays = Math.floor((Date.now() - new Date(data.generatedAt).getTime()) / 86_400_000);
   const stale = ageDays > 3;
   const total = data.entries.reduce((s, a) => s + a.amount, 0);
@@ -176,7 +108,7 @@ ${a.snippet ? `<blockquote>${esc(a.snippet)}</blockquote>` : ''}
 <h2><span class="pill pill-${data.entries.length > 0 ? 'red' : 'green'}">${data.entries.length}</span> Quotes awaiting YOUR reply</h2>
 <p class="blurb">Open quotes where the customer's last message went unanswered — the follow-up bot won't touch these until you respond. ${usd(total)} on the table. Scanned ${esc(data.generatedAt.slice(0, 10))}${stale ? ' — STALE, re-run tools/src/stale-quotes/run.ts' : ''}.${
     hiddenBooked.length > 0
-      ? ` Hidden as already booked: ${hiddenBooked.map((a) => `#${esc(a.doc)} ${esc(a.customer)} (${esc(bookedFor(a)?.event ?? '')})`).join(', ')}.`
+      ? ` Hidden as already booked: ${hiddenBooked.map(({ entry: a, event }) => `#${esc(a.doc)} ${esc(a.customer)} (${esc(event)})`).join(', ')}.`
       : ''
   }</p>
 ${cards || '<p class="empty">✓ Every customer has been answered.</p>'}

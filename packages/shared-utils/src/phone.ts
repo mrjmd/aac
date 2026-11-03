@@ -167,3 +167,22 @@ export function quickNormalizePhone(phone: string | null | undefined): string | 
   // (caller should use full normalizePhone if needed)
   return null;
 }
+
+/**
+ * AAC's own numbers that are not customers, as E.164. Pipelines that treat
+ * a phone as a customer (triage threads, quote drafts, command-center
+ * items) skip these. The business line itself comes from QUO_PHONE_NUMBER
+ * at runtime; technician cells are not listed yet (docs/PLAN.md deferred
+ * "internal-number skip list" also covers the middleware stages).
+ */
+export const INTERNAL_PHONES: readonly string[] = [
+  '+16177660151', // apps/agent comms line (QUO_AGENT_PHONE_NUMBER)
+  '+13392175091', // Ed Crowell's cell (Matt-Ed texts run line-to-line)
+];
+
+/** True for an internal AAC number (or `ownLine`, usually QUO_PHONE_NUMBER). */
+export function isInternalPhone(phone: string | null | undefined, ownLine?: string): boolean {
+  const e164 = quickNormalizePhone(phone);
+  if (!e164) return false;
+  return INTERNAL_PHONES.includes(e164) || (!!ownLine && quickNormalizePhone(ownLine) === e164);
+}

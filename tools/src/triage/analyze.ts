@@ -17,6 +17,7 @@ import { HOLD_TITLE_PREFIX, STUB_TITLE_PREFIX } from '@aac/scheduling';
 import { hasContinuation } from '@aac/shared-utils/multiday';
 import { eventMatchesName } from '@aac/customers';
 import type { EmailThreadSnapshot, Snapshot, ThreadSnapshot } from './collect.ts';
+import { pushItems } from './push-items.ts';
 import {
   IdentityIndex,
   applyBookedSuppression,
@@ -1543,6 +1544,16 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
   const outPath = path.join(dataDir, 'findings.json');
   fs.writeFileSync(outPath, JSON.stringify(out, null, 1));
   console.log(`Wrote ${outPath} — ${findings.length} findings (${llmErrors} LLM errors)`);
+
+  // Best-effort: the command center reads these as items. A failed push
+  // never fails the triage run (triage.html still renders).
+  if (!process.argv.includes('--no-push')) {
+    try {
+      await pushItems(out);
+    } catch (err) {
+      console.error(`!! command-center item push failed (re-run tools/src/triage/push-items.ts): ${(err as Error).message}`);
+    }
+  }
 }
 
 main().catch((err) => {
