@@ -15,12 +15,14 @@ import {
   X,
   LogOut,
   Sun,
+  Users,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@aac/ui";
 
 const nav = [
   { href: "/today", label: "Today", icon: Sun },
+  { href: "/customers", label: "Customers", icon: Users },
   { href: "/jobs", label: "Jobs", icon: Hammer },
   { href: "/money", label: "Money", icon: DollarSign },
   { href: "/marketing", label: "Marketing", icon: Megaphone },

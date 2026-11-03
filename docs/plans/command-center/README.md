@@ -236,7 +236,7 @@ Each phase ships something Matt uses daily before the next starts. No phase star
 1. Auth fix + deploy (custom domain, phone-ready).
 2. Item system: stable keys, fingerprints, states, verbs, ranks, mute rules, two lanes.
 3. Detectors move to the cloud worker; findings become Items. Overview **Today** at parity with triage.html, plus the verbs. Retire `com.aac.triage` after a week of side-by-side.
-4. Customer page v1 (timeline from data triage already collects).
+4. Customer page v1 (timeline from data triage already collects). *Built 11/03:* `/customers` search + `/customers/[id]` timeline (QBO quotes/invoices/payments, Quo texts/calls, Gmail, calendar visits matched by address, phone or name) on `@aac/customers`, which now also owns the name/address matching triage uses. Today items link to it by customer name. Not yet: Pipedrive attribution, field-app photos, the lifecycle ledger.
 5. **Admin v1:** obligation registry seeded (needs Matt's facts, see decisions), "Coming up" strip, T-7 promotion, documents vault for policies/COIs/licenses.
 6. The weekly recon + deposit reminder build (already planned) lands its Monday card and deposit items here instead of in triage.html.
 

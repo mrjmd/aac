@@ -348,7 +348,14 @@ function ItemRow({
             </p>
             <p className="mt-0.5 text-xs text-zinc-500">
               <span className={cn("font-semibold", sev.text)}>{sev.label}</span>
-              {item.customer && ` · ${item.customer}`}
+              {item.customer && (
+                <>
+                  {" · "}
+                  <a href={`/customers?q=${encodeURIComponent(item.customer)}`} className="hover:text-aac-blue hover:underline">
+                    {item.customer}
+                  </a>
+                </>
+              )}
               {item.phone && ` · ${item.phone}`}
               {item.amount !== undefined && ` · ${money(item.amount)}`}
               {` · ${item.detector}`}
