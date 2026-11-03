@@ -31,55 +31,15 @@
  * are never suppressed here.
  */
 
+import { nameTokens, tokensAlike, streetKey } from '@aac/customers';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import type { CustomerSnapshot, EmailThreadSnapshot, ThreadSnapshot } from './collect.ts';
 
 const DAY = 86_400_000;
 
-// ── name tokens (shared with analyze.ts) ─────────────────────────────
-
-const STOP = new Set([
-  'the', 'and', 'llc', 'inc', 'job', 'assessment', 'estimate', 'quote', 'repair',
-  'crack', 'attack', 'foundation', 'basement', 'callback', 'call', 'with', 'for',
-  'cont', // multi-day continuation marker in calendar titles ("Ed Spooner [cont]")
-]);
-
-export function nameTokens(name: string): string[] {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z\s]/g, ' ')
-    .split(/\s+/)
-    .filter((t) => t.length >= 3 && !STOP.has(t));
-}
-
-/**
- * Surname-level equality tolerant of one-letter drift — calendar titles are
- * typed by ear and diverge from QBO ("Malderelli" vs "Maldarelli").
- */
-export function tokensAlike(a: string, b: string): boolean {
-  if (a === b) return true;
-  if (a.length < 5 || Math.abs(a.length - b.length) > 1) return false;
-  if (a.length === b.length) {
-    let diff = 0;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff++;
-    return diff <= 1;
-  }
-  const [short, long] = a.length < b.length ? [a, b] : [b, a];
-  let i = 0;
-  let j = 0;
-  let skipped = 0;
-  while (i < short.length && j < long.length) {
-    if (short[i] === long[j]) {
-      i++;
-      j++;
-    } else if (skipped++ > 0) {
-      return false;
-    } else {
-      j++;
-    }
-  }
-  return true;
-}
+// Name + address matching lives in @aac/customers (moved 2026-11-03) so
+// the command center Customer page and scheduling share one definition.
+export { nameTokens, tokensAlike, streetKey };
 
 /** Strip calendar workflow prefixes so "STUB — Artie Downey" reads as a name. */
 function personFromSummary(summary: string): string {
@@ -87,37 +47,6 @@ function personFromSummary(summary: string): string {
     .replace(/^\s*(?:STUB|HOLD)\b[\s—:-]*/i, '')
     .replace(/\[[^\]]*\]/g, ' ')
     .trim();
-}
-
-// ── address identity ─────────────────────────────────────────────────
-
-const STREET_WORDS = new Set([
-  'street', 'st', 'avenue', 'ave', 'road', 'rd', 'drive', 'dr', 'lane', 'ln', 'court', 'ct',
-  'place', 'pl', 'circle', 'cir', 'terrace', 'way', 'wy', 'boulevard', 'blvd', 'parkway',
-  'pkwy', 'highway', 'hwy', 'square', 'sq', 'path', 'row',
-]);
-const DIRECTIONS = new Set(['north', 'south', 'east', 'west', 'n', 's', 'e', 'w']);
-
-/**
- * `{houseNumber}|{first street-name token}|{unit}` — e.g. "138 Elm Street,
- * Unit Number 35, Kingston" and "138 Elm St. unit 35" both → "138|elm|35".
- * Needs a house number followed by a street name; with `requireSuffix`
- * (free text like email subjects) the street must also carry a suffix word
- * so "Quote 1580 from Attack A Crack" never parses as an address.
- */
-export function streetKey(text: string, requireSuffix = false): string | null {
-  const m = /(?:^|[\s,(])(\d{1,6})[a-z]?\s+([a-z][a-z.' -]*)/i.exec(text);
-  if (!m) return null;
-  const words = m[2]
-    .toLowerCase()
-    .replace(/[^a-z\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean);
-  const name = words.find((w) => !DIRECTIONS.has(w) && !STREET_WORDS.has(w) && w.length >= 3);
-  if (!name) return null;
-  if (requireSuffix && !words.some((w) => STREET_WORDS.has(w))) return null;
-  const unit = /\b(?:unit|apt|apartment|suite|ste)\s*(?:number|num|no\.?|#)?\s*#?\s*([a-z]?\d+[a-z]?)\b|#\s*(\d+[a-z]?)\b/i.exec(text);
-  return `${m[1]}|${name}|${(unit?.[1] ?? unit?.[2] ?? '').toLowerCase()}`;
 }
 
 // ── inputs ───────────────────────────────────────────────────────────

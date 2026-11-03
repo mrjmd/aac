@@ -6,6 +6,7 @@
   "description": "Operational scripts \u2014 thin wrappers over @aac/api-clients",
   "dependencies": {
     "@aac/api-clients": "workspace:*",
+    "@aac/customers": "workspace:*",
     "@aac/items": "workspace:*",
     "@aac/message-drafts": "workspace:*",
     "@aac/quote-drafter": "workspace:*",

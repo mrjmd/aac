@@ -15,6 +15,7 @@ import path from 'node:path';
 import { GeminiClient } from '@aac/api-clients/gemini';
 import { HOLD_TITLE_PREFIX, STUB_TITLE_PREFIX } from '@aac/scheduling';
 import { hasContinuation } from '@aac/shared-utils/multiday';
+import { eventMatchesName } from '@aac/customers';
 import type { EmailThreadSnapshot, Snapshot, ThreadSnapshot } from './collect.ts';
 import {
   IdentityIndex,
@@ -136,7 +137,7 @@ export interface FindingsFile {
   stats: Record<string, number>;
 }
 
-// ── name matching (nameTokens/tokensAlike live in identity.ts) ─────
+// ── name matching (eventMatchesName/nameTokens/tokensAlike: @aac/customers) ─
 
 interface CalEvent {
   id: string;
@@ -148,16 +149,6 @@ interface CalEvent {
   end: string;
   colorId?: string;
   created?: string;
-}
-
-/** True when the event text plausibly refers to this customer. */
-function eventMatchesName(ev: CalEvent, tokens: string[]): boolean {
-  if (tokens.length === 0) return false;
-  const hayTokens = nameTokens(`${ev.summary} ${ev.location ?? ''}`);
-  const hits = tokens.filter((t) => hayTokens.some((h) => tokensAlike(h, t))).length;
-  // Last token is usually the surname — a surname hit alone counts.
-  const last = tokens[tokens.length - 1];
-  return hayTokens.some((h) => tokensAlike(h, last)) || hits >= 2;
 }
 
 // ── QBO field access (raw entities) ──────────────────────────────────
