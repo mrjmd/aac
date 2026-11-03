@@ -288,6 +288,24 @@ export class GmailClient {
    */
   async createDraft(options: CreateDraftOptions): Promise<{ draftId: string; messageId: string }> {
     const gmail = this.getClient();
+    const raw = this.buildRawMessage(options);
+
+    const res = await this.withRetry('drafts.create', () =>
+      gmail.users.drafts.create({
+        userId: 'me',
+        requestBody: {
+          message: { raw, ...(options.threadId ? { threadId: options.threadId } : {}) },
+        },
+      }),
+    );
+    const draftId = res.data.id ?? '';
+    const messageId = res.data.message?.id ?? '';
+    log.info('Created Gmail draft', { draftId, to: options.to, attachments: options.attachments?.length ?? 0 });
+    return { draftId, messageId };
+  }
+
+  /** RFC 822 message (plain + HTML body, attachments), base64url for the drafts API. */
+  private buildRawMessage(options: CreateDraftOptions): string {
     const boundary = `aac-${Date.now().toString(36)}-mixed`;
     const headers = [
       `To: ${options.to.join(', ')}`,
@@ -328,26 +346,36 @@ export class GmailClient {
         ].join('\r\n'),
       ),
     ];
-    const raw = Buffer.from(
+    return Buffer.from(
       `${headers.join('\r\n')}\r\n\r\n${parts.join('\r\n')}\r\n--${boundary}--`,
       'utf8',
     )
       .toString('base64')
       .replace(/\+/g, '-')
       .replace(/\//g, '_');
+  }
 
-    const res = await this.withRetry('drafts.create', () =>
-      gmail.users.drafts.create({
+  /**
+   * Replace an existing draft's whole message (recipients, body, attachments)
+   * in place, keeping the same draft ID and thread. Use this to revise a
+   * draft instead of deleting it and creating a new one.
+   */
+  async updateDraft(draftId: string, options: CreateDraftOptions): Promise<{ draftId: string; messageId: string }> {
+    const gmail = this.getClient();
+    const raw = this.buildRawMessage(options);
+    const res = await this.withRetry('drafts.update', () =>
+      gmail.users.drafts.update({
         userId: 'me',
+        id: draftId,
         requestBody: {
+          id: draftId,
           message: { raw, ...(options.threadId ? { threadId: options.threadId } : {}) },
         },
       }),
     );
-    const draftId = res.data.id ?? '';
     const messageId = res.data.message?.id ?? '';
-    log.info('Created Gmail draft', { draftId, to: options.to, attachments: options.attachments?.length ?? 0 });
-    return { draftId, messageId };
+    log.info('Updated Gmail draft', { draftId, to: options.to, attachments: options.attachments?.length ?? 0 });
+    return { draftId: res.data.id ?? draftId, messageId };
   }
 
   /**

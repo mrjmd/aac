@@ -7,6 +7,7 @@ vi.mock('googleapis', () => {
   const mockGetProfile = vi.fn();
   const mockDraftsCreate = vi.fn();
   const mockDraftsDelete = vi.fn();
+  const mockDraftsUpdate = vi.fn();
   const MockOAuth2 = vi.fn(() => ({
     setCredentials: vi.fn(),
   }));
@@ -17,7 +18,7 @@ vi.mock('googleapis', () => {
         get: mockMessagesGet,
         attachments: { get: mockAttachmentsGet },
       },
-      drafts: { create: mockDraftsCreate, delete: mockDraftsDelete },
+      drafts: { create: mockDraftsCreate, delete: mockDraftsDelete, update: mockDraftsUpdate },
       getProfile: mockGetProfile,
     },
   }));
@@ -34,6 +35,7 @@ vi.mock('googleapis', () => {
       mockGetProfile,
       mockDraftsCreate,
       mockDraftsDelete,
+      mockDraftsUpdate,
       MockOAuth2,
       mockGmail,
     },
@@ -62,6 +64,7 @@ beforeEach(async () => {
   mocks.mockGetProfile.mockReset();
   mocks.mockDraftsCreate.mockReset();
   mocks.mockDraftsDelete.mockReset();
+  mocks.mockDraftsUpdate.mockReset();
 });
 
 describe('GmailClient.listMessages', () => {
@@ -316,5 +319,27 @@ describe('GmailClient.deleteDraft', () => {
     const client = new GmailClient(config);
     await client.deleteDraft('r-123');
     expect(mocks.mockDraftsDelete).toHaveBeenCalledWith({ userId: 'me', id: 'r-123' });
+  });
+});
+
+describe('GmailClient.updateDraft', () => {
+  it('replaces the draft message in place, keeping id and thread', async () => {
+    mocks.mockDraftsUpdate.mockResolvedValue({ data: { id: 'r-123', message: { id: 'm20' } } });
+    const client = new GmailClient(config);
+    const res = await client.updateDraft('r-123', {
+      to: ['jill@example.com'],
+      subject: 'Re: Quote',
+      body: 'Revised.',
+      threadId: 't42',
+      attachments: [{ filename: 'quote.pdf', mimeType: 'application/pdf', content: Buffer.from('PDF2') }],
+    });
+
+    expect(res).toEqual({ draftId: 'r-123', messageId: 'm20' });
+    const call = mocks.mockDraftsUpdate.mock.calls[0][0];
+    expect(call.id).toBe('r-123');
+    expect(call.requestBody.message.threadId).toBe('t42');
+    const mime = Buffer.from(call.requestBody.message.raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    expect(mime).toContain('filename="quote.pdf"');
+    expect(mime).toContain(Buffer.from('PDF2').toString('base64'));
   });
 });

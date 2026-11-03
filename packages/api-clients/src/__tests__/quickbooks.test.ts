@@ -1300,4 +1300,20 @@ describe('QuickBooksClient', () => {
       expect(await client.findCustomerByPhone('not-a-phone')).toBeNull();
     });
   });
+  describe('getEstimatePdf', () => {
+    it('requests the PDF rendition and returns its bytes', async () => {
+      const bytes = new TextEncoder().encode('%PDF-1.4 test');
+      mockFetch.mockReturnValueOnce(Promise.resolve({ ok: true, status: 200, arrayBuffer: () => Promise.resolve(bytes.buffer) }));
+      const pdf = await makeClient().getEstimatePdf('3771');
+      expect(pdf.toString()).toBe('%PDF-1.4 test');
+      const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain('/test-realm/estimate/3771/pdf');
+      expect((init.headers as Record<string, string>).Accept).toBe('application/pdf');
+    });
+
+    it('throws with the status on failure', async () => {
+      mockFetch.mockReturnValueOnce(mockResponse({ Fault: 'nope' }, 404));
+      await expect(makeClient().getEstimatePdf('x')).rejects.toThrow(/404/);
+    });
+  });
 });

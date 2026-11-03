@@ -576,6 +576,24 @@ export class QuickBooksClient {
     }
   }
 
+  /**
+   * Download an estimate as the customer-facing PDF QBO renders (same file
+   * QBO's own "Send" attaches). Used to attach a quote to a Gmail draft.
+   */
+  async getEstimatePdf(estimateId: string): Promise<Buffer> {
+    const accessToken = await this.getValidAccessToken();
+    const url = `${QBO_API_BASE}/${this.config.realmId}/estimate/${encodeURIComponent(estimateId)}/pdf?minorversion=70`;
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/pdf', 'Authorization': `Bearer ${accessToken}` },
+    });
+    if (!response.ok) {
+      const error = await response.text();
+      log.error('QuickBooks estimate PDF error', new Error(error), { estimateId, status: response.status });
+      throw new Error(`QuickBooks API error: ${response.status} - ${error}`);
+    }
+    return Buffer.from(await response.arrayBuffer());
+  }
+
   async getEstimatesByCustomer(
     customerId: string,
     status?: QBEstimateStatus
