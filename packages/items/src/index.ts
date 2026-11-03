@@ -7,3 +7,4 @@ export { fromTriageFinding, triageFingerprint } from './from-triage.js';
 export type { TriageFinding } from './from-triage.js';
 export { ItemStore } from './store.js';
 export type { CandidateSnapshot, ItemRedis } from './store.js';
+export { fromTodo, TODO_KEY_PREFIX } from './from-todo.js';

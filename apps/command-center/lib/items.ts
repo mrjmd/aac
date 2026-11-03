@@ -1,4 +1,5 @@
 import {
+  fromTodo,
   ItemStore,
   nyDate,
   reconcile,
@@ -6,12 +7,35 @@ import {
   staleStateKeys,
   type HiddenReason,
   type Item,
+  type ItemCandidate,
   type ItemState,
 } from "@aac/items";
 import { getRedis } from "./redis";
+import { loadTodos } from "./todos";
 
 export function getItemStore(): ItemStore {
   return new ItemStore(getRedis());
+}
+
+/**
+ * Everything that can be an item right now: the latest detector run plus
+ * Matt's pending to-dos.
+ */
+export async function loadCandidates(now = new Date()): Promise<{
+  candidates: ItemCandidate[];
+  detectedAt: string | null;
+  source: string | null;
+}> {
+  const [snapshot, todos] = await Promise.all([getItemStore().getCandidates(), loadTodos()]);
+  const today = nyDate(now);
+  return {
+    candidates: [
+      ...(snapshot?.candidates ?? []),
+      ...todos.filter((t) => t.status === "pending").map((t) => fromTodo(t, today)),
+    ],
+    detectedAt: snapshot?.at ?? null,
+    source: snapshot?.source ?? null,
+  };
 }
 
 export interface ItemsView {
@@ -26,8 +50,12 @@ export interface ItemsView {
 /** Reconcile the latest candidates with stored state, persist, and return the view. */
 export async function loadItemsView(now = new Date()): Promise<ItemsView> {
   const store = getItemStore();
-  const [snapshot, stored, mutes] = await Promise.all([store.getCandidates(), store.getStates(), store.getMutes()]);
-  const { items, hidden, states } = reconcile(snapshot?.candidates ?? [], stored, mutes, now, {
+  const [{ candidates, detectedAt, source }, stored, mutes] = await Promise.all([
+    loadCandidates(now),
+    store.getStates(),
+    store.getMutes(),
+  ]);
+  const { items, hidden, states } = reconcile(candidates, stored, mutes, now, {
     baseline: Object.keys(stored).length === 0,
   });
   const stale = staleStateKeys(states, now);
@@ -37,8 +65,8 @@ export async function loadItemsView(now = new Date()): Promise<ItemsView> {
   const hiddenCounts: Record<HiddenReason, number> = { done: 0, snoozed: 0, dismissed: 0, muted: 0 };
   for (const h of hidden) hiddenCounts[h.reason] += 1;
   return {
-    detectedAt: snapshot?.at ?? null,
-    source: snapshot?.source ?? null,
+    detectedAt,
+    source,
     items,
     hiddenCounts,
     dismissed: recentlyDismissed(states, now),

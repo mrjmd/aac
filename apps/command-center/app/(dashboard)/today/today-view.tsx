@@ -19,10 +19,10 @@ const AREA_LABEL: Record<string, string> = {
   jobs: "Jobs",
   inbox: "Inbox",
   marketing: "Marketing",
-  admin: "Admin",
+  admin: "Admin and your to-dos",
   system: "System",
 };
-const AREA_ORDER = ["money", "jobs", "sales", "inbox", "admin", "marketing", "system"];
+const AREA_ORDER = ["admin", "money", "jobs", "sales", "inbox", "marketing", "system"];
 
 const SEVERITY = {
   red: { label: "Urgent", dot: "bg-red-500", text: "text-red-700" },

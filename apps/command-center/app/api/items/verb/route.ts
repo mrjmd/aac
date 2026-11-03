@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { applyVerb, ConfirmRequiredError, type Verb } from "@aac/items";
-import { getItemStore, todayRanks } from "@/lib/items";
+import { applyVerb, ConfirmRequiredError, TODO_KEY_PREFIX, type Verb } from "@aac/items";
+import { getItemStore, loadCandidates, todayRanks } from "@/lib/items";
+import { completeTodo } from "@/lib/todos";
 
 const VERBS = new Set(["done", "snooze", "dismiss", "restore", "pin", "unpin", "place"]);
 
@@ -14,11 +15,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "key and a valid verb are required" }, { status: 400 });
   }
   const store = getItemStore();
-  const [snapshot, states] = await Promise.all([store.getCandidates(), store.getStates()]);
+  const [{ candidates }, states] = await Promise.all([loadCandidates(), store.getStates()]);
   const state = states[key];
   // Restore can target an item whose detector no longer emits it; fall back to its snapshot.
   const candidate =
-    snapshot?.candidates.find((c) => c.key === key) ??
+    candidates.find((c) => c.key === key) ??
     (state?.snapshot && verb.type === "restore"
       ? {
           key,
@@ -37,6 +38,8 @@ export async function POST(request: NextRequest) {
   try {
     const next = applyVerb(state, verb, candidate, new Date(), todayRanks(states));
     await store.putStates({ [key]: next });
+    // Done on a to-do completes it in the to-do store too (CLI, triage, /todos).
+    if (verb.type === "done" && key.startsWith(TODO_KEY_PREFIX)) await completeTodo(key.slice(TODO_KEY_PREFIX.length));
     return NextResponse.json({ ok: true, state: next });
   } catch (err) {
     if (err instanceof ConfirmRequiredError) {

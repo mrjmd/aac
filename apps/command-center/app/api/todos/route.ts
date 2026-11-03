@@ -1,41 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRedis } from "@/lib/redis";
 import { keys } from "@aac/shared-utils/redis";
-import { todoScore, type TodoItem, type CreateTodoInput, type UpdateTodoInput } from "@/lib/todos";
+import { loadTodos, todoScore, type TodoItem, type CreateTodoInput, type UpdateTodoInput } from "@/lib/todos";
 
 /**
  * GET /api/todos — list all to-dos
  * Query params: status=pending|completed|all (default: all)
  */
 export async function GET(request: NextRequest) {
-  let redis;
+  let items: TodoItem[];
   try {
-    redis = getRedis();
+    items = await loadTodos();
   } catch {
     return NextResponse.json([]);
   }
   const statusFilter = request.nextUrl.searchParams.get("status") ?? "all";
-
-  // Get all to-do IDs from the sorted set (ordered by due date)
-  const ids = await redis.zrange<string[]>(keys.todoList, 0, -1);
-
-  if (!ids.length) {
-    return NextResponse.json([]);
-  }
-
-  // Fetch all items in parallel
-  const pipeline = redis.pipeline();
-  for (const id of ids) {
-    pipeline.get(keys.todo(id));
-  }
-  const results = await pipeline.exec<(TodoItem | null)[]>();
-
-  let items = results.filter((item): item is TodoItem => item !== null);
-
   if (statusFilter !== "all") {
     items = items.filter((item) => item.status === statusFilter);
   }
-
   return NextResponse.json(items);
 }
 

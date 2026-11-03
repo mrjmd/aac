@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  fromTodo,
   applyVerb,
   ConfirmRequiredError,
   fromTriageFinding,
@@ -205,5 +206,34 @@ describe('fromTriageFinding', () => {
     const day2 = triageFingerprint({ ...base, title: 'Overdue 124d', detail: 'age 124' });
     expect(day1).toBe(day2);
     expect(triageFingerprint({ ...base, title: 'Overdue 124d', amount: 3900 })).not.toBe(day1);
+  });
+});
+
+describe('fromTodo', () => {
+  const base = {
+    id: 'abc',
+    title: 'Finish the 2026 books',
+    notes: 'checklist in analysis',
+    status: 'pending' as const,
+    source: 'manual' as const,
+    createdAt: '2026-11-03T00:00:00Z',
+    completedAt: null,
+  };
+
+  it('grades by due date and shows the next step', () => {
+    const c = fromTodo({ ...base, dueDate: '2026-11-03', steps: [{ text: 'Post items', done: true }, { text: 'Re-verify', done: false }] }, '2026-11-03');
+    expect(c).toMatchObject({ key: 'todo:abc', detector: 'TODO', severity: 'red', title: 'Finish the 2026 books (due today)' });
+    expect(c.action).toBe('Next: Re-verify (1/2 done)');
+    expect(fromTodo({ ...base, dueDate: '2026-11-08' }, '2026-11-03').severity).toBe('yellow');
+    expect(fromTodo({ ...base, dueDate: '2026-12-01' }, '2026-11-03').severity).toBe('info');
+    expect(fromTodo({ ...base, dueDate: null }, '2026-11-03').title).toBe('Finish the 2026 books');
+  });
+
+  it('changes fingerprint when the due date moves, not when a step is ticked', () => {
+    const a = fromTodo({ ...base, dueDate: '2026-11-10', steps: [{ text: 'x', done: false }] }, '2026-11-03');
+    const b = fromTodo({ ...base, dueDate: '2026-11-10', steps: [{ text: 'x', done: true }] }, '2026-11-03');
+    const c = fromTodo({ ...base, dueDate: '2026-11-12' }, '2026-11-03');
+    expect(a.fingerprint).toBe(b.fingerprint);
+    expect(c.fingerprint).not.toBe(a.fingerprint);
   });
 });
