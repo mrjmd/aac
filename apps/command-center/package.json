@@ -21,7 +21,8 @@
     "lucide-react": "^0.511.0",
     "next": "^15",
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "sortablejs": "1.15.2"
   },
   "devDependencies": {
     "@aac/tsconfig": "workspace:*",
@@ -29,6 +30,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/sortablejs": "^1.15.9",
     "postcss": "^8",
     "tailwindcss": "^4",
     "typescript": "^5.8"

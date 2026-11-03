@@ -1,14 +1,35 @@
-import { Sidebar } from "./sidebar";
+import { loadItemsView } from "@/lib/items";
+import { Drawer, ToastHost } from "./components/items";
+import { SignOut } from "./sign-out";
+import { ItemsProvider } from "./items-context";
+import { Rail } from "./rail";
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+// Items are per-request state; never prerender the shell.
+export const dynamic = "force-dynamic";
+
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const initial = await loadItemsView().catch(() => null);
   return (
-    <div className="flex min-h-screen">
-      <Sidebar />
-      <main className="min-w-0 flex-1 p-4 pt-16 sm:p-6 sm:pt-16 lg:p-8">{children}</main>
-    </div>
+    <ItemsProvider initial={initial}>
+      <header className="top">
+        <div className="brand">
+          <span className="mark">AAC</span>
+          <div>
+            <div className="name">Command Center</div>
+            <div className="tagline">Attack A Crack</div>
+          </div>
+        </div>
+        <span className="spacer" />
+        <SignOut />
+      </header>
+      <div className="shell">
+        <Rail />
+        <main>
+          <div className="wrap">{children}</div>
+        </main>
+      </div>
+      <Drawer />
+      <ToastHost />
+    </ItemsProvider>
   );
 }

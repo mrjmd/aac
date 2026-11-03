@@ -35,7 +35,7 @@ const mondayOf = (d: string) => addDays(d, -((weekday(d) + 6) % 7));
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 /** Same test as middleware's isTechOutOfOffice: the tech's name AND an OOO marker. */
-function isOutOfOffice(summary: string): boolean {
+export function isOutOfOffice(summary: string): boolean {
   return /\bmike\b/i.test(summary) && /\booo\b|out of office/i.test(summary);
 }
 

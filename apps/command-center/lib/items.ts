@@ -45,6 +45,8 @@ export interface ItemsView {
   items: Item[];
   hiddenCounts: Record<HiddenReason, number>;
   dismissed: ItemState[];
+  /** Snoozed items, soonest back first. */
+  snoozed: Array<{ key: string; title: string; customer?: string; until?: string }>;
 }
 
 /** Reconcile the latest candidates with stored state, persist, and return the view. */
@@ -70,6 +72,10 @@ export async function loadItemsView(now = new Date()): Promise<ItemsView> {
     items,
     hiddenCounts,
     dismissed: recentlyDismissed(states, now),
+    snoozed: hidden
+      .filter((h) => h.reason === "snoozed")
+      .map((h) => ({ key: h.key, title: h.candidate.title, customer: h.candidate.customer, until: states[h.key]?.snoozeUntil }))
+      .sort((a, b) => (a.until ?? "").localeCompare(b.until ?? "")),
   };
 }
 

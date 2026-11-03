@@ -1,91 +1,116 @@
-
 import { nyDate } from "@aac/items";
-import { cn } from "@aac/ui";
 import { cards, loadSafe } from "@/lib/cards";
+import { bookedAhead } from "@/lib/field-events";
 import { Freshness } from "../components/freshness";
+import { NeedsAttention } from "../components/items";
+import { PageHeader, SourceError, Tile } from "../components/layout-parts";
 
 export const dynamic = "force-dynamic";
 
 function fmtWeek(d: string): string {
-  return new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
-const pct = (p: number | null) => (p === null ? "OOO" : `${Math.round(p * 100)}%`);
+const pct = (p: number | null | undefined) => (p == null ? "OOO" : `${Math.round(p * 100)}%`);
 
 export default async function JobsPage() {
   const today = nyDate(new Date());
   const card = cards.techWeeks();
   const { snap, error } = await loadSafe(card);
+  const header = (
+    <PageHeader
+      eyebrow="Area"
+      title="Jobs"
+      sub={
+        <>
+          Capacity, this week and what&apos;s ahead ·{" "}
+          {snap && <Freshness name={card.name} fetchedAt={snap.fetchedAt} label="Mike's calendar" />}
+        </>
+      }
+    />
+  );
   if (!snap) {
     return (
-      <div className="mx-auto max-w-3xl">
-        <h1 className="font-display text-2xl font-bold text-aac-dark">Jobs</h1>
-        <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          Couldn&apos;t read the calendar: {error}
-        </p>
-      </div>
+      <>
+        {header}
+        <SourceError what="the calendar" error={error} />
+        <NeedsAttention areas={["jobs"]} />
+      </>
     );
   }
   const weeks = snap.data;
-  const thisWeekIdx = weeks.findIndex((w, i) => w.weekStart <= today && (weeks[i + 1]?.weekStart ?? "9999") > today);
-  const ahead = weeks.slice(thisWeekIdx + 1);
-  const fullWeeksAhead = ahead.filter((w) => (w.bookedPct ?? 0) >= 0.75).length;
+  const b = bookedAhead(weeks, today);
+  const tw = b.thisWeek;
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <header className="mb-5">
-        <h1 className="font-display text-2xl font-bold text-aac-dark">Jobs</h1>
-        <Freshness name={card.name} fetchedAt={snap.fetchedAt} label="Mike's calendar," className="mt-1" />
-      </header>
-
-      <div className="mb-6 rounded-xl border border-zinc-200 bg-white p-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Booked ahead</p>
-        <p className="font-display mt-1 text-2xl font-bold text-aac-dark">
-          {fullWeeksAhead} of {ahead.length} upcoming weeks at 75%+
-        </p>
-        <p className="mt-1 text-xs text-zinc-400">
-          The operating model needs 2-3 weeks booked out.
-        </p>
+    <>
+      {header}
+      <NeedsAttention areas={["jobs"]} />
+      <div className="tiles">
+        <Tile
+          k="Booked out"
+          v={`${b.full} of ${b.of} wks`}
+          s="Goal 2-3 weeks"
+          tone={b.full >= 2 ? "good" : "bad"}
+          def="Upcoming weeks with Mike 75%+ booked. Source: Calendar (events Mike attends)."
+        />
+        <Tile
+          k="Mike, this week"
+          v={pct(tw?.bookedPct)}
+          s={tw ? `${tw.bookedHours}h of ${tw.capacityHours}h` : undefined}
+          def="Booked hours / available hours. Capacity is 5 x 8h minus Mike OOO time."
+        />
+        <Tile
+          k="On hold this week"
+          v={`${tw?.heldHours ?? 0}h`}
+          s="Offered, not confirmed"
+          def="HOLD placeholders. Shown separately, not counted as booked."
+        />
+        <Tile
+          k="Callbacks this week"
+          v={`${tw?.byType.callback ?? 0}h`}
+          s="Yellow calendar events"
+          def="Rework on completed jobs (colorId 5)."
+        />
       </div>
-
-      <section>
-        <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">Mike booked % by week</h2>
-        <div className="divide-y divide-zinc-100 rounded-xl border border-zinc-200 bg-white">
-          {weeks.map((w, i) => {
-            const p = w.bookedPct ?? 0;
-            const current = i === thisWeekIdx;
+      <div className="card">
+        <h3>Mike booked % by week</h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {weeks.map((w) => {
+            const current = w.weekStart === tw?.weekStart;
+            const past = w.weekStart < (tw?.weekStart ?? "");
             return (
-              <div key={w.weekStart} className={cn("px-4 py-3", current && "bg-aac-blue/5")}>
-                <div className="flex items-baseline justify-between gap-3">
-                  <p className="text-sm font-semibold text-aac-dark">
+              <div key={w.weekStart} style={past ? { opacity: 0.6 } : undefined}>
+                <div className="gate">
+                  <span>
                     Week of {fmtWeek(w.weekStart)}
-                    {current && <span className="ml-2 text-xs font-medium text-aac-blue">this week</span>}
-                    {i < thisWeekIdx && <span className="ml-2 text-xs font-normal text-zinc-400">past</span>}
-                  </p>
-                  <p className="text-sm font-bold tabular-nums text-aac-dark">{pct(w.bookedPct)}</p>
+                    {current && <span className="tag ontoday" style={{ marginLeft: 8 }}>This week</span>}
+                  </span>
+                  <span className="num">{pct(w.bookedPct)}</span>
                 </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-100">
-                  <div
-                    className={cn("h-full rounded-full", p >= 0.75 ? "bg-aac-blue" : p >= 0.4 ? "bg-aac-blue/60" : "bg-amber-400")}
-                    style={{ width: `${Math.min(100, Math.round(p * 100))}%` }}
+                <div className="bar" style={{ marginTop: 4 }}>
+                  <span
+                    style={{
+                      width: `${Math.min(100, Math.round((w.bookedPct ?? 0) * 100))}%`,
+                      background: (w.bookedPct ?? 0) >= 0.75 ? "var(--accent)" : (w.bookedPct ?? 0) >= 0.4 ? "#7fb0dc" : "#e59a1a",
+                    }}
                   />
                 </div>
-                <p className="mt-1.5 text-xs text-zinc-500">
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3, fontWeight: 600 }}>
                   {w.bookedHours}h of {w.capacityHours}h · jobs {w.byType.job}h · assessments {w.byType.assessment}h
                   {w.byType.callback ? ` · callbacks ${w.byType.callback}h` : ""}
                   {w.byType.other ? ` · other ${w.byType.other}h` : ""}
-                  {w.heldHours ? ` · ${w.heldHours}h on hold (offered, unconfirmed)` : ""}
+                  {w.heldHours ? ` · ${w.heldHours}h on hold` : ""}
                   {w.capacityHours < 40 ? ` · ${40 - w.capacityHours}h out of office` : ""}
-                </p>
+                </div>
               </div>
             );
           })}
         </div>
-        <p className="mt-3 text-xs leading-relaxed text-zinc-400">
-          Booked = events with Mike as an attendee, by event length (all-day events count 8h per weekday). Capacity =
-          5 days x 8h minus &ldquo;Mike OOO&rdquo; time. HOLD placeholders are shown separately and not counted.
-          Saturday work can push a week past 100%.
-        </p>
-      </section>
-    </div>
+        <div className="note">
+          Booked = events with Mike as an attendee, by event length (all-day events count 8h per weekday). HOLD
+          placeholders are shown separately and not counted. Saturday work can push a week past 100%.
+        </div>
+      </div>
+    </>
   );
 }

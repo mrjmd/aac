@@ -57,8 +57,8 @@ export function Freshness({
   }
 
   return (
-    <span className={cn("inline-flex items-center gap-1 text-xs text-zinc-400", className)}>
-      {label && <span className="font-medium text-zinc-500">{label}</span>}
+    <span className={cn("inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--muted)]", className)}>
+      {label && <span className="text-[var(--ink-2)]">{label}</span>}
       <span title={fetchedAt ? new Date(fetchedAt).toLocaleString() : undefined}>
         {busy ? "refreshing…" : fetchedAt ? `updated ${ago(fetchedAt, now)}` : "not loaded"}
       </span>
@@ -67,11 +67,11 @@ export function Freshness({
         onClick={refresh}
         disabled={busy}
         aria-label={`Refresh ${label ?? name}`}
-        className="rounded p-1 hover:bg-zinc-100 hover:text-aac-blue disabled:opacity-50"
+        className="rounded-md border-2 border-transparent bg-transparent p-0.5 hover:border-[var(--line)] hover:text-[var(--accent)] disabled:opacity-50"
       >
         <RotateCw size={12} className={cn(busy && "animate-spin")} />
       </button>
-      {error && <span className="text-red-600">{error}</span>}
+      {error && <span className="text-[var(--red)]">{error}</span>}
     </span>
   );
 }

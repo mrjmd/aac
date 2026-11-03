@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { searchCustomers, type CustomerHit } from "@aac/customers";
-import { cn } from "@aac/ui";
 import { cards, loadSafe } from "@/lib/cards";
 import { Freshness } from "../components/freshness";
+import { PageHeader, SourceError } from "../components/layout-parts";
 
 export const dynamic = "force-dynamic";
 
@@ -13,47 +13,53 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const hits: CustomerHit[] = q && snap ? searchCustomers(snap.data, q) : [];
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <header className="mb-5">
-        <h1 className="font-display text-2xl font-bold text-aac-dark">Customers</h1>
-        <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-zinc-400">
-          Search by name, phone, email or address.
-          <Freshness name={index.name} fetchedAt={snap?.fetchedAt} label={`${snap?.data.length ?? 0} QuickBooks customers`} />
-        </p>
-      </header>
-
-      <form action="/customers" className="mb-5">
+    <>
+      <PageHeader
+        eyebrow="Customers"
+        title="Find a customer"
+        sub={
+          <>
+            Search by name, phone, email or address ·{" "}
+            <Freshness name={index.name} fetchedAt={snap?.fetchedAt} label={`${snap?.data.length ?? 0} QuickBooks customers`} />
+          </>
+        }
+      />
+      <form action="/customers">
         <input
           name="q"
           defaultValue={q}
           autoFocus
           placeholder="e.g. Fairweather, 617-555-0101, 39 Hobart"
-          className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-aac-dark outline-none focus:border-aac-blue"
+          className="w-full rounded-[12px] border-2 border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-[14px] font-semibold text-[var(--ink)] outline-none focus:border-[var(--ink)]"
         />
       </form>
-
-      {error && (
-        <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          Couldn&apos;t reach QuickBooks: {error}
-        </p>
-      )}
-      {q && !error && hits.length === 0 && <p className="text-sm text-zinc-500">No customer matches &ldquo;{q}&rdquo;.</p>}
+      {error && <SourceError what="QuickBooks" error={error} />}
+      {q && !error && hits.length === 0 && <div className="empty">No customer matches &ldquo;{q}&rdquo;.</div>}
       {hits.length > 0 && (
-        <div className="divide-y divide-zinc-100 rounded-xl border border-zinc-200 bg-white">
-          {hits.map((h) => (
-            <Link key={h.id} href={`/customers/${h.id}`} className="block px-4 py-3 hover:bg-zinc-50">
-              <p className={cn("text-sm font-semibold", h.active ? "text-aac-dark" : "text-zinc-400")}>
-                {h.name}
-                {h.company && <span className="ml-2 font-normal text-zinc-500">{h.company}</span>}
-                {!h.active && <span className="ml-2 text-xs font-normal">inactive</span>}
-              </p>
-              <p className="mt-0.5 text-xs text-zinc-500">
-                {[h.phone, h.email, h.address].filter(Boolean).join(" · ") || "No contact details in QuickBooks"}
-              </p>
-            </Link>
-          ))}
-        </div>
+        <section className="sec">
+          <div className="sec-h">
+            <h2>Matches · {hits.length}</h2>
+          </div>
+          <div className="list">
+            {hits.map((h) => (
+              <Link key={h.id} href={`/customers/${h.id}`} className="item" style={{ textDecoration: "none", color: "var(--ink)" }}>
+                <div className="row">
+                  <div className="body">
+                    <div className="title">{h.name}</div>
+                    <div className="meta">
+                      {h.company && <span className="tag">{h.company}</span>}
+                      {h.phone && <span className="tag num">{h.phone}</span>}
+                      {h.email && <span className="tag">{h.email}</span>}
+                      {h.address && <span className="tag">{h.address}</span>}
+                      {!h.active && <span className="tag red">Inactive</span>}
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
       )}
-    </div>
+    </>
   );
 }

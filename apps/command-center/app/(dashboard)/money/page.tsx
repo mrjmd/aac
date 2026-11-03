@@ -1,15 +1,13 @@
 import type { CashAccount } from "@aac/metrics";
-import { cn } from "@aac/ui";
 import { cards, loadSafe } from "@/lib/cards";
 import { Freshness } from "../components/freshness";
+import { NeedsAttention } from "../components/items";
+import { PageHeader, SourceError, Tile, usd, usdK } from "../components/layout-parts";
 
 export const dynamic = "force-dynamic";
 
-const money = (n: number) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-
 function fmtDate(d: string): string {
-  return new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 /** A register untouched for over a week means the feed queue needs review. */
@@ -18,96 +16,109 @@ const STALE_DAYS = 7;
 export default async function MoneyPage() {
   const card = cards.cash();
   const { snap, error } = await loadSafe(card);
+  const header = (
+    <PageHeader
+      eyebrow="Area"
+      title="Money"
+      sub={
+        <>
+          Cash, receivables, deposits, the books ·{" "}
+          {snap && <Freshness name={card.name} fetchedAt={snap.fetchedAt} label="QuickBooks" />}
+        </>
+      }
+    />
+  );
   if (!snap) {
     return (
-      <div className="mx-auto max-w-3xl">
-        <h1 className="font-display text-2xl font-bold text-aac-dark">Money</h1>
-        <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          Couldn&apos;t reach QuickBooks: {error}
-        </p>
-      </div>
+      <>
+        {header}
+        <SourceError what="QuickBooks" error={error} />
+        <NeedsAttention areas={["money"]} />
+      </>
     );
   }
-  const position = snap.data;
-  const relay = position.accounts.filter((a) => a.bank === "Relay");
-  const other = position.accounts.filter((a) => a.bank !== "Relay");
+  const p = snap.data;
+  const relay = p.accounts.filter((a) => a.bank === "Relay");
+  const other = p.accounts.filter((a) => a.bank !== "Relay");
+  const behind = p.accounts.filter((a) => a.daysBehind === null || a.daysBehind > STALE_DAYS).length;
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <header className="mb-5">
-        <h1 className="font-display text-2xl font-bold text-aac-dark">Money</h1>
-        <Freshness name={card.name} fetchedAt={snap.fetchedAt} label="From QuickBooks," className="mt-1" />
-      </header>
-
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Stat label="Relay, per QuickBooks" value={money(position.relayTotal)} note={`${relay.length} accounts`} />
-        <Stat
-          label="Undeposited"
-          value={money(position.undeposited)}
-          note="Recorded payments not yet in a bank"
-          warn={position.undeposited > 0}
+    <>
+      {header}
+      <NeedsAttention areas={["money"]} />
+      <div className="tiles">
+        <Tile
+          k="Cash, all Relay accounts"
+          v={usdK(p.relayTotal)}
+          s={`${relay.length} accounts, per QuickBooks`}
+          def="Sum of Relay registers as booked in QuickBooks. Not a live bank balance."
         />
-        <Stat
-          label="Owed to us"
-          value={money(position.ar.openTotal)}
-          note={
-            position.ar.overdueCount
-              ? `${money(position.ar.overdueTotal)} overdue on ${position.ar.overdueCount} invoices${
-                  position.ar.oldestDue ? `, oldest due ${fmtDate(position.ar.oldestDue)}` : ""
-                }`
-              : `${position.ar.openCount} open invoices, none overdue`
-          }
-          warn={position.ar.overdueCount > 0}
+        <Tile
+          k="Receivables"
+          v={usdK(p.ar.openTotal)}
+          s={p.ar.overdueCount ? `${usdK(p.ar.overdueTotal)} overdue on ${p.ar.overdueCount}` : `${p.ar.openCount} open, none overdue`}
+          tone={p.ar.overdueCount ? "bad" : "good"}
+          def={`Open invoice balances. Source: QuickBooks. Date: due date.${p.ar.oldestDue ? ` Oldest overdue was due ${fmtDate(p.ar.oldestDue)}.` : ""}`}
+        />
+        <Tile
+          k="Undeposited"
+          v={usd(p.undeposited)}
+          s={p.undeposited > 0 ? "Recorded, not yet in a bank" : "All deposited"}
+          tone={p.undeposited > 0 ? "bad" : "good"}
+          def="QuickBooks Undeposited Funds. A payment shows Paid before the money reaches the bank."
+        />
+        <Tile
+          k="Books"
+          v={behind ? `${behind} behind` : "Current"}
+          s={behind ? `Registers over ${STALE_DAYS} days unposted` : `All registers posted within ${STALE_DAYS} days`}
+          tone={behind ? "bad" : "good"}
+          def="Newest posted transaction in each register. A register behind usually means feed items waiting for review."
         />
       </div>
-
-      <AccountTable title="Relay" accounts={relay} />
-      {other.length > 0 && <AccountTable title="Other banks" accounts={other} />}
-
-      <p className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 text-xs leading-relaxed text-zinc-500">
-        These are QuickBooks register balances. A register matches the bank only once its feed queue is
-        reviewed and reconciled, so a negative or odd balance usually means unposted feed items, not missing
-        money. &ldquo;Posted through&rdquo; is the newest transaction in each register (searched back to{" "}
-        {fmtDate(position.postingWindowStart)}); anything over {STALE_DAYS} days behind is flagged.
-      </p>
-    </div>
+      <div className="cols">
+        <Accounts title="Relay accounts" accounts={relay} />
+        {other.length > 0 && <Accounts title="Other banks" accounts={other} />}
+      </div>
+      <div className="note">
+        These are QuickBooks register balances. A register matches the bank only once its feed queue is reviewed and
+        reconciled, so a negative or odd balance usually means unposted feed items, not missing money. &ldquo;Posted
+        through&rdquo; is the newest transaction in each register (searched back to {fmtDate(p.postingWindowStart)}).
+      </div>
+    </>
   );
 }
 
-function Stat({ label, value, note, warn }: { label: string; value: string; note: string; warn?: boolean }) {
+function Accounts({ title, accounts }: { title: string; accounts: CashAccount[] }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{label}</p>
-      <p className="font-display mt-1 text-2xl font-bold text-aac-dark">{value}</p>
-      <p className={cn("mt-1 text-xs", warn ? "font-medium text-amber-700" : "text-zinc-400")}>{note}</p>
-    </div>
-  );
-}
-
-function AccountTable({ title, accounts }: { title: string; accounts: CashAccount[] }) {
-  return (
-    <section className="mb-4">
-      <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">{title}</h2>
-      <div className="divide-y divide-zinc-100 rounded-xl border border-zinc-200 bg-white">
-        {accounts.map((a) => {
-          const stale = a.daysBehind === null || a.daysBehind > STALE_DAYS;
-          return (
-            <div key={a.id} className="flex items-center justify-between gap-3 px-4 py-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-aac-dark">{a.name}</p>
-                <p className={cn("text-xs", stale ? "font-medium text-amber-700" : "text-zinc-400")}>
-                  {a.postedThrough
-                    ? `Posted through ${fmtDate(a.postedThrough)} (${a.daysBehind}d ago)`
-                    : "Nothing posted in the window"}
-                </p>
-              </div>
-              <p className={cn("shrink-0 text-sm font-semibold tabular-nums", a.qboBalance < 0 ? "text-red-600" : "text-aac-dark")}>
-                {money(a.qboBalance)}
-              </p>
-            </div>
-          );
-        })}
+    <div className="card">
+      <h3>{title}</h3>
+      <div className="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Account</th>
+              <th>Posted through</th>
+              <th className="r">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map((a) => {
+              const stale = a.daysBehind === null || a.daysBehind > STALE_DAYS;
+              return (
+                <tr key={a.id}>
+                  <td style={{ whiteSpace: "normal" }}>{a.name}</td>
+                  <td style={stale ? { color: "var(--red)", fontWeight: 600 } : { color: "var(--muted)" }}>
+                    {a.postedThrough ? `${fmtDate(a.postedThrough)} (${a.daysBehind}d)` : "None in window"}
+                  </td>
+                  <td className="r num" style={a.qboBalance < 0 ? { color: "var(--red)" } : undefined}>
+                    {usd(a.qboBalance)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
-    </section>
+    </div>
   );
 }
