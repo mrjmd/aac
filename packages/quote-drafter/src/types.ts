@@ -20,7 +20,11 @@ export interface TriggerEvent {
   at: string;
   hasMedia: boolean;
   snippet: string;
-  kind?: 'message' | 'mike-debrief';
+  kind?: 'message' | 'mike-debrief' | 'call-transcript' | 'voicemail' | 'email';
+  /** Quo call id — set on call-transcript/voicemail events; content is fetched at gate time. */
+  callId?: string;
+  /** T4 voicemail-transcription-lag retries consumed so far. */
+  retries?: number;
 }
 
 /** Settle window: a burst of messages drafts once, after it goes quiet. */
@@ -51,6 +55,16 @@ export const MAX_DRAIN_PER_RUN = 500;
 
 export const T2_VISIT_LOOKBACK_H = 36;
 export const T2_DEDUPE_H = 24;
+
+// ── T4 (scope-change gate on open quotes) ──────────────────────────────
+
+/** One T4 action per estimate per window — a thread about drywall is one event, not five. */
+export const T4_DEDUPE_H = 24;
+/** Voicemail transcription can lag the call webhook — re-arm and retry. */
+export const T4_VOICEMAIL_RETRY_MS = 10 * 60 * 1000;
+export const T4_MAX_VOICEMAIL_RETRIES = 2;
+/** Prior thread messages given to the gate for context. */
+export const T4_CONTEXT_MESSAGES = 10;
 
 // ── drafter constants (ported verbatim from tools/src/drafter/run.ts) ──
 
@@ -128,7 +142,7 @@ export interface QuoteFinding {
 export interface DraftRunRecord {
   phone: string;
   customer: string;
-  outcome: 'created' | 'updated' | 'dry-run' | 'skipped' | 'failed';
+  outcome: 'created' | 'updated' | 'dry-run' | 'skipped' | 'failed' | 'flagged';
   detail: string;
   estimateId?: string;
   docNumber?: string;
@@ -143,7 +157,7 @@ export interface TriggerRunlogEntry {
   at: string;
   mode: 'shadow' | 'live';
   phone: string;
-  trigger: 'T1' | 'T2' | 'T3' | 'none';
+  trigger: 'T1' | 'T2' | 'T3' | 'T4' | 'none';
   why?: string;
   events: number;
   record?: DraftRunRecord;

@@ -63,6 +63,25 @@ export function buildDraftCreatedNote(args: {
   ].join('\n');
 }
 
+/**
+ * Flag note for scope-relevant new info on a quote the bot must not touch
+ * (human-owned, or not bot-created). The estimate is never modified — this
+ * note + the triage flag ARE the deliverable (T4, 2026-10-29).
+ */
+export function buildScopeFlagNote(args: {
+  docNumber: string;
+  estimateId: string;
+  total: number;
+  reason: string;
+  channel: string;
+}): string {
+  return [
+    `🤖 New info may affect quote #${args.docNumber} ($${args.total}) — via ${args.channel}:`,
+    args.reason,
+    `Not auto-updated (quote is human-owned). Review: ${qboEstimateLink(args.estimateId)}`,
+  ].join('\n');
+}
+
 export function buildDraftUpdatedNote(args: {
   docNumber: string;
   estimateId: string;

@@ -72,3 +72,25 @@ export interface QBOAuthTokens {
   expiresAt: number;
   realmId: string;
 }
+
+/**
+ * One open (Pending) estimate in the T4 scope-change index
+ * (`keys.quoteDraftOpen` HASH: phone → JSON OpenQuoteEntry). Written by
+ * the quote drafter at create/regenerate and maintained by middleware's
+ * qb-reconcile cron. Advisory: consumers re-verify ownership against
+ * live QBO before any write.
+ */
+export interface OpenQuoteEntry {
+  estimateId: string;
+  docNumber: string;
+  customerId: string;
+  customer: string;
+  /** Customer email on the QBO record/estimate — the email-channel match key. */
+  email: string | null;
+  total: number;
+  /** Compact "item ×qty" summary for the gate prompt. */
+  linesSummary: string;
+  /** Last known ownership (stored SyncToken == live SyncToken). */
+  botOwned: boolean;
+  updatedAt: string;
+}

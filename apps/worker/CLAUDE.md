@@ -22,6 +22,10 @@ Plain Vercel Serverless Functions (no framework) that run the
   (Gemini with photos) and the exemplar library is large.
 - `api/quote-draft.ts` — manual one-phone draft/dry-run (escape hatch +
   validation probe).
+- `api/quote-email-tick.ts` — 15-min cron: T4 email channel. Matches
+  recent inbound Gmail against the open-quote index and enqueues
+  synthetic trigger events. Degrades to a logged skip without
+  gmail.readonly on the Google token.
 - `api/health.ts` — liveness.
 
 ## Rules

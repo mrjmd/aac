@@ -37,6 +37,7 @@ import {
 import { keys } from '@aac/shared-utils/redis';
 import { generateWithRetry } from './gemini.js';
 import { fetchFieldContext, type FieldChannel } from './field-context.js';
+import { summarizeLines, upsertOpenQuote } from './open-quotes.js';
 import {
   EXEMPLARS_PER_AREA,
   MAX_PHOTOS,
@@ -125,6 +126,13 @@ export interface DraftOneOptions {
    * new customer information to regenerate FROM. Manual runs pass true.
    */
   hasNewInbound: boolean;
+  /**
+   * Trigger runs: when the quote turns out human-owned (or a recent Pending
+   * estimate blocks stacking), return outcome 'flagged' instead of a silent
+   * skip so the caller can post the scope-change flag (T4, 2026-10-29).
+   * The estimate is still never written to. Manual runs omit it.
+   */
+  flagHumanOwned?: boolean;
   /** Photos that arrived outside Quo (email, AirDrop) — manual runs only. */
   extraImageParts?: Array<{ mimeType: string; base64: string }>;
   /** Group threads: pass the FULL participant set (manual runs only). */
@@ -141,11 +149,13 @@ export async function draftOne(deps: DrafterDeps, opts: DraftOneOptions): Promis
   //    name chain (finding → Quo contact → QBO name search → create).
   let customerId: string | null = null;
   let resolvedName = customerName;
+  let resolvedEmail: string | null = null;
   let liveName = finding.customer?.trim() || null;
   const byPhone = await qb.findCustomerByPhone(phone);
   if (byPhone?.Id) {
     customerId = byPhone.Id;
     resolvedName = byPhone.DisplayName ?? resolvedName;
+    resolvedEmail = byPhone.PrimaryEmailAddr?.Address ?? null;
     log(`  resolved by phone → QBO customer ${customerId} "${resolvedName}"`);
   }
   if (!customerId && !liveName) {
@@ -163,6 +173,7 @@ export async function draftOne(deps: DrafterDeps, opts: DraftOneOptions): Promis
     if (byName?.Id) {
       customerId = byName.Id;
       resolvedName = byName.DisplayName ?? liveName;
+      resolvedEmail = byName.PrimaryEmailAddr?.Address ?? null;
     } else {
       resolvedName = liveName;
     }
@@ -187,6 +198,30 @@ export async function draftOne(deps: DrafterDeps, opts: DraftOneOptions): Promis
         log(`  ~ bot-owned draft #${botPending.DocNumber} — will regenerate in place`);
       } else {
         const msg = `bot draft #${botPending.DocNumber} is human-owned (owner edited, or pre-ownership era) — never touching it`;
+        if (opts.flagHumanOwned) {
+          // Keep the index honest so the next T4 skips straight to the flag path.
+          await upsertOpenQuote(redis, phone, {
+            estimateId: botPending.Id,
+            docNumber: botPending.DocNumber ?? '',
+            customerId,
+            customer: resolvedName,
+            email: resolvedEmail,
+            total: botPending.TotalAmt ?? 0,
+            linesSummary: '',
+            botOwned: false,
+            updatedAt: new Date(deps.now()).toISOString(),
+          });
+          log(`  ⚑ ${msg} — flagging instead`);
+          return {
+            phone,
+            customer: resolvedName,
+            outcome: 'flagged',
+            detail: msg,
+            estimateId: botPending.Id,
+            docNumber: botPending.DocNumber,
+            total: botPending.TotalAmt,
+          };
+        }
         if (!opts.dryRun) {
           log(`  ~ skipped: ${msg}`);
           return { phone, customer: resolvedName, outcome: 'skipped', detail: msg };
@@ -199,6 +234,20 @@ export async function draftOne(deps: DrafterDeps, opts: DraftOneOptions): Promis
         .slice(0, 10);
       const recent = existing.find((e) => (e.TxnDate ?? '') >= cutoff);
       if (recent) {
+        if (opts.flagHumanOwned && recent.TxnStatus === 'Pending') {
+          // A human-created open quote blocks drafting, but the trigger is
+          // still scope evidence — flag it rather than vanish.
+          log(`  ⚑ Pending estimate #${recent.DocNumber} (${recent.TxnDate}) is not the bot's — flagging instead`);
+          return {
+            phone,
+            customer: resolvedName,
+            outcome: 'flagged',
+            detail: `human Pending estimate #${recent.DocNumber} (${recent.TxnDate})`,
+            estimateId: recent.Id,
+            docNumber: recent.DocNumber,
+            total: recent.TotalAmt,
+          };
+        }
         log(
           `  ~ skipped: estimate #${recent.DocNumber} (${recent.TxnDate}) within ${opts.skipIfRecentEstimateDays}d — not stacking`,
         );
@@ -386,6 +435,17 @@ export async function draftOne(deps: DrafterDeps, opts: DraftOneOptions): Promis
         docNumber: updateTarget.DocNumber,
       });
       await redis.set(keys.quoteDraftSyncToken(revised.Id), String(revised.SyncToken));
+      await upsertOpenQuote(redis, phone, {
+        estimateId: revised.Id,
+        docNumber: revised.DocNumber ?? String(run.nextDocNumber),
+        customerId: customerId!,
+        customer: resolvedName,
+        email: resolvedEmail,
+        total: revised.TotalAmt ?? draftTotal(draft),
+        linesSummary: summarizeLines(draft.lines),
+        botOwned: true,
+        updatedAt: new Date(deps.now()).toISOString(),
+      });
       log(`  ✓ regenerated Pending estimate #${revised.DocNumber} — $${revised.TotalAmt} (was $${updateTarget.TotalAmt})`);
       await postDraftNote(quo, log, phone, buildDraftUpdatedNote({
         docNumber: revised.DocNumber ?? String(run.nextDocNumber),
@@ -452,6 +512,17 @@ export async function draftOne(deps: DrafterDeps, opts: DraftOneOptions): Promis
     docNumber: String(run.nextDocNumber),
   });
   await redis.set(keys.quoteDraftSyncToken(estimate.Id), String(estimate.SyncToken));
+  await upsertOpenQuote(redis, phone, {
+    estimateId: estimate.Id,
+    docNumber: estimate.DocNumber ?? String(run.nextDocNumber),
+    customerId,
+    customer: resolvedName,
+    email: resolvedEmail,
+    total: estimate.TotalAmt ?? draftTotal(draft),
+    linesSummary: summarizeLines(draft.lines),
+    botOwned: true,
+    updatedAt: new Date(deps.now()).toISOString(),
+  });
   log(`  ✓ created Pending estimate #${estimate.DocNumber} — $${estimate.TotalAmt}`);
   await postDraftNote(quo, log, phone, buildDraftCreatedNote({
     docNumber: estimate.DocNumber ?? String(run.nextDocNumber),

@@ -28,6 +28,18 @@ export {
   type TriggerVerdict,
 } from './types.js';
 export { loadAssets, clearAssetCache, type AssetManifest } from './assets.js';
+export { buildScopeGatePrompt, parseGateVerdict, runScopeGate, type GateVerdict } from './gate.js';
+export { flagScopeChange, type ScopeFlag } from './flags.js';
+export { pollQuoteEmails, type EmailPollSummary } from './email-poll.js';
+export {
+  getOpenQuote,
+  upsertOpenQuote,
+  removeOpenQuote,
+  listOpenQuotes,
+  summarizeLines,
+  syncOpenQuoteIndex,
+  OPEN_QUOTE_SYNC_INTERVAL_MS,
+} from './open-quotes.js';
 export { draftOne, prepareRun, type DraftOneOptions, type RunContext } from './drafter.js';
 export { loadFieldChannel, fetchFieldContext, type FieldChannel } from './field-context.js';
-export { runTick, resolveMode, resolveVisitCustomers, type TickSummary } from './trigger.js';
+export { runTick, resolveMode, resolveT4Mode, resolveVisitCustomers, type TickSummary } from './trigger.js';

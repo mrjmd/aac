@@ -224,8 +224,14 @@ export interface QuoteTriggerEvent {
   at: string;
   hasMedia: boolean;
   snippet: string;
-  /** 'mike-debrief' = technician call transcript completed (T2 moment). */
-  kind?: 'message' | 'mike-debrief';
+  /**
+   * 'mike-debrief' = technician call transcript completed (T2 moment);
+   * 'call-transcript'/'voicemail' = customer call content for the T4
+   * scope-change gate (body fetched by the runner via callId).
+   */
+  kind?: 'message' | 'mike-debrief' | 'call-transcript' | 'voicemail' | 'email';
+  /** Quo call id for call-transcript/voicemail events. */
+  callId?: string;
 }
 
 export async function enqueueQuoteTrigger(event: QuoteTriggerEvent): Promise<void> {

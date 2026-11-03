@@ -1,10 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
+import type { OpenQuoteEntry } from '@aac/shared-utils/types';
 import { classify, type TriggerEvent, type DrafterDeps } from '../src/types.js';
 import { draftOne, type DraftOneOptions, type RunContext } from '../src/drafter.js';
 import { runTick, resolveVisitCustomers } from '../src/trigger.js';
 import { loadAssets, clearAssetCache } from '../src/assets.js';
+import { parseGateVerdict, buildScopeGatePrompt } from '../src/gate.js';
+import {
+  getOpenQuote,
+  listOpenQuotes,
+  syncOpenQuoteIndex,
+  upsertOpenQuote,
+} from '../src/open-quotes.js';
+import { pollQuoteEmails } from '../src/email-poll.js';
 
 // ── tiny in-memory Redis covering the subset the package uses ──────────
 
@@ -133,6 +142,7 @@ function makeDeps(overrides: Partial<Record<string, unknown>> = {}): {
       createContactNote: vi.fn(),
       downloadMessageMedia: vi.fn(),
       getCallTranscript: vi.fn(),
+      getCallVoicemail: vi.fn().mockResolvedValue(null),
     },
     gemini: throwingGemini,
     calendar: null,
@@ -348,6 +358,7 @@ describe('runTick', () => {
       ruleset: 'https://blob.test/ruleset.md',
       updatedAt: 't1',
     });
+    await redis.set(keys.quoteDrafterT4Mode, 'live'); // exercise the live flag write
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('SECTION 0')));
     // event 20 minutes ago — due
     await redis.lpush(
@@ -358,9 +369,11 @@ describe('runTick', () => {
       const summary = await runTick(deps, 'live');
       expect(summary.due).toBe(1);
       expect(summary.drafted).toBe(1);
-      // skip-if-recent fired inside draftOne (estimate 2 days old)
-      expect(summary.records[0]?.record?.outcome).toBe('skipped');
+      // the 2-day-old human Pending estimate blocks stacking — since T4
+      // (2026-10-29) trigger runs flag that instead of skipping silently
+      expect(summary.records[0]?.record?.outcome).toBe('flagged');
       expect(summary.records[0]?.trigger).toBe('T1');
+      expect(redis.lists.get(keys.quoteScopeFlags)?.length).toBe(1);
       // buffer + due entry consumed
       expect(await redis.hget(keys.quoteTriggerPending, '+15083611747')).toBeNull();
       expect(await redis.zcard(keys.quoteTriggerDue)).toBe(0);
@@ -454,5 +467,394 @@ describe('loadAssets', () => {
       vi.unstubAllGlobals();
       clearAssetCache();
     }
+  });
+});
+
+// ── T4: scope-change gate ───────────────────────────────────────────────
+
+function openEntry(overrides: Partial<OpenQuoteEntry> = {}): OpenQuoteEntry {
+  return {
+    estimateId: '77',
+    docNumber: '1576',
+    customerId: '9',
+    customer: 'Kshitij Bichave',
+    email: 'kb@example.com',
+    total: 1325,
+    linesSummary: 'Crack Repair ×1 @ $1325',
+    botOwned: false,
+    updatedAt: '2026-10-21T12:00:00Z',
+    ...overrides,
+  };
+}
+
+describe('parseGateVerdict', () => {
+  it('parses plain and fenced JSON', () => {
+    expect(parseGateVerdict('{"scopeRelevant": true, "reason": "finished basement"}')).toEqual({
+      scopeRelevant: true,
+      reason: 'finished basement',
+    });
+    expect(
+      parseGateVerdict('```json\n{"scopeRelevant": false, "reason": "scheduling"}\n```'),
+    ).toEqual({ scopeRelevant: false, reason: 'scheduling' });
+  });
+
+  it('returns null on garbage or missing fields', () => {
+    expect(parseGateVerdict('not json')).toBeNull();
+    expect(parseGateVerdict('{"reason": "no verdict"}')).toBeNull();
+  });
+});
+
+describe('buildScopeGatePrompt', () => {
+  it('includes the quote, context, and new content', () => {
+    const prompt = buildScopeGatePrompt({
+      open: openEntry(),
+      newContent: ['[text 2026-10-28T15:50:00Z] basement is finished'],
+      context: [{ direction: 'incoming', at: 't', text: 'photos attached' }],
+    });
+    expect(prompt).toContain('Quote #1576 — $1325');
+    expect(prompt).toContain('basement is finished');
+    expect(prompt).toContain('[CUSTOMER] photos attached');
+  });
+});
+
+describe('runTick T4', () => {
+  async function seedInbound(redis: MiniRedis, overrides: Partial<TriggerEvent> = {}) {
+    // due: 20 minutes before the mocked now
+    await redis.lpush(
+      keys.quoteTriggerQueue,
+      JSON.stringify(ev({ at: '2026-10-21T15:40:00Z', snippet: 'the basement is finished', ...overrides })),
+    );
+  }
+
+  it('flags a human-owned open quote when the gate says scope-relevant', async () => {
+    const { deps, redis } = makeDeps();
+    await redis.set(keys.quoteDrafterT4Mode, 'live');
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry({ botOwned: false }));
+    (deps.gemini.generateContent as ReturnType<typeof vi.fn>).mockResolvedValue(
+      '{"scopeRelevant": true, "reason": "finished basement — drywall removal"}',
+    );
+    await seedInbound(redis);
+    const summary = await runTick(deps, 'live');
+    expect(summary.due).toBe(1);
+    expect(summary.drafted).toBe(0); // flag, not draft
+    const log = (redis.lists.get(keys.quoteDrafterRunlog) ?? []).map((r) => JSON.parse(r as string));
+    expect(log[0].trigger).toBe('T4');
+    expect(log[0].record.outcome).toBe('flagged');
+    const flags = (redis.lists.get(keys.quoteScopeFlags) ?? []).map((r) => JSON.parse(r as string));
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ docNumber: '1576', channel: 'text' });
+    // dedupe marker set
+    expect(await redis.hget(keys.quoteTriggerT4Done, '77')).toBeTruthy();
+  });
+
+  it('defaults to T4 shadow under a live global mode — verdict logged, nothing written', async () => {
+    const { deps, redis } = makeDeps();
+    // no quoteDrafterT4Mode key set — default must be shadow
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry());
+    (deps.gemini.generateContent as ReturnType<typeof vi.fn>).mockResolvedValue(
+      '{"scopeRelevant": true, "reason": "finished basement"}',
+    );
+    await seedInbound(redis);
+    await runTick(deps, 'live');
+    expect(redis.lists.get(keys.quoteScopeFlags)).toBeUndefined();
+    const log = (redis.lists.get(keys.quoteDrafterRunlog) ?? []).map((r) => JSON.parse(r as string));
+    expect(log[0].trigger).toBe('T4');
+    expect(log[0].mode).toBe('shadow');
+    expect(log[0].record.outcome).toBe('flagged');
+  });
+
+  it('skips the gate entirely when T4 mode is off', async () => {
+    const { deps, redis } = makeDeps();
+    await redis.set(keys.quoteDrafterT4Mode, 'off');
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry());
+    await seedInbound(redis);
+    await runTick(deps, 'live'); // default gemini mock rejects — a gate call would fail loudly
+    const log = (redis.lists.get(keys.quoteDrafterRunlog) ?? []).map((r) => JSON.parse(r as string));
+    expect(log[0].trigger).toBe('none');
+  });
+
+  it('suppresses flag side effects in shadow but still logs the verdict', async () => {
+    const { deps, redis } = makeDeps();
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry());
+    (deps.gemini.generateContent as ReturnType<typeof vi.fn>).mockResolvedValue(
+      '{"scopeRelevant": true, "reason": "finished basement"}',
+    );
+    await seedInbound(redis);
+    const summary = await runTick(deps, 'shadow');
+    expect(summary.drafted).toBe(0);
+    expect(redis.lists.get(keys.quoteScopeFlags)).toBeUndefined();
+    const log = (redis.lists.get(keys.quoteDrafterRunlog) ?? []).map((r) => JSON.parse(r as string));
+    expect(log[0].trigger).toBe('T4');
+    expect(log[0].record.outcome).toBe('flagged');
+  });
+
+  it('runs the draft path for a bot-owned open quote', async () => {
+    const { deps, redis } = makeDeps();
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry({ botOwned: true }));
+    (deps.gemini.generateContent as ReturnType<typeof vi.fn>).mockResolvedValue(
+      '{"scopeRelevant": true, "reason": "finished basement"}',
+    );
+    await redis.hset(keys.quoteDrafterAssets, { ruleset: 'https://blob.test/r.md', updatedAt: 'v1' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('SECTION 0')));
+    await seedInbound(redis);
+    try {
+      const summary = await runTick(deps, 'live');
+      expect(summary.drafted).toBe(1);
+      expect(summary.records[0]?.trigger).toBe('T4');
+      // with no resolvable customer/messages the draft itself skips, but the
+      // T4 job ran through draftOne with hasNewInbound
+      expect(summary.records[0]?.record?.outcome).toBe('skipped');
+    } finally {
+      vi.unstubAllGlobals();
+      clearAssetCache();
+    }
+  });
+
+  it('records a gate-no verdict without flagging and without dedupe', async () => {
+    const { deps, redis } = makeDeps();
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry());
+    (deps.gemini.generateContent as ReturnType<typeof vi.fn>).mockResolvedValue(
+      '{"scopeRelevant": false, "reason": "just a scheduling question"}',
+    );
+    await seedInbound(redis, { snippet: 'can we do Tuesday instead?' });
+    await runTick(deps, 'live');
+    const log = (redis.lists.get(keys.quoteDrafterRunlog) ?? []).map((r) => JSON.parse(r as string));
+    expect(log[0].trigger).toBe('T4');
+    expect(log[0].record.outcome).toBe('skipped');
+    expect(redis.lists.get(keys.quoteScopeFlags)).toBeUndefined();
+    expect(await redis.hget(keys.quoteTriggerT4Done, '77')).toBeNull();
+  });
+
+  it('dedupes a second T4 within 24h of the first action', async () => {
+    const { deps, redis } = makeDeps();
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry());
+    await redis.hset(keys.quoteTriggerT4Done, { '77': '2026-10-21T10:00:00Z' });
+    await seedInbound(redis);
+    await runTick(deps, 'live');
+    // gemini never called (default mock rejects — reaching it would fail loudly)
+    const log = (redis.lists.get(keys.quoteDrafterRunlog) ?? []).map((r) => JSON.parse(r as string));
+    expect(log[0].trigger).toBe('none');
+    expect(log[0].why).toContain('deduped');
+  });
+
+  it('stays silent for phones with no open quote', async () => {
+    const { deps, redis } = makeDeps();
+    await seedInbound(redis);
+    await runTick(deps, 'live');
+    const log = (redis.lists.get(keys.quoteDrafterRunlog) ?? []).map((r) => JSON.parse(r as string));
+    expect(log[0].trigger).toBe('none');
+  });
+
+  it('re-arms the buffer while a voicemail transcript is pending', async () => {
+    const { deps, redis } = makeDeps();
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry());
+    (deps.quo.getCallVoicemail as ReturnType<typeof vi.fn>).mockResolvedValue({
+      callId: 'c1',
+      status: 'in-progress',
+    });
+    await seedInbound(redis, { kind: 'voicemail', callId: 'c1', snippet: '' });
+    await runTick(deps, 'live');
+    // buffer restored with a retry count and the due clock pushed out
+    const pending = await redis.hget<TriggerEvent[]>(keys.quoteTriggerPending, '+15083611747');
+    expect(pending?.[0]?.retries).toBe(1);
+    expect(await redis.zcard(keys.quoteTriggerDue)).toBe(1);
+  });
+
+  it('uses the fetched voicemail transcript as gate content', async () => {
+    const { deps, redis } = makeDeps();
+    await redis.set(keys.quoteDrafterT4Mode, 'live');
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry());
+    (deps.quo.getCallVoicemail as ReturnType<typeof vi.fn>).mockResolvedValue({
+      callId: 'c1',
+      status: 'completed',
+      transcript: 'hey the basement is actually finished, drywall everywhere',
+    });
+    const gen = deps.gemini.generateContent as ReturnType<typeof vi.fn>;
+    gen.mockResolvedValue('{"scopeRelevant": true, "reason": "finished basement"}');
+    await seedInbound(redis, { kind: 'voicemail', callId: 'c1', snippet: '' });
+    await runTick(deps, 'live');
+    expect(gen.mock.calls[0][0]).toContain('drywall everywhere');
+    const flags = (redis.lists.get(keys.quoteScopeFlags) ?? []).map((r) => JSON.parse(r as string));
+    expect(flags[0]).toMatchObject({ channel: 'voicemail' });
+  });
+});
+
+describe('draftOne flagHumanOwned', () => {
+  it('returns flagged instead of skipped for a human-owned bot draft', async () => {
+    const { deps, redis } = makeDeps();
+    (deps.qb.findCustomerByPhone as ReturnType<typeof vi.fn>).mockResolvedValue({
+      Id: '9',
+      DisplayName: 'Jane',
+    });
+    (deps.qb.getEstimatesByCustomer as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        Id: '77',
+        SyncToken: '3',
+        DocNumber: '1576',
+        TxnStatus: 'Pending',
+        TotalAmt: 1325,
+        PrivateNote: 'BOT DRAFT — review before sending',
+        Line: [],
+      },
+    ]);
+    await redis.set(keys.quoteDraftSyncToken('77'), '0'); // stored ≠ live → human-owned
+    const record = await draftOne(deps, draftOpts({ flagHumanOwned: true }));
+    expect(record.outcome).toBe('flagged');
+    expect(record.docNumber).toBe('1576');
+    // index refreshed to human-owned
+    const entry = await getOpenQuote(redis as unknown as Redis, '+15083611747');
+    expect(entry?.botOwned).toBe(false);
+  });
+
+  it('flags when a human Pending estimate blocks stacking', async () => {
+    const { deps } = makeDeps();
+    (deps.qb.findCustomerByPhone as ReturnType<typeof vi.fn>).mockResolvedValue({
+      Id: '9',
+      DisplayName: 'Jane',
+    });
+    (deps.qb.getEstimatesByCustomer as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { Id: '80', SyncToken: '0', DocNumber: '1580', TxnStatus: 'Pending', TxnDate: '2026-10-19', TotalAmt: 900, Line: [] },
+    ]);
+    const record = await draftOne(
+      deps,
+      draftOpts({ flagHumanOwned: true, skipIfRecentEstimateDays: 30 }),
+    );
+    expect(record.outcome).toBe('flagged');
+    expect(record.docNumber).toBe('1580');
+  });
+
+  it('keeps the silent skip for manual runs without the option', async () => {
+    const { deps } = makeDeps();
+    (deps.qb.findCustomerByPhone as ReturnType<typeof vi.fn>).mockResolvedValue({
+      Id: '9',
+      DisplayName: 'Jane',
+    });
+    (deps.qb.getEstimatesByCustomer as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { Id: '80', SyncToken: '0', DocNumber: '1580', TxnStatus: 'Pending', TxnDate: '2026-10-19', TotalAmt: 900, Line: [] },
+    ]);
+    const record = await draftOne(deps, draftOpts({ skipIfRecentEstimateDays: 30 }));
+    expect(record.outcome).toBe('skipped');
+  });
+});
+
+// ── open-quote index ────────────────────────────────────────────────────
+
+describe('syncOpenQuoteIndex', () => {
+  it('indexes Pending estimates with phone/email and refreshes ownership', async () => {
+    const { deps, redis } = makeDeps();
+    (deps.qb.listRecentEstimates as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        Id: '77',
+        SyncToken: '1',
+        DocNumber: '1576',
+        TxnStatus: 'Pending',
+        TxnDate: '2026-10-20',
+        CustomerRef: { value: '9', name: 'Jane' },
+        TotalAmt: 1325,
+        BillEmail: { Address: 'jane@example.com' },
+        Line: [
+          { SalesItemLineDetail: { ItemRef: { value: 'i1', name: 'Crack Repair' }, Qty: 1, UnitPrice: 1325 } },
+        ],
+      },
+      { Id: '78', SyncToken: '0', TxnStatus: 'Accepted', TxnDate: '2026-10-20', CustomerRef: { value: '9' }, Line: [] },
+    ]);
+    (deps.qb.listAllCustomers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { Id: '9', DisplayName: 'Jane Doe', PrimaryPhone: { FreeFormNumber: '508-361-1747' } },
+    ]);
+    await redis.set(keys.quoteDraftSyncToken('77'), '0'); // live token is 1 → human-owned
+    // stale entry that should be removed (old updatedAt, not in desired set)
+    await upsertOpenQuote(redis as unknown as Redis, '+19998887777', openEntry({ updatedAt: '2026-10-20T00:00:00Z' }));
+    // fresh entry inside the grace window — must survive
+    await upsertOpenQuote(
+      redis as unknown as Redis,
+      '+17778889999',
+      openEntry({ updatedAt: '2026-10-21T15:50:00Z' }),
+    );
+
+    const result = await syncOpenQuoteIndex(deps);
+    expect(result).toMatchObject({ indexed: 1, removed: 1 });
+    const entry = await getOpenQuote(redis as unknown as Redis, '+15083611747');
+    expect(entry).toMatchObject({
+      estimateId: '77',
+      docNumber: '1576',
+      customer: 'Jane Doe',
+      email: 'jane@example.com',
+      botOwned: false,
+      linesSummary: 'Crack Repair ×1 @ $1325',
+    });
+    expect(await getOpenQuote(redis as unknown as Redis, '+19998887777')).toBeNull();
+    expect(await getOpenQuote(redis as unknown as Redis, '+17778889999')).not.toBeNull();
+    // self-gates: immediate second call is a no-op
+    expect(await syncOpenQuoteIndex(deps)).toBeNull();
+  });
+});
+
+// ── email channel ───────────────────────────────────────────────────────
+
+describe('pollQuoteEmails', () => {
+  it('enqueues inbound mail from open-quote senders exactly once', async () => {
+    const { deps, redis } = makeDeps();
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry({ email: 'KB@Example.com' }));
+    const gmail = {
+      listMessages: vi.fn().mockResolvedValue([
+        {
+          id: 'm1',
+          fromAddress: 'kb@example.com',
+          subject: 'About the quote',
+          body: 'turns out the basement is finished',
+          snippet: '',
+          at: '2026-10-21T15:00:00Z',
+          attachments: [],
+        },
+        {
+          id: 'm2',
+          fromAddress: 'random@elsewhere.com',
+          subject: 'spam',
+          body: '',
+          snippet: '',
+          at: '2026-10-21T15:00:00Z',
+          attachments: [],
+        },
+      ]),
+    };
+    const pollDeps = {
+      redis: redis as unknown as Redis,
+      gmail: gmail as never,
+      log: () => {},
+      now: deps.now,
+    };
+    const first = await pollQuoteEmails(pollDeps);
+    expect(first).toMatchObject({ openQuotes: 1, enqueued: 1 });
+    const queued = (redis.lists.get(keys.quoteTriggerQueue) ?? []).map((r) => JSON.parse(r as string));
+    expect(queued[0]).toMatchObject({ phone: '+15083611747', kind: 'email', direction: 'incoming' });
+    expect(queued[0].snippet).toContain('basement is finished');
+    // second poll: m1 already seen
+    const second = await pollQuoteEmails(pollDeps);
+    expect(second.enqueued).toBe(0);
+  });
+
+  it('does nothing when no open quote has an email', async () => {
+    const { deps, redis } = makeDeps();
+    const gmail = { listMessages: vi.fn() };
+    const summary = await pollQuoteEmails({
+      redis: redis as unknown as Redis,
+      gmail: gmail as never,
+      log: () => {},
+      now: deps.now,
+    });
+    expect(summary.openQuotes).toBe(0);
+    expect(gmail.listMessages).not.toHaveBeenCalled();
+  });
+});
+
+// ── open-quote entry roundtrip ──────────────────────────────────────────
+
+describe('open-quote index helpers', () => {
+  it('roundtrips entries through the hash', async () => {
+    const redis = new MiniRedis() as unknown as Redis;
+    await upsertOpenQuote(redis, '+15083611747', openEntry());
+    expect((await getOpenQuote(redis, '+15083611747'))?.docNumber).toBe('1576');
+    const all = await listOpenQuotes(redis);
+    expect(all.size).toBe(1);
   });
 });

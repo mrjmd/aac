@@ -23,6 +23,13 @@ estimates. It runs in `apps/worker` (per-minute cron) with
   write to it.
 - **Regeneration needs new inbound content.** Matt's own outbound texts
   are not "new info" (10/21 bug: T3 fired on a bot-drafted follow-up).
+- **T4 (scope-change gate, 2026-10-29):** inbound content (text/voicemail/
+  call transcript/email) from a phone in the open-quote index
+  (`quote-draft:open`) runs a Gemini gate tuned for recall; bot-owned →
+  regenerate, human-owned → flag note + `quote-drafter:scope-flags`
+  (triage section). T4 stages via `quote-drafter:t4-mode` — DEFAULT
+  SHADOW, independent of the global mode. Flip with
+  `tools/src/quote-trigger/mode.ts t4 live`.
 - **Mode kill-switch:** Redis `quote-drafter:mode` overrides the worker's
   `QUOTE_DRAFTER_MODE` env — `off` | `shadow` (dry-run) | `live`.
 - `strict: true`; tests for new logic; run `pnpm test` after changes.

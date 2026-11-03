@@ -115,6 +115,39 @@ export const keys = {
   /** HASH: phone → ISO of last T2 (Mike-debrief) draft — 24h dedupe. */
   quoteTriggerT2Done: 'quote-trigger:t2-done' as const,
 
+  /** HASH: estimateId → ISO of last T4 (scope-change) action — 24h dedupe. */
+  quoteTriggerT4Done: 'quote-trigger:t4-done' as const,
+
+  /**
+   * Open-quote index (HASH: phone → JSON OpenQuoteEntry). The T4 pre-check:
+   * which phones/emails have a Pending estimate right now. Written by the
+   * drafter at create/regenerate; maintained (adds, removals, ownership
+   * refresh) by middleware's qb-reconcile cron. Advisory only — writers
+   * re-verify ownership against live QBO before touching anything.
+   */
+  quoteDraftOpen: 'quote-draft:open' as const,
+
+  /** ISO of the last full open-quote index rebuild from QBO (30-min gate). */
+  quoteDraftOpenSyncedAt: 'quote-draft:open-synced-at' as const,
+
+  /**
+   * T4 (scope-change gate) staging flag: 'off' | 'shadow' | 'live',
+   * DEFAULT SHADOW when unset. Independent of quoteDrafterMode so T4 can
+   * shadow while T1-T3 drafting stays live (and vice versa). Global
+   * shadow/off still wins — T4 never exceeds the drafter's own mode.
+   */
+  quoteDrafterT4Mode: 'quote-drafter:t4-mode' as const,
+
+  /**
+   * Scope-change flags on human-owned open quotes (LPUSH + LTRIM 200):
+   * JSON {at, phone, customer, docNumber, estimateId, total, reason,
+   * channel}. Rendered by the triage dashboard.
+   */
+  quoteScopeFlags: 'quote-drafter:scope-flags' as const,
+
+  /** Gmail message ids already enqueued by the worker email tick (24h-pruned HASH: id → ISO). */
+  quoteEmailSeen: 'quote-trigger:email-seen' as const,
+
   /** Serializes quote-tick runs (NX lock, TTL) — doc numbers must not race. */
   quoteDrafterRunLock: 'quote-drafter:run-lock' as const,
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { QBEstimate } from '@aac/api-clients/quickbooks';
-import { diffDraftLines, buildDraftCreatedNote, buildDraftUpdatedNote, qboEstimateLink } from '../src/draft-notes';
+import { diffDraftLines, buildDraftCreatedNote, buildDraftUpdatedNote, buildScopeFlagNote, qboEstimateLink } from '../src/draft-notes';
 
 const prev = {
   Id: '900', SyncToken: '1', DocNumber: '1570', TxnStatus: 'Pending',
@@ -50,5 +50,19 @@ describe('note builders', () => {
     expect(n).toContain('UPDATED — $3125 (was $2350)');
     expect(n).toContain('+ Sewer Inlet Injection');
     expect(n).toContain('txnId=900');
+  });
+});
+
+describe('buildScopeFlagNote', () => {
+  it('states the channel, reason, and that the quote was not auto-updated', () => {
+    const n = buildScopeFlagNote({
+      docNumber: '1576', estimateId: '77', total: 1325,
+      reason: 'basement is finished — drywall removal likely',
+      channel: 'text',
+    });
+    expect(n).toContain('🤖 New info may affect quote #1576 ($1325) — via text');
+    expect(n).toContain('drywall removal likely');
+    expect(n).toContain('Not auto-updated');
+    expect(n).toContain('txnId=77');
   });
 });

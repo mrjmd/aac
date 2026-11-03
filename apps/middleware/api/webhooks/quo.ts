@@ -379,6 +379,39 @@ export async function POST(request: Request): Promise<Response> {
         kind: 'mike-debrief',
       });
     }
+    // T4 (scope-change gate): customer call transcripts and voicemails are
+    // scope evidence too. Enqueue the callId only — the runner fetches the
+    // transcript/voicemail body at gate time and ignores phones with no
+    // open quote. (Internal numbers are filtered by the runner's drain.)
+    if (event.type === 'call.transcript.completed' && !TECHNICIAN_PHONES.has(e164Phone)) {
+      await enqueueQuoteTrigger({
+        phone: e164Phone,
+        direction: 'incoming',
+        at: eventData.createdAt || event.createdAt || new Date().toISOString(),
+        hasMedia: false,
+        snippet: '',
+        kind: 'call-transcript',
+        callId: eventData.callId || eventData.id,
+      });
+    }
+    if (
+      event.type === 'call.completed' &&
+      eventData.direction === 'incoming' &&
+      !(eventData.duration ?? 0) &&
+      !eventData.answeredAt
+    ) {
+      // Missed incoming call — any such call may carry a voicemail (the
+      // runner probes GET /call-voicemails/{callId} and drops rang-outs).
+      await enqueueQuoteTrigger({
+        phone: e164Phone,
+        direction: 'incoming',
+        at: eventData.createdAt || event.createdAt || new Date().toISOString(),
+        hasMedia: false,
+        snippet: '',
+        kind: 'voicemail',
+        callId: eventData.id,
+      });
+    }
 
     // ============================================
     // FIRST-TOUCH INTAKE SCHEDULING (message-drafts)
