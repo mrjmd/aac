@@ -1,21 +1,12 @@
 /**
- * To-do item types and Redis operations.
+ * To-do item types — defined in @aac/shared-utils so the tools/src/todos CLI
+ * and triage.html share the exact shape this app reads and writes.
  */
 
-export interface TodoItem {
-  id: string;
-  title: string;
-  dueDate: string | null; // ISO date string (date only, e.g. "2026-04-05")
-  notes: string;
-  status: "pending" | "completed";
-  source: "manual" | "ai-detected" | "recurring";
-  createdAt: string; // ISO timestamp
-  completedAt: string | null; // ISO timestamp
-}
-
-export type CreateTodoInput = Pick<TodoItem, "title"> &
-  Partial<Pick<TodoItem, "dueDate" | "notes" | "source">>;
-
-export type UpdateTodoInput = Partial<
-  Pick<TodoItem, "title" | "dueDate" | "notes" | "status">
->;
+export type {
+  TodoItem,
+  TodoStep,
+  CreateTodoInput,
+  UpdateTodoInput,
+} from "@aac/shared-utils/types";
+export { todoScore } from "@aac/shared-utils/types";

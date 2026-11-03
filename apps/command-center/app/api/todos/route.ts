@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRedis } from "@/lib/redis";
 import { keys } from "@aac/shared-utils/redis";
-import type { TodoItem, CreateTodoInput, UpdateTodoInput } from "@/lib/todos";
+import { todoScore, type TodoItem, type CreateTodoInput, type UpdateTodoInput } from "@/lib/todos";
 
 /**
  * GET /api/todos — list all to-dos
@@ -62,12 +62,10 @@ export async function POST(request: NextRequest) {
     source: body.source ?? "manual",
     createdAt: now,
     completedAt: null,
+    ...(body.steps?.length ? { steps: body.steps } : {}),
   };
 
-  // Score for sorted set: due date epoch ms, or far future if no due date
-  const score = item.dueDate
-    ? new Date(item.dueDate).getTime()
-    : 9999999999999;
+  const score = todoScore(item.dueDate);
 
   await Promise.all([
     redis.set(keys.todo(id), item),
@@ -100,6 +98,7 @@ export async function PATCH(request: NextRequest) {
     dueDate: body.dueDate !== undefined ? body.dueDate : existing.dueDate,
     notes: body.notes !== undefined ? body.notes.trim() : existing.notes,
     status: body.status ?? existing.status,
+    steps: body.steps ?? existing.steps,
     completedAt:
       body.status === "completed" && existing.status !== "completed"
         ? new Date().toISOString()
@@ -108,10 +107,7 @@ export async function PATCH(request: NextRequest) {
           : existing.completedAt,
   };
 
-  // Update score if due date changed
-  const score = updated.dueDate
-    ? new Date(updated.dueDate).getTime()
-    : 9999999999999;
+  const score = todoScore(updated.dueDate);
 
   await Promise.all([
     redis.set(keys.todo(body.id), updated),

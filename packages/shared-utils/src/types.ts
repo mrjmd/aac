@@ -94,3 +94,42 @@ export interface OpenQuoteEntry {
   botOwned: boolean;
   updatedAt: string;
 }
+
+/** One checklist step on a to-do (e.g. "confirm delivery"). */
+export interface TodoStep {
+  text: string;
+  done: boolean;
+}
+
+/**
+ * A to-do item (Redis: `keys.todo(id)` JSON, indexed in `keys.todoList`
+ * scored by due date). Written by the command-center /api/todos route and
+ * the tools/src/todos CLI; rendered on the command center and triage.html.
+ */
+export interface TodoItem {
+  id: string;
+  title: string;
+  /** ISO date only, e.g. "2026-04-05". */
+  dueDate: string | null;
+  notes: string;
+  status: 'pending' | 'completed';
+  source: 'manual' | 'ai-detected' | 'recurring';
+  /** ISO timestamp. */
+  createdAt: string;
+  /** ISO timestamp. */
+  completedAt: string | null;
+  /** Optional checklist; absent on items created before 2026-11. */
+  steps?: TodoStep[];
+}
+
+export type CreateTodoInput = Pick<TodoItem, 'title'> &
+  Partial<Pick<TodoItem, 'dueDate' | 'notes' | 'source' | 'steps'>>;
+
+export type UpdateTodoInput = Partial<
+  Pick<TodoItem, 'title' | 'dueDate' | 'notes' | 'status' | 'steps'>
+>;
+
+/** Sorted-set score for `keys.todoList`: due date epoch ms, undated last. */
+export function todoScore(dueDate: string | null): number {
+  return dueDate ? new Date(dueDate).getTime() : 9999999999999;
+}
