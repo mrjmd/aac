@@ -122,6 +122,28 @@ describe('PipedriveClient', () => {
     });
   });
 
+  describe('mergePersons', () => {
+    it('PUTs merge_with_id to the merge endpoint and returns the survivor', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ id: 5225, name: 'Edward Crowell', phone: [], email: [] }));
+
+      const result = await client.mergePersons(4619, 5225);
+      expect(result.id).toBe(5225);
+
+      const [url, init] = mockFetch.mock.calls[0];
+      expect(url).toContain('/persons/4619/merge');
+      expect(init.method).toBe('PUT');
+      expect(JSON.parse(init.body)).toEqual({ merge_with_id: 5225 });
+    });
+
+    it('throws on API error', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ error: 'not found' }, 404));
+
+      await expect(client.mergePersons(1, 2)).rejects.toThrow();
+    });
+  });
+
   describe('createTask', () => {
     it('creates an undone task', async () => {
       const client = makeClient();

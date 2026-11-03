@@ -92,6 +92,19 @@ export interface CreateDraftOptions {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
+/**
+ * Plain-text draft body → HTML in Gmail's own compose structure: one <div>
+ * per line, <div><br></div> for blank lines, so the draft edits naturally in
+ * the Gmail UI and sends without hard wraps.
+ */
+export function plainTextToGmailHtml(text: string): string {
+  const escape = (s: string): string =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const html = lines.map((line) => (line.trim() === '' ? '<div><br></div>' : `<div>${escape(line)}</div>`));
+  return `<div dir="ltr">${html.join('')}</div>`;
+}
+
 function header(msg: gmail_v1.Schema$Message, name: string): string {
   const h = (msg.payload?.headers ?? []).find(
     (x) => x.name?.toLowerCase() === name.toLowerCase(),
@@ -283,13 +296,26 @@ export class GmailClient {
       'MIME-Version: 1.0',
       `Content-Type: multipart/mixed; boundary="${boundary}"`,
     ];
+    // Body as multipart/alternative (plain + HTML). A text/plain-only draft
+    // opens in Gmail's plain-text compose mode, which hard-wraps every line
+    // at ~70 chars on send; the HTML part makes Gmail open it in rich mode.
+    const altBoundary = `aac-${Date.now().toString(36)}-alt`;
+    const bodyPart = (mimeType: string, content: string): string =>
+      [
+        `--${altBoundary}`,
+        `Content-Type: ${mimeType}; charset="UTF-8"`,
+        'Content-Transfer-Encoding: base64',
+        '',
+        Buffer.from(content, 'utf8').toString('base64'),
+      ].join('\r\n');
     const parts = [
       [
         `--${boundary}`,
-        'Content-Type: text/plain; charset="UTF-8"',
-        'Content-Transfer-Encoding: base64',
+        `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
         '',
-        Buffer.from(options.body, 'utf8').toString('base64'),
+        bodyPart('text/plain', options.body),
+        bodyPart('text/html', plainTextToGmailHtml(options.body)),
+        `--${altBoundary}--`,
       ].join('\r\n'),
       ...(options.attachments ?? []).map((a) =>
         [
@@ -322,5 +348,15 @@ export class GmailClient {
     const messageId = res.data.message?.id ?? '';
     log.info('Created Gmail draft', { draftId, to: options.to, attachments: options.attachments?.length ?? 0 });
     return { draftId, messageId };
+  }
+
+  /**
+   * Delete a draft (e.g. one superseded by a revised draft). Only drafts are
+   * affected; sent mail is untouched. Gmail deletes drafts permanently.
+   */
+  async deleteDraft(draftId: string): Promise<void> {
+    const gmail = this.getClient();
+    await this.withRetry('drafts.delete', () => gmail.users.drafts.delete({ userId: 'me', id: draftId }));
+    log.info('Deleted Gmail draft', { draftId });
   }
 }

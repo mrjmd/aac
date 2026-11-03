@@ -172,6 +172,22 @@ describe('GoogleDriveClient', () => {
       const call = mocks.mockFilesCreate.mock.calls[0][0];
       expect(call.requestBody.parents).toEqual(['FOLDER1']);
       expect(call.media.mimeType).toBe('image/jpeg');
+      expect(call.requestBody.mimeType).toBeUndefined();
+    });
+
+    it('asks Drive to convert when convertTo is set', async () => {
+      mocks.mockFilesCreate.mockResolvedValueOnce({ data: { id: 'DOC1' } });
+
+      await makeClient().uploadFile({
+        name: 'Terms',
+        mimeType: 'text/html',
+        data: Buffer.from('<p>hi</p>'),
+        convertTo: 'application/vnd.google-apps.document',
+      });
+
+      const call = mocks.mockFilesCreate.mock.calls[0][0];
+      expect(call.requestBody.mimeType).toBe('application/vnd.google-apps.document');
+      expect(call.media.mimeType).toBe('text/html');
     });
 
     it('throws when Drive returns no id', async () => {
@@ -195,6 +211,14 @@ describe('GoogleDriveClient', () => {
         sendNotificationEmail: false,
         requestBody: { type: 'user', role: 'reader', emailAddress: 'mike@attackacrack.com' },
       });
+    });
+
+    it('uses the given role when one is passed', async () => {
+      mocks.mockPermissionsCreate.mockResolvedValue({ data: {} });
+
+      await makeClient().shareWithUsers('DOC1', ['zach@example.com'], 'writer');
+
+      expect(mocks.mockPermissionsCreate.mock.calls[0][0].requestBody.role).toBe('writer');
     });
   });
 });

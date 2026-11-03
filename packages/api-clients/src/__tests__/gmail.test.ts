@@ -6,6 +6,7 @@ vi.mock('googleapis', () => {
   const mockAttachmentsGet = vi.fn();
   const mockGetProfile = vi.fn();
   const mockDraftsCreate = vi.fn();
+  const mockDraftsDelete = vi.fn();
   const MockOAuth2 = vi.fn(() => ({
     setCredentials: vi.fn(),
   }));
@@ -16,7 +17,7 @@ vi.mock('googleapis', () => {
         get: mockMessagesGet,
         attachments: { get: mockAttachmentsGet },
       },
-      drafts: { create: mockDraftsCreate },
+      drafts: { create: mockDraftsCreate, delete: mockDraftsDelete },
       getProfile: mockGetProfile,
     },
   }));
@@ -32,6 +33,7 @@ vi.mock('googleapis', () => {
       mockAttachmentsGet,
       mockGetProfile,
       mockDraftsCreate,
+      mockDraftsDelete,
       MockOAuth2,
       mockGmail,
     },
@@ -41,7 +43,7 @@ vi.mock('googleapis', () => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let mocks: any;
 
-import { GmailClient } from '../gmail.js';
+import { GmailClient, plainTextToGmailHtml } from '../gmail.js';
 
 const config = {
   oauth: { clientId: 'cid', clientSecret: 'secret', refreshToken: 'rt' },
@@ -59,6 +61,7 @@ beforeEach(async () => {
   mocks.mockAttachmentsGet.mockReset();
   mocks.mockGetProfile.mockReset();
   mocks.mockDraftsCreate.mockReset();
+  mocks.mockDraftsDelete.mockReset();
 });
 
 describe('GmailClient.listMessages', () => {
@@ -282,5 +285,36 @@ describe('GmailClient.createDraft', () => {
     const mime = decodeRaw(call.requestBody.message.raw);
     expect(mime).not.toContain('In-Reply-To:');
     expect(mime).not.toContain('References:');
+  });
+
+  it('includes an HTML alternative so Gmail does not hard-wrap on send', async () => {
+    mocks.mockDraftsCreate.mockResolvedValue({ data: { id: 'd3', message: { id: 'm11' } } });
+    const client = new GmailClient(config);
+    await client.createDraft({ to: ['a@b.com'], subject: 'Hello', body: 'Hi,\n\nLine one.' });
+
+    const mime = decodeRaw(mocks.mockDraftsCreate.mock.calls[0][0].requestBody.message.raw);
+    expect(mime).toMatch(/Content-Type: multipart\/alternative; boundary="[^"]+"/);
+    expect(mime).toContain('Content-Type: text/plain; charset="UTF-8"');
+    expect(mime).toContain('Content-Type: text/html; charset="UTF-8"');
+    expect(mime).toContain(
+      Buffer.from('<div dir="ltr"><div>Hi,</div><div><br></div><div>Line one.</div></div>', 'utf8').toString('base64'),
+    );
+  });
+});
+
+describe('plainTextToGmailHtml', () => {
+  it('keeps every line break, escapes HTML, and handles CRLF', () => {
+    expect(plainTextToGmailHtml('A & B\r\n\r\n- <item>')).toBe(
+      '<div dir="ltr"><div>A &amp; B</div><div><br></div><div>- &lt;item&gt;</div></div>',
+    );
+  });
+});
+
+describe('GmailClient.deleteDraft', () => {
+  it('deletes the draft by id', async () => {
+    mocks.mockDraftsDelete.mockResolvedValue({ data: {} });
+    const client = new GmailClient(config);
+    await client.deleteDraft('r-123');
+    expect(mocks.mockDraftsDelete).toHaveBeenCalledWith({ userId: 'me', id: 'r-123' });
   });
 });

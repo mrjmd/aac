@@ -661,6 +661,49 @@ export class QuickBooksClient {
   }
 
   /**
+   * Sparse-update an estimate's Line set (optionally TxnStatus in the same
+   * write) while preserving all other header fields — BillEmail, addresses,
+   * memo. The safe line-edit path for HUMAN-OWNED estimates (e.g. appending
+   * a discount line); replaceEstimateLines is the bot-draft full replace.
+   * A sparse update that includes Line still replaces the WHOLE line set,
+   * so callers must pass the existing lines plus their changes. Fetches a
+   * fresh SyncToken (last-writer-wins) — verify contents just before calling.
+   */
+  async updateEstimateLines(
+    estimateId: string,
+    lines: QBEstimateCreateLine[],
+    opts?: { txnStatus?: QBEstimateStatus },
+  ): Promise<QBEstimate> {
+    const estimate = await this.getEstimate(estimateId);
+    if (!estimate) {
+      throw new Error(`QuickBooks estimate ${estimateId} not found`);
+    }
+
+    log.info('Updating QuickBooks estimate lines (sparse)', {
+      estimateId,
+      lineCount: lines.length,
+      ...(opts?.txnStatus ? { txnStatus: opts.txnStatus } : {}),
+    });
+
+    const body: Record<string, unknown> = {
+      Id: estimate.Id,
+      SyncToken: estimate.SyncToken,
+      sparse: true,
+      Line: lines,
+    };
+    if (opts?.txnStatus) body.TxnStatus = opts.txnStatus;
+
+    const result = await this.request<{ Estimate?: QBEstimate }>('/estimate', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    if (!result.Estimate) {
+      throw new Error('QuickBooks did not return estimate after line update');
+    }
+    return result.Estimate;
+  }
+
+  /**
    * Replace an estimate's full line set — the quote drafter's regenerate-
    * in-place path for BOT-OWNED drafts only. Compare-and-swap semantics:
    * the caller passes the SyncToken it verified ownership against, and QBO

@@ -618,6 +618,50 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('updateEstimateLines', () => {
+    it('sparse-POSTs the line set with a fresh SyncToken, preserving header fields', async () => {
+      const client = makeClient();
+      // 1) GET for fresh SyncToken
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: 'est-9', SyncToken: '3', TxnStatus: 'Pending', CustomerRef: { value: 'c-1' }, Line: [] },
+      }));
+      // 2) POST /estimate
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: 'est-9', SyncToken: '4', TxnStatus: 'Accepted', CustomerRef: { value: 'c-1' }, Line: [], TotalAmt: 6750 },
+      }));
+
+      const lines = [
+        { DetailType: 'SalesItemLineDetail' as const, Amount: 7050, SalesItemLineDetail: { ItemRef: { value: '7' }, Qty: 1, UnitPrice: 7050 } },
+        { DetailType: 'SalesItemLineDetail' as const, Amount: -300, Description: 'Cash/check discount', SalesItemLineDetail: { ItemRef: { value: '12' }, Qty: 1, UnitPrice: -300 } },
+      ];
+      const result = await client.updateEstimateLines('est-9', lines, { txnStatus: 'Accepted' });
+
+      expect(result.TotalAmt).toBe(6750);
+      const postBody = JSON.parse((mockFetch.mock.calls[1][1] as { body: string }).body);
+      expect(postBody.sparse).toBe(true); // header fields (BillEmail etc.) preserved
+      expect(postBody.SyncToken).toBe('3');
+      expect(postBody.TxnStatus).toBe('Accepted');
+      expect(postBody.Line).toHaveLength(2);
+      expect(postBody.CustomerRef).toBeUndefined();
+    });
+
+    it('omits TxnStatus when not requested and throws on missing estimate', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: 'est-9', SyncToken: '3', TxnStatus: 'Pending', CustomerRef: { value: 'c-1' }, Line: [] },
+      }));
+      mockFetch.mockReturnValueOnce(mockResponse({
+        Estimate: { Id: 'est-9', SyncToken: '4', TxnStatus: 'Pending', CustomerRef: { value: 'c-1' }, Line: [] },
+      }));
+      await client.updateEstimateLines('est-9', []);
+      const postBody = JSON.parse((mockFetch.mock.calls[1][1] as { body: string }).body);
+      expect(postBody.TxnStatus).toBeUndefined();
+
+      mockFetch.mockReturnValueOnce(mockResponse({}));
+      await expect(client.updateEstimateLines('missing', [])).rejects.toThrow(/estimate missing not found/);
+    });
+  });
+
   describe('replaceEstimateLines', () => {
     it('full-POSTs with the CALLER-SUPPLIED SyncToken (never refetches)', async () => {
       const client = makeClient();

@@ -158,13 +158,16 @@ export class GoogleDriveClient {
   /**
    * Upload a file. Returns the file ID plus the `drive.google.com/open`
    * URL — the form the Calendar API expects in attachment fileUrl (and
-   * the form Calendar's own UI writes).
+   * the form Calendar's own UI writes). Pass `convertTo` (e.g.
+   * 'application/vnd.google-apps.document') to have Drive convert the
+   * upload into a native Google file.
    */
   async uploadFile(input: {
     name: string;
     mimeType: string;
     data: ArrayBuffer | Buffer;
     folderId?: string;
+    convertTo?: string;
   }): Promise<{ id: string; fileUrl: string }> {
     const client = await this.getClient();
     const body = Readable.from(
@@ -174,6 +177,7 @@ export class GoogleDriveClient {
       requestBody: {
         name: input.name,
         ...(input.folderId ? { parents: [input.folderId] } : {}),
+        ...(input.convertTo ? { mimeType: input.convertTo } : {}),
       },
       media: { mimeType: input.mimeType, body },
       fields: 'id',
@@ -185,17 +189,21 @@ export class GoogleDriveClient {
   }
 
   /**
-   * Grant read access to specific users, without notification emails.
-   * Calendar attachments do NOT inherit event sharing — attendees need
-   * Drive permission on the file to open it.
+   * Grant access to specific users (read-only by default), without
+   * notification emails. Calendar attachments do NOT inherit event
+   * sharing — attendees need Drive permission on the file to open it.
    */
-  async shareWithUsers(fileId: string, emails: string[]): Promise<void> {
+  async shareWithUsers(
+    fileId: string,
+    emails: string[],
+    role: 'reader' | 'commenter' | 'writer' = 'reader',
+  ): Promise<void> {
     const client = await this.getClient();
     for (const email of emails) {
       await client.permissions.create({
         fileId,
         sendNotificationEmail: false,
-        requestBody: { type: 'user', role: 'reader', emailAddress: email },
+        requestBody: { type: 'user', role, emailAddress: email },
       });
     }
   }

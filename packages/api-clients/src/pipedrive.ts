@@ -505,6 +505,24 @@ export class PipedriveClient {
     }
   }
 
+  /**
+   * Merge person `id` into `mergeWithId`. Pipedrive deletes `id` and moves
+   * its activities, deals, and any fields the survivor is missing onto
+   * `mergeWithId`. Irreversible — strip unwanted fields off `id` first,
+   * since empty survivor fields inherit the merged person's values.
+   */
+  async mergePersons(id: number, mergeWithId: number): Promise<PipedrivePerson> {
+    log.info('Merging persons', { personId: id, mergeWithId });
+
+    const person = await this.request<PipedrivePerson>(`/persons/${id}/merge`, {
+      method: 'PUT',
+      body: JSON.stringify({ merge_with_id: mergeWithId }),
+    });
+
+    log.info('Merged persons', { personId: id, mergeWithId });
+    return person;
+  }
+
   async getOrganization(id: number): Promise<PipedriveOrganization | null> {
     try {
       return await this.request<PipedriveOrganization>(`/organizations/${id}`);

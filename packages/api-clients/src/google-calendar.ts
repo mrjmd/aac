@@ -41,6 +41,9 @@ export interface CalendarEvent {
   colorId?: string;
   attendees: string[];
   htmlLink: string;
+  /** When the event was created / last modified (RFC 3339), e.g. "booked at". */
+  created?: string;
+  updated?: string;
   attachments: Array<{
     fileUrl: string;
     title: string;
@@ -163,6 +166,8 @@ export class GoogleCalendarClient {
         .map((a) => a.email)
         .filter((e): e is string => !!e),
       htmlLink: event.htmlLink || '',
+      created: event.created || undefined,
+      updated: event.updated || undefined,
       attachments: (event.attachments || []).map((a) => ({
         fileUrl: a.fileUrl || '',
         title: a.title || '',

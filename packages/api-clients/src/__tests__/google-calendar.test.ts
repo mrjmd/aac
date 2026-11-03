@@ -169,6 +169,25 @@ describe('GoogleCalendarClient', () => {
       });
     });
 
+    it('maps created and updated timestamps when present', async () => {
+      const client = makeClient();
+
+      mocks.mockEventsList.mockResolvedValueOnce({
+        data: {
+          items: [{ ...sampleEvent, created: '2026-03-28T14:02:11.000Z', updated: '2026-04-01T09:00:00.000Z' }],
+          nextPageToken: null,
+        },
+      });
+
+      const [event] = await client.listEvents({
+        timeMin: '2026-04-01T00:00:00Z',
+        timeMax: '2026-04-08T00:00:00Z',
+      });
+
+      expect(event.created).toBe('2026-03-28T14:02:11.000Z');
+      expect(event.updated).toBe('2026-04-01T09:00:00.000Z');
+    });
+
     it('paginates through multiple pages', async () => {
       const client = makeClient();
 
