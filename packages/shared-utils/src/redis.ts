@@ -280,6 +280,9 @@ export const keys = {
   /** HASH: rule id → JSON MuteRule ("this kind is noise"). */
   itemMutes: 'cc:items:mutes' as const,
 
+  /** HASH: person id → JSON Person (agenda topics, past conversations, tagged items, facts). No TTL. */
+  ccPeople: 'cc:people' as const,
+
   // ── Scheduling (SchedulingDirective Pipeline) ──────────────────────
 
   /** Individual SchedulingDirective JSON blob, written by middleware webhook/cron handlers in Crawl shadow mode. */

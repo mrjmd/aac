@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { pendingPeople } from "./components/people";
 import { RAIL_AREA, useItems } from "./items-context";
+import { usePeople } from "./people-context";
 
 const AREAS = [
   { href: "/sales", key: "sales", label: "Sales" },
@@ -17,6 +19,7 @@ const AREAS = [
 export function Rail() {
   const pathname = usePathname();
   const { view } = useItems();
+  const talks = pendingPeople(usePeople().people).length;
   const counts: Record<string, number> = {};
   const reds: Record<string, boolean> = {};
   for (const i of view?.items ?? []) {
@@ -41,6 +44,7 @@ export function Rail() {
       <div className="sep" />
       {AREAS.map((a) => link(a.href, a.label, pathname.startsWith(a.href), counts[a.key], reds[a.key]))}
       <div className="sep" />
+      {link("/people", "People", pathname.startsWith("/people"), talks)}
       {link("/customers", "Customers", pathname.startsWith("/customers"))}
       {link("/health", "System", pathname.startsWith("/health"), counts.system, reds.system)}
       <div className="sep" />

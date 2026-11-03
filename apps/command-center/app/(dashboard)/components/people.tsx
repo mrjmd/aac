@@ -1,0 +1,161 @@
+"use client";
+
+import { useState } from "react";
+import { isPending, TOPIC_STATUS_LABEL, type Person, type PersonEventKind, type TopicStatus } from "@aac/items/people";
+import { useItems } from "../items-context";
+import { usePeople } from "../people-context";
+
+const ST_CLASS: Record<TopicStatus, string> = { ready: "on", prep: "nd", fup: "risk" };
+const NEXT_ST: Record<TopicStatus, TopicStatus> = { prep: "ready", ready: "fup", fup: "prep" };
+const KIND_LABEL: Record<PersonEventKind, string> = { call: "Call", meet: "In person", text: "Text", note: "Note" };
+export const KIND_ICON: Record<PersonEventKind, string> = { call: "C", meet: "M", text: "T", note: "N" };
+
+export const pendingPeople = (people: Person[]) => people.filter(isPending);
+
+type Form = null | "topic" | "had";
+
+/** The mockup's agenda card: open topics, Had it, + Topic. Same card on Today and People. */
+export function PersonCard({ person }: { person: Person }) {
+  const { change } = usePeople();
+  const { say } = useItems();
+  const [form, setForm] = useState<Form>(null);
+  const [title, setTitle] = useState("");
+  const [why, setWhy] = useState("");
+  const [kind, setKind] = useState<PersonEventKind>("meet");
+  const [decided, setDecided] = useState("");
+  const [followUp, setFollowUp] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const send = async (body: Record<string, unknown>, ok: string) => {
+    setBusy(true);
+    try {
+      const saved = await change({ id: person.id, ...body });
+      say(saved ? ok : "That didn't save");
+      return saved;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addTopic = async () => {
+    if (!title.trim()) return;
+    if (await send({ op: "addTopic", title, why }, `Added to ${person.name}'s agenda`)) {
+      setTitle("");
+      setWhy("");
+      setForm(null);
+    }
+  };
+  const had = async () => {
+    const saved = await send(
+      { op: "had", kind, decided, followUp },
+      followUp.length ? `Logged. ${followUp.length} topic${followUp.length === 1 ? "" : "s"} kept as Follow up.` : "Logged",
+    );
+    if (saved) {
+      setDecided("");
+      setFollowUp([]);
+      setForm(null);
+    }
+  };
+
+  return (
+    <div className="pcard">
+      <div className="who">
+        <b>{person.name}</b>
+        <span className="micro">
+          {person.role}
+          {person.when ? ` · ${person.when}` : ""}
+        </span>
+      </div>
+      {person.topics.length ? (
+        person.topics.map((t) => (
+          <div key={t.id} className="topic">
+            <div className="n">
+              {t.title}
+              {t.why && <div className="why">{t.why}</div>}
+            </div>
+            <button
+              className={`st btnlike ${ST_CLASS[t.status]}`}
+              type="button"
+              title="Change status"
+              disabled={busy}
+              onClick={() => send({ op: "topicStatus", topicId: t.id, status: NEXT_ST[t.status] }, TOPIC_STATUS_LABEL[NEXT_ST[t.status]])}
+            >
+              {TOPIC_STATUS_LABEL[t.status]}
+            </button>
+            <button
+              className="btn sm ghost"
+              type="button"
+              aria-label="Remove topic"
+              disabled={busy}
+              onClick={() => send({ op: "removeTopic", topicId: t.id }, "Topic removed")}
+            >
+              ×
+            </button>
+          </div>
+        ))
+      ) : (
+        <div className="empty">No open topics. Add one, or send any item here with ⋯.</div>
+      )}
+
+      {form === "topic" && (
+        <div className="pform">
+          <input type="text" placeholder="Topic" value={title} autoFocus onChange={(e) => setTitle(e.target.value)} />
+          <input type="text" placeholder="Why it matters (optional)" value={why} onChange={(e) => setWhy(e.target.value)} />
+          <div className="chips">
+            <button className="btn sm primary" type="button" disabled={busy || !title.trim()} onClick={addTopic}>
+              Add
+            </button>
+            <button className="btn sm" type="button" onClick={() => setForm(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {form === "had" && (
+        <div className="pform">
+          <div className="chips">
+            {(Object.keys(KIND_LABEL) as PersonEventKind[]).map((k) => (
+              <button key={k} className={`btn sm${kind === k ? " dark" : ""}`} type="button" onClick={() => setKind(k)}>
+                {KIND_LABEL[k]}
+              </button>
+            ))}
+          </div>
+          <textarea rows={3} placeholder="What was decided" value={decided} autoFocus onChange={(e) => setDecided(e.target.value)} />
+          {person.topics.length > 0 && <span className="lbl">Still open? Tick to keep as Follow up</span>}
+          {person.topics.map((t) => (
+            <label key={t.id}>
+              <input
+                type="checkbox"
+                checked={followUp.includes(t.id)}
+                onChange={(e) => setFollowUp(e.target.checked ? [...followUp, t.id] : followUp.filter((x) => x !== t.id))}
+              />
+              {t.title}
+            </label>
+          ))}
+          <div className="chips">
+            <button className="btn sm primary" type="button" disabled={busy} onClick={had}>
+              Log it
+            </button>
+            <button className="btn sm" type="button" onClick={() => setForm(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {form === null && (
+        <div className="a">
+          {person.topics.length > 0 && (
+            <button className="btn sm primary" type="button" onClick={() => setForm("had")}>
+              Had it
+            </button>
+          )}
+          <button className="btn sm" type="button" onClick={() => setForm("topic")}>
+            + Topic
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

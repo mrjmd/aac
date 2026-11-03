@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import Sortable from "sortablejs";
 import type { DismissReason, Item } from "@aac/items";
 import { AREA_LABEL, KIND, RAIL_AREA, useItems } from "../items-context";
+import { usePeople } from "../people-context";
 
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 const SEV_CLASS = { red: "red", yellow: "amber", info: "info" } as const;
@@ -64,6 +65,7 @@ type Panel = null | "snooze" | "more" | { confirm: "money" | "legal"; mode: "dis
 
 export function ItemCard({ item, ctx, n }: { item: Item; ctx: Ctx; n?: number }) {
   const { act, mute, say, setOpen } = useItems();
+  const { people, change } = usePeople();
   const [panel, setPanel] = useState<Panel>(null);
   const [busy, setBusy] = useState(false);
   const toggle = (p: "snooze" | "more") => setPanel(panel === p ? null : p);
@@ -100,6 +102,12 @@ export function ItemCard({ item, ctx, n }: { item: Item; ctx: Ctx; n?: number })
       if (need) return setPanel({ confirm: need, mode: "mute" });
       setPanel(null);
       say("Muted");
+    });
+  const talkTo = (id: string, name: string) =>
+    run(async () => {
+      const saved = await change({ op: "addItem", id, item: { key: item.key, title: item.title, evidence: item.evidence, detail: item.detail } });
+      setPanel(null);
+      say(saved ? `Added to ${name}'s agenda` : "That didn't save");
     });
 
   const more = (
@@ -205,6 +213,18 @@ export function ItemCard({ item, ctx, n }: { item: Item; ctx: Ctx; n?: number })
               {item.customer || item.phone ? ` for ${item.customer ?? item.phone}` : ""}&rdquo;
             </button>
           </div>
+          {people.length > 0 && (
+            <>
+              <span className="lbl">Or talk to someone about it</span>
+              <div className="chips">
+                {people.map((p) => (
+                  <button key={p.id} className="btn" type="button" onClick={() => talkTo(p.id, p.name)}>
+                    → {p.name}&rsquo;s agenda
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <div className="chips">
             {item.customer && (
               <Link className="btn" href={customerHref(item.customer)}>

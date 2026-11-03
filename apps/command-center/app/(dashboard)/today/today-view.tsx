@@ -4,7 +4,9 @@ import Link from "next/link";
 import type { FieldEvent } from "@/lib/field-events";
 import { ago, customerHref, SortableList } from "../components/items";
 import { Glance, OverviewTabs, PageHeader } from "../components/layout-parts";
+import { PersonCard, pendingPeople } from "../components/people";
 import { useItems } from "../items-context";
+import { usePeople } from "../people-context";
 
 const DISMISS_LABEL: Record<string, string> = {
   "not-real": "Not real",
@@ -37,6 +39,8 @@ export function TodayView({
   const confirm = items.filter((i) => i.lane === "confirm");
   const backlog = items.filter((i) => i.band === "list" && i.lane !== "confirm");
   const stale = view?.detectedAt && Date.now() - Date.parse(view.detectedAt) > 26 * 3_600_000;
+
+  const talks = pendingPeople(usePeople().people);
 
   /** Keys dropped into My order: pin the new ones, then save the order. */
   const order = async (keys: string[]) => {
@@ -122,6 +126,22 @@ export function TodayView({
               group={{ pull: false, put: true }}
             />
           </section>
+
+          {talks.length > 0 && (
+            <section className="sec">
+              <div className="sec-h">
+                <h2>Conversations coming up · {talks.length}</h2>
+                <span className="hint">
+                  Shows only when one is pending. Everyone&rsquo;s full page is under <Link href="/people">People</Link>.
+                </span>
+              </div>
+              <div className="convs">
+                {talks.map((p) => (
+                  <PersonCard key={p.id} person={p} />
+                ))}
+              </div>
+            </section>
+          )}
 
           <section className="sec">
             <div className="sec-h">

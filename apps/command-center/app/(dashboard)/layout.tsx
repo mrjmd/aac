@@ -1,16 +1,24 @@
 import { loadItemsView } from "@/lib/items";
+import { getPeopleStore } from "@/lib/people";
 import { Drawer, ToastHost } from "./components/items";
 import { SignOut } from "./sign-out";
 import { ItemsProvider } from "./items-context";
+import { PeopleProvider } from "./people-context";
 import { Rail } from "./rail";
 
 // Items are per-request state; never prerender the shell.
 export const dynamic = "force-dynamic";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const initial = await loadItemsView().catch(() => null);
+  const [initial, people] = await Promise.all([
+    loadItemsView().catch(() => null),
+    getPeopleStore()
+      .list()
+      .catch(() => []),
+  ]);
   return (
     <ItemsProvider initial={initial}>
+      <PeopleProvider initial={people}>
       <header className="top">
         <div className="brand">
           <span className="mark">AAC</span>
@@ -30,6 +38,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       </div>
       <Drawer />
       <ToastHost />
+      </PeopleProvider>
     </ItemsProvider>
   );
 }

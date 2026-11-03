@@ -10,3 +10,17 @@ export type { CandidateSnapshot, ItemRedis } from './store.js';
 export { fromTodo, TODO_KEY_PREFIX } from './from-todo.js';
 export { fromAwaitingQuote, fromBotDraft, fromFollowupDraft, fromFunnelFlag, fromInvoiceNudge } from './from-sections.js';
 export type { AwaitingQuote, BotDraft, FollowupDraft, FunnelFlag, InvoiceNudge } from './from-sections.js';
+export {
+  addItemTopic,
+  addTopic,
+  isPending,
+  logConversation,
+  newPerson,
+  PeopleStore,
+  removeTopic,
+  setFacts,
+  setTopicStatus,
+  TOPIC_STATUS_LABEL,
+  untag,
+} from './people.js';
+export type { PeopleRedis, Person, PersonEvent, PersonEventKind, Topic, TopicStatus } from './people.js';

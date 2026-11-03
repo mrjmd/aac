@@ -12,6 +12,9 @@ owner-controlled state. Spec: `docs/plans/command-center/README.md` §4.
   pin to a day, place, reorder.
 - `from-triage.ts` — adapter from today's triage `findings.json`.
 - `store.ts` — Redis persistence (keys from `@aac/shared-utils/redis`).
+- `people.ts` — People (Mike, Ed): agenda topics, past conversations,
+  tagged item keys, facts; pure ops + `PeopleStore`. Client-safe, so the
+  app imports it from `@aac/items/people` (the index pulls `node:crypto`).
 
 ## Rules
 
