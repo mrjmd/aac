@@ -29,10 +29,10 @@ export const FOLLOWUP_LOOKBACK_H = 36;
 /**
  * How long a rang-out call waits for a voicemail transcript before the
  * phone is dropped from the due queue (Quo transcribes within minutes).
- * Before 2026-11-04 these re-armed every 2 min forever: 13 no-voicemail
+ * Owner set 15 min (2026-11-04). Before that these re-armed every 2 min forever: 13 no-voicemail
  * callers back to 10/14, ~50 Quo requests a minute.
  */
-export const VOICEMAIL_GRACE_MIN = 30;
+export const VOICEMAIL_GRACE_MIN = 15;
 /** ~80 min of retries waiting for a Quo contact to exist. */
 export const MAX_NOTE_ATTEMPTS = 8;
 export const MAX_DRAFTS_PER_RUN = 6;

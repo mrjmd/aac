@@ -299,7 +299,7 @@ describe('processIntakePhone', () => {
     const call = (minAgo: number) => ({ data: [{ direction: 'incoming', status: 'no-answer', duration: 0, createdAt: new Date(NOW - minAgo * 60_000).toISOString(), id: 'c3' }] });
     mocks.listCalls.mockResolvedValue(call(5));
     expect((await processIntakePhone(deps, '+19785550131')).kind).toBe('retry-later');
-    mocks.listCalls.mockResolvedValue(call(45));
+    mocks.listCalls.mockResolvedValue(call(20));
     expect((await processIntakePhone(deps, '+19785550131')).reason).toBe('no-voicemail');
     mocks.listCalls.mockResolvedValue({ data: [] });
     expect((await processIntakePhone(deps, '+19785550131')).reason).toBe('no-voicemail');
