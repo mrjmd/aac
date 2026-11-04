@@ -283,6 +283,11 @@ export const keys = {
   /** HASH: person id → JSON Person (agenda topics, past conversations, tagged items, facts). No TTL. */
   ccPeople: 'cc:people' as const,
 
+  /** HASH: referral id → JSON Referral (who we send out-of-scope work to). Empty = code defaults. No TTL. */
+  canHelpReferrals: 'can-help:referrals' as const,
+  /** HASH: rule id → JSON StandingRule (owner policies, optionally time-bound). Empty = code defaults. No TTL. */
+  canHelpRules: 'can-help:rules' as const,
+
   // ── Scheduling (SchedulingDirective Pipeline) ──────────────────────
 
   /** Individual SchedulingDirective JSON blob, written by middleware webhook/cron handlers in Crawl shadow mode. */

@@ -89,3 +89,4 @@ export {
 } from './photo-prepass.js';
 export * from './field-context.js';
 export * from './draft-notes.js';
+export * from './can-help.js';

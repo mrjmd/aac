@@ -130,6 +130,13 @@ Spec: `projects/triage-dashboard.md`.
    silently skipped by invoice-create (#1577, #1580 on 11/03). Plan:
    `docs/plans/booking-acceptance-sync.md`. Until it ships, command-center
    quote views treat "booked on the calendar" as closed.
+5d. **Can-help gate, standing rules, referrals (planned 2026-11-04, owner
+   request).** Photos gate every step: intake reads photos before the first
+   reply; can't-help leads get a kind decline + referral; time-bound owner
+   rules (e.g. the resurfacing pause) live as data the drafters read; a
+   Referrals page in the command center and a referral listener that drafts
+   referral notes. Step 1 (quote-drafter declines + short-crack tiers)
+   shipped 11/04. Plan: `docs/plans/can-help-and-referrals.md`.
 6. **Security: audit long tail.** P4-1 QB OAuth lock closed 2026-10-16
    (single-flight `refreshLock` wired into all QB consumers). Remaining are
    smaller: P4-5 QB pagination, P4-6 429/timeout handling.
