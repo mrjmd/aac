@@ -43,6 +43,7 @@ export {
   BOT_DRAFT_TOP_LINE,
   buildQuoteDraftPrompt,
   parseQuoteDraftResponse,
+  isFullDecline,
   validateQuoteDraft,
   countInjectionUnits,
   draftTotal,

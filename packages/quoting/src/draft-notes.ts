@@ -95,3 +95,19 @@ export function buildDraftUpdatedNote(args: {
     `Review: ${qboEstimateLink(args.estimateId)}`,
   ].join('\n');
 }
+
+/**
+ * Can't-help note: the drafter found nothing AAC does in the thread, so no
+ * estimate was made. Carries the reasons and the decline wording to copy
+ * (owner, 2026-11-04: get out of the loop fast and kindly).
+ */
+export function buildDeclineNote(args: {
+  asks: Array<{ request: string; reason?: string; suggestedReply?: string }>;
+}): string {
+  const replies = args.asks.map((a) => a.suggestedReply?.trim()).filter((r): r is string => !!r);
+  return [
+    `🤖 No quote drafted: this looks like work we can't help with.`,
+    ...args.asks.map((a) => `• ${a.request}: ${a.reason ?? '(no reason given)'}`),
+    ...(replies.length ? ['', 'Suggested reply:', [...new Set(replies)].join(' ')] : []),
+  ].join('\n');
+}

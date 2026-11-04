@@ -11,6 +11,7 @@ import {
   draftTotal,
   isBotDraft,
   parseQuoteDraftResponse,
+  isFullDecline,
   selectComparables,
   validateQuoteDraft,
   type QuoteDraft,
@@ -84,6 +85,19 @@ describe('parseQuoteDraftResponse', () => {
     expect(draft!.lines).toEqual([{ item: 'Crack Repair', description: 'Inject it.', qty: 1, unitPrice: 1175 }]);
     expect(draft!.openQuestions).toEqual(['Is the wall painted?']);
     expect(draft!.confidence).toBe('high');
+  });
+
+  it('accepts a full decline (no lines, every ask excluded) and nothing else empty', () => {
+    const decline = parseQuoteDraftResponse(JSON.stringify({
+      lines: [],
+      scope_accounting: [{ request: 'bulkhead sealed', quoted_item: null, reason: 'leaking cinder block bulkhead', suggested_reply: "We can't inject hollow block." }],
+    }));
+    expect(decline).not.toBeNull();
+    expect(isFullDecline(decline!)).toBe(true);
+    expect(parseQuoteDraftResponse(JSON.stringify({
+      lines: [],
+      scope_accounting: [{ request: 'crack', quoted_item: 'Crack Repair' }],
+    }))).toBeNull();
   });
 
   it('returns null on prose or empty lines', () => {

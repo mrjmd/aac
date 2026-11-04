@@ -142,7 +142,7 @@ export interface QuoteFinding {
 export interface DraftRunRecord {
   phone: string;
   customer: string;
-  outcome: 'created' | 'updated' | 'dry-run' | 'skipped' | 'failed' | 'flagged';
+  outcome: 'created' | 'updated' | 'dry-run' | 'skipped' | 'failed' | 'flagged' | 'declined';
   detail: string;
   estimateId?: string;
   docNumber?: string;

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { QBEstimate } from '@aac/api-clients/quickbooks';
-import { diffDraftLines, buildDraftCreatedNote, buildDraftUpdatedNote, buildScopeFlagNote, qboEstimateLink } from '../src/draft-notes';
+import { diffDraftLines, buildDraftCreatedNote, buildDraftUpdatedNote, buildScopeFlagNote, buildDeclineNote, qboEstimateLink } from '../src/draft-notes';
 
 const prev = {
   Id: '900', SyncToken: '1', DocNumber: '1570', TxnStatus: 'Pending',
@@ -64,5 +64,17 @@ describe('buildScopeFlagNote', () => {
     expect(n).toContain('drywall removal likely');
     expect(n).toContain('Not auto-updated');
     expect(n).toContain('txnId=77');
+  });
+});
+
+describe('buildDeclineNote', () => {
+  it('lists reasons and one deduped suggested reply', () => {
+    const note = buildDeclineNote({ asks: [
+      { request: 'bulkhead sealed', reason: 'leaking block', suggestedReply: "We can't help with block." },
+      { request: 'stairwell walls', reason: 'leaking block', suggestedReply: "We can't help with block." },
+    ] });
+    expect(note).toContain("can't help");
+    expect(note).toContain('• bulkhead sealed: leaking block');
+    expect(note.match(/We can't help with block\./g)).toHaveLength(1);
   });
 });

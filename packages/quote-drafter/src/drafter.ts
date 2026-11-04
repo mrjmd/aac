@@ -26,6 +26,8 @@ import {
   isBotDraft,
   parseAreaAnalysis,
   parseQuoteDraftResponse,
+  isFullDecline,
+  buildDeclineNote,
   retrieveSimilar,
   selectComparables,
   validateQuoteDraft,
@@ -375,6 +377,12 @@ export async function draftOne(deps: DrafterDeps, opts: DraftOneOptions): Promis
   const parsed = parseQuoteDraftResponse(raw);
   if (!parsed) {
     throw new Error(`unparseable draft response: ${raw.slice(0, 200).replace(/\n/g, ' ')}`);
+  }
+  if (isFullDecline(parsed)) {
+    for (const a of parsed.scopeAccounting) log(`    ✗ "${a.request}" CAN'T HELP: ${a.reason ?? '(no reason)'}`);
+    // Never touches QBO, even a bot-owned draft: Matt decides what to do with it.
+    if (!opts.dryRun) await postDraftNote(quo, log, phone, buildDeclineNote({ asks: parsed.scopeAccounting }));
+    return { phone, customer: resolvedName, outcome: opts.dryRun ? 'dry-run' : 'declined', detail: "can't help: no quote drafted" };
   }
   const validation = validateQuoteDraft(parsed, run.itemNames);
   if (!validation.ok) {

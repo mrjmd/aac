@@ -141,7 +141,9 @@ Hard rules:
 - NEVER add a discount line on a job with fewer than ${DISCOUNT_MIN_INJECTIONS} injection units. At ${DISCOUNT_MIN_INJECTIONS}+, the Discount line is exactly -$${DISCOUNT_PER_INJECTION} per injection unit — never resized to hit a round total.
 - NEVER add a cash/check discount (payment method is unknown at draft time).
 - Do NOT include a Guarantee line — it is appended automatically.
-- One line per service with qty (e.g. 3 cracks = Crack Repair qty 3), not three separate lines.
+- One line per service with qty (e.g. 3 cracks = Crack Repair qty 3), not three separate lines — except cracks in different Section 0 rule-6 length tiers (full / partial / tiny add-on), which are separate lines at their tier price.
+- Before pricing any wall crack, decide its Section 0 rule-6 tier (full vs partial vs tiny add-on) from the photos and thread. Never price a partial crack at the full-crack price.
+- CAN'T HELP: if NOTHING the customer asked for is work AAC does (Section 0 rule 11 guardrails and declines, e.g. a leaking cinder block wall or block bulkhead, or any decline in the visual ruleset), return "lines": [] and list every ask in scope_accounting with quoted_item null, a reason, and a kind suggested_reply that says plainly we can't help with this and, where one fits, what kind of company to call instead. Never invent a line to avoid an empty quote.
 - Line descriptions are NOT used on the estimate — each item's standard QBO description template is inserted verbatim. Instead give each line a "scope_note": 2-6 words naming the exact thing/location it covers (e.g. "bulkhead corner crack", "front flagstone landing"); it is prepended in brackets ahead of the template so the customer knows exactly what is included. You may omit "description".
 - If the thread/photos don't support a confident price (fieldstone, bowing walls, unclear scope, $4k+ complexity), set needs_site_visit true and list what's unknown in open_questions — still draft your best-guess lines.
 - If the thread mentions wall bowing over 1.5 inches, drainage/grading as the root cause, or work AAC doesn't do, say so in open_questions.
@@ -195,8 +197,6 @@ export function parseQuoteDraftResponse(raw: string): QuoteDraft | null {
       unitPrice,
     });
   }
-  if (lines.length === 0) return null;
-
   const scopeAccounting: ScopeAccounting[] = [];
   if (Array.isArray(parsed.scope_accounting)) {
     for (const e of parsed.scope_accounting) {
@@ -213,6 +213,11 @@ export function parseQuoteDraftResponse(raw: string): QuoteDraft | null {
     }
   }
 
+  // No lines is only a draft when it's a deliberate full decline: every
+  // ask accounted for and excluded (owner, 2026-11-04: can't-help leads
+  // get a kind decline, not an estimate).
+  if (lines.length === 0 && (scopeAccounting.length === 0 || scopeAccounting.some((a) => a.quotedItem))) return null;
+
   const confidence = parsed.confidence === 'high' || parsed.confidence === 'low' ? parsed.confidence : 'medium';
   return {
     scopeSummary: typeof parsed.scope_summary === 'string' ? parsed.scope_summary : '',
@@ -225,6 +230,11 @@ export function parseQuoteDraftResponse(raw: string): QuoteDraft | null {
       : [],
     confidence,
   };
+}
+
+/** Nothing AAC can quote: every ask excluded, no lines (a can't-help lead). */
+export function isFullDecline(draft: QuoteDraft): boolean {
+  return draft.lines.length === 0 && draft.scopeAccounting.length > 0 && draft.scopeAccounting.every((a) => !a.quotedItem);
 }
 
 // ── validate ─────────────────────────────────────────────────────────
