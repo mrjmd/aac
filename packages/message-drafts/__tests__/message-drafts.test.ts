@@ -7,6 +7,8 @@ import {
   isDone,
   gateFollowup,
   gateIntake,
+  intakeFallback,
+  noEmDashes,
   gateCtRouting,
   followupFallback,
   ctRoutingFallback,
@@ -60,6 +62,7 @@ function makeDeps(overrides: {
     listMessages: vi.fn().mockResolvedValue({ data: [] }),
     listCalls: vi.fn().mockResolvedValue({ data: [] }),
     getCallVoicemail: vi.fn().mockResolvedValue(null),
+    downloadMessageMedia: vi.fn().mockResolvedValue({ data: new ArrayBuffer(4), contentType: 'image/jpeg' }),
     listConversations: vi.fn().mockResolvedValue({ data: [] }),
     findContactByPhone: vi.fn().mockResolvedValue({ id: 'quo-contact-1' }),
     createContactNote: vi.fn().mockResolvedValue({ id: 'note-1' }),
@@ -73,6 +76,7 @@ function makeDeps(overrides: {
       listMessages: mocks.listMessages,
       listCalls: mocks.listCalls,
       getCallVoicemail: mocks.getCallVoicemail,
+      downloadMessageMedia: mocks.downloadMessageMedia,
       listConversations: mocks.listConversations,
       findContactByPhone: mocks.findContactByPhone,
       createContactNote: mocks.createContactNote,
@@ -304,6 +308,35 @@ describe('processIntakePhone', () => {
     mocks.listCalls.mockResolvedValue({ data: [] });
     expect((await processIntakePhone(deps, '+19785550131')).reason).toBe('no-voicemail');
     expect(await state.getIntake('+19785550131')).toBeNull();
+  });
+
+  it("photos showing work we can't do → kind decline note, photos and rules sent to the model", async () => {
+    const { deps, mocks } = makeDeps();
+    deps.canHelp = { block: async () => "WE CAN'T HELP WITH:\n- Leaking cinder block walls" };
+    mocks.listMessages.mockResolvedValue({ data: [inboundMsg(20, 'Looking to get a quote for bulkhead sealed', 3)] });
+    mocks.generateContent.mockResolvedValue(intakeJson({
+      verdict: 'cant-help',
+      verdictReason: 'Bulkhead stairwell walls are cinder block and leaking.',
+      draft: "Hi Sean, thanks for sending these. Because the bulkhead walls are cinder block, which is hollow, our injection process can't stop the water there, so this isn't something we can help with. Tanner at Air Guardian handles exterior waterproofing. -- Matt at Attack A Crack",
+    }));
+    const outcome = await processIntakePhone(deps, '+19785550132');
+    expect(outcome.kind).toBe('drafted');
+    const [prompt, opts] = mocks.generateContent.mock.calls[0] as [string, { imageParts?: unknown[] }];
+    expect(prompt).toContain('Leaking cinder block walls');
+    expect(opts.imageParts).toHaveLength(3);
+    const note = mocks.createContactNote.mock.calls[0][1] as string;
+    expect(note).toContain("CAN'T HELP");
+    expect(note).toContain('Why: Bulkhead stairwell walls are cinder block');
+    expect(note).not.toContain('full name');
+    expect(noEmDashes('Air Guardian—they can help – really')).toBe('Air Guardian, they can help, really');
+  });
+
+  it('gateIntake: a decline or a question must not ask for contact details', () => {
+    const ask = 'Thanks for the photos! Could you send your full name, the address of the property, and an email address? -- Matt at Attack A Crack';
+    expect(gateIntake(ask, 'x', 2, 'cant-help')).toMatch(/contact details/);
+    expect(gateIntake(ask, 'x', 2, 'need-info')).toMatch(/contact details/);
+    expect(gateIntake(ask, 'x', 2, 'can-help')).toBeNull();
+    expect(intakeFallback(2, 'cant-help')).not.toMatch(/full name|definitely help/);
   });
 
   it('CT property → one note with routing reply + Luc handoff', async () => {

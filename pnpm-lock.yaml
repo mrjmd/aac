@@ -292,6 +292,9 @@ importers:
       '@aac/quote-drafter':
         specifier: workspace:*
         version: link:../../packages/quote-drafter
+      '@aac/quoting':
+        specifier: workspace:*
+        version: link:../../packages/quoting
       '@aac/shared-utils':
         specifier: workspace:*
         version: link:../../packages/shared-utils

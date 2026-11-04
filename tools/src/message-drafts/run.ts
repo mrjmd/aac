@@ -29,6 +29,7 @@ import {
   MAX_DRAFTS_PER_RUN,
   drainFollowupQueue,
   drainIntakeDue,
+  loadIntakePhotos,
   sweepFollowups,
   sweepIntake,
   draftFollowup,
@@ -43,6 +44,7 @@ import {
   INTAKE_EXEMPLARS,
   CT_ROUTING_EXEMPLARS,
 } from '@aac/message-drafts';
+import { CanHelpStore } from '@aac/quoting';
 
 const SWEEP_INTERVAL_MIN = 10;
 
@@ -106,7 +108,7 @@ async function main(): Promise<void> {
     phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
   });
   const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY') });
-  const deps: DraftDeps = { qb, quo, gemini, state: new RedisDraftState(redis), dryRun };
+  const deps: DraftDeps = { qb, quo, gemini, state: new RedisDraftState(redis), canHelp: new CanHelpStore(redis), dryRun };
 
   // ── probe modes (manual generator testing, never posts) ────────
   if (probeEstimate) {
@@ -147,8 +149,10 @@ async function main(): Promise<void> {
       mediaCount,
       areaCode: probePhone.slice(2, 5),
       exemplars: pickExemplars(INTAKE_EXEMPLARS, 6, seed),
+      imageParts: await loadIntakePhotos(quo, inbound),
+      canHelpBlock: await deps.canHelp?.block(new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })),
     });
-    console.log(`\n── probe intake ${probePhone} (classification: ${result?.classification}, state: ${result?.propertyState}, provided: ${JSON.stringify(result?.provided)}, extracted: ${JSON.stringify(result?.extracted)}) ──`);
+    console.log(`\n── probe intake ${probePhone} (classification: ${result?.classification}, state: ${result?.propertyState}, verdict: ${result?.verdict} — ${result?.verdictReason}, provided: ${JSON.stringify(result?.provided)}, extracted: ${JSON.stringify(result?.extracted)}) ──`);
     if (result?.classification === 'lead' && result.propertyState === 'CT') {
       const reply = await draftCtRouting(gemini, { customerText, exemplars: pickExemplars(CT_ROUTING_EXEMPLARS, 6, seed) });
       const gateFail = reply ? gateCtRouting(reply) : 'generation failed';

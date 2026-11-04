@@ -20,6 +20,7 @@ import {
   INTAKE_REPLY_WINDOW_MIN,
   INTAKE_THREAD_MAX_AGE_H,
   INTERNAL,
+  INTAKE_MAX_PHOTOS,
   MAX_NOTE_ATTEMPTS,
   VOICEMAIL_GRACE_MIN,
   REAL_LEAD_RE,
@@ -45,6 +46,22 @@ export type IntakeOutcome =
   | { kind: 'drafted'; record: DraftRecord }
   | { kind: 'skipped'; reason: string }
   | { kind: 'retry-later'; reason: string };
+
+/** Download up to INTAKE_MAX_PHOTOS inbound images for the intake reply to look at. */
+export async function loadIntakePhotos(
+  quo: DraftDeps['quo'],
+  inbound: Array<{ media?: Array<{ url: string; type?: string }> }>,
+): Promise<Array<{ mimeType: string; base64: string }>> {
+  const imageParts: Array<{ mimeType: string; base64: string }> = [];
+  for (const media of inbound.flatMap((m) => m.media ?? [])) {
+    if (imageParts.length >= INTAKE_MAX_PHOTOS) break;
+    if (media.type && !media.type.startsWith('image/')) continue;
+    const dl = await quo.downloadMessageMedia(media.url).catch(() => null);
+    if (!dl || !dl.contentType.startsWith('image/')) continue;
+    imageParts.push({ mimeType: dl.contentType, base64: Buffer.from(dl.data).toString('base64') });
+  }
+  return imageParts;
+}
 
 /**
  * Run the full intake decision tree for one phone. All guards live here;
@@ -146,11 +163,20 @@ export async function processIntakePhone(deps: DraftDeps, phone: string): Promis
 
   if (!dryRun && !(await deps.state.claimIntake(phone))) return { kind: 'skipped', reason: 'claimed-elsewhere' };
 
+  // Photos gate every step (owner, 2026-11-04): the reply is drafted
+  // looking at them, against the standing can't-help rules, so a leaking
+  // block bulkhead gets a kind decline instead of the name/address ask.
+  const imageParts = await loadIntakePhotos(quo, inbound);
+  const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const canHelpBlock = await deps.canHelp?.block(today).catch(() => undefined);
+
   const result = await draftIntake(gemini, {
     customerText,
     mediaCount,
     areaCode: phone.slice(2, 5),
     exemplars: pickExemplars(INTAKE_EXEMPLARS, 6, seed),
+    imageParts,
+    canHelpBlock,
   });
   if (!result || result.classification !== 'lead') {
     return skip(result?.classification ?? 'generation-failed');
@@ -170,11 +196,13 @@ export async function processIntakePhone(deps: DraftDeps, phone: string): Promis
     extra = `CT property detected${CT_AREA_CODES.has(phone.slice(2, 5)) ? ' (CT area code)' : ''}. New inquiry ${Math.round(ageMin)} min ago, no reply yet.${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}\n\n——— HANDOFF TO LUC (copy/paste to him, then forward the photos) ———\n${buildLucHandoff({ phone, extracted: result.extracted, customerText, mediaUrls })}\n———`;
   } else {
     if (!result.draft.trim()) return skip('empty-draft');
-    kind = 'FIRST-TOUCH INTAKE';
+    const verdict = result.verdict ?? 'can-help';
+    kind = verdict === 'cant-help' ? "CAN'T HELP (kind decline)" : verdict === 'need-info' ? 'NEEDS ONE ANSWER FIRST' : 'FIRST-TOUCH INTAKE';
     draft = result.draft.trim();
-    gateFail = gateIntake(draft, customerText, mediaCount);
-    if (gateFail) draft = intakeFallback(mediaCount);
-    extra = `New inquiry ${Math.round(ageMin)} min ago, no reply yet.${mediaCount ? ` ${mediaCount} photo(s) attached.` : ''}${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}`;
+    gateFail = gateIntake(draft, customerText, mediaCount, verdict);
+    if (gateFail) draft = intakeFallback(mediaCount, verdict);
+    const why = verdict !== 'can-help' && result.verdictReason ? ` Why: ${result.verdictReason}` : '';
+    extra = `New inquiry ${Math.round(ageMin)} min ago, no reply yet.${mediaCount ? ` ${mediaCount} photo(s) attached${imageParts.length ? ', read' : ''}.` : ''}${why}${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}`;
   }
 
   const posted = await postDraftNote(deps, phone, kind, draft, extra);
@@ -193,6 +221,7 @@ export async function processIntakePhone(deps: DraftDeps, phone: string): Promis
   }
   const record: DraftRecord = {
     type: isCt ? 'ct-routing' : 'intake', phone, outcome: 'drafted', fallback: gateFail ?? null, draft,
+    verdict: result.verdict ?? null,
   };
   if (!dryRun) {
     await deps.state.setIntake(phone, new Date(now).toISOString());

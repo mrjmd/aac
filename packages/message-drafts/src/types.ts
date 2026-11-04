@@ -33,6 +33,8 @@ export const FOLLOWUP_LOOKBACK_H = 36;
  * callers back to 10/14, ~50 Quo requests a minute.
  */
 export const VOICEMAIL_GRACE_MIN = 15;
+/** Photos the intake reply looks at (matches the quote drafter's MAX_PHOTOS). */
+export const INTAKE_MAX_PHOTOS = 6;
 /** ~80 min of retries waiting for a Quo contact to exist. */
 export const MAX_NOTE_ATTEMPTS = 8;
 export const MAX_DRAFTS_PER_RUN = 6;
@@ -52,6 +54,8 @@ export interface DraftDeps {
   quo: QuoClient;
   gemini: GeminiClient;
   state: DraftState;
+  /** Owner's can't-help rules + referrals as a prompt block (CanHelpStore from @aac/quoting). */
+  canHelp?: { block(today: string): Promise<string> };
   /** Injected clock for tests; defaults to Date.now. */
   now?: () => number;
   /** Print drafts instead of posting notes or writing state. */
