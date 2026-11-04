@@ -21,6 +21,7 @@ import {
   INTAKE_THREAD_MAX_AGE_H,
   INTERNAL,
   MAX_NOTE_ATTEMPTS,
+  VOICEMAIL_GRACE_MIN,
   REAL_LEAD_RE,
   SPAM_RE,
   type DraftDeps,
@@ -118,8 +119,15 @@ export async function processIntakePhone(deps: DraftDeps, phone: string): Promis
       }
     }
     // No VM = the call just rang out; VM without a completed transcript
-    // is still processing — either way, check again next pass.
-    if (!transcript || !vmAt) return { kind: 'retry-later', reason: 'no-inbound-content-yet' };
+    // is still processing. Check again next pass, but only within the grace
+    // window: past it, nothing is coming. No state is written, so a later
+    // text from them still re-arms the queue and drafts normally.
+    if (!transcript || !vmAt) {
+      const lastCallAt = Math.max(0, ...candidates.map((c) => new Date(c.createdAt).getTime()));
+      return now - lastCallAt < VOICEMAIL_GRACE_MIN * 60_000
+        ? { kind: 'retry-later', reason: 'no-inbound-content-yet' }
+        : { kind: 'skipped', reason: 'no-voicemail' };
+    }
     customerText = `[voicemail transcript] ${transcript}`;
     inquiryAt = vmAt;
   }
