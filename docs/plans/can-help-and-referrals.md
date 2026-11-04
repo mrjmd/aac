@@ -1,6 +1,6 @@
 # Can-help gate, standing rules, referrals
 
-**Status:** planned 2026-11-04 (owner request). Step 1 below shipped the same day.
+**Status:** planned 2026-11-04 (owner request). Steps 1-3 shipped the same day (worker deployed); 4-5 next. Step 3 does not yet save the read for the quote drafter to reuse.
 **Evidence:** `analysis/02-strategy/decline-patterns-2026-11.md` (~150 declines mined
 from Matt's texts), `analysis/02-strategy/short-crack-pricing-2026-11.md`.
 
