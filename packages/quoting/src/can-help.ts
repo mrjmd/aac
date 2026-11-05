@@ -23,6 +23,8 @@ export type StandingRuleKind = 'decline' | 'policy';
 export interface StandingRule {
   id: string;
   kind: StandingRuleKind;
+  /** Chip label on the Referrals page ("Leaking cinder block"). */
+  short?: string;
   /** The rule as Matt would say it. */
   text: string;
   /** Referral ids that fit this rule, in preference order. */
@@ -34,11 +36,13 @@ export interface StandingRule {
   untilWhen?: string;
   /** Date to re-ask Matt whether the rule still holds. */
   reviewBy?: string;
+  /** Switched off in the command center; kept for switching back on. */
+  paused?: boolean;
 }
 
-/** Active on `today` (YYYY-MM-DD): started and not past a hard end date. */
+/** Active on `today` (YYYY-MM-DD): not paused, started, and not past a hard end date. */
 export function isRuleActive(rule: StandingRule, today: string): boolean {
-  return rule.since <= today && (!rule.until || today <= rule.until);
+  return !rule.paused && rule.since <= today && (!rule.until || today <= rule.until);
 }
 
 /** Prompt block both drafters inject: active rules with their referrals, then the referral list. */
@@ -61,6 +65,22 @@ export function buildCanHelpBlock(args: { rules: StandingRule[]; referrals: Refe
     'REFERRALS (who we send other work to):',
     ...args.referrals.map((r) => `- ${who(r)}: ${r.sends}`),
   ].join('\n');
+}
+
+/** A new record id from its name, unique among `taken` ("Air Guardian" → "air-guardian", then "air-guardian-2"). */
+export function canHelpId(name: string, taken: Iterable<string>): string {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'item';
+  const have = new Set(taken);
+  let id = base;
+  for (let n = 2; have.has(id); n++) id = `${base}-${n}`;
+  return id;
+}
+
+/** End a rule now: its hard end becomes yesterday, so it is inactive from `today` on. */
+export function endRule(rule: StandingRule, today: string): StandingRule {
+  const d = new Date(`${today}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return { ...rule, until: d.toISOString().slice(0, 10) };
 }
 
 export interface CanHelpRedis {
@@ -91,7 +111,10 @@ export class CanHelpStore {
     await this.redis.hset(keys.canHelpRules, { [r.id]: r });
   }
 
+  /** Removes the referral and unlinks it from every rule that pointed to it. */
   async removeReferral(id: string): Promise<void> {
+    const linked = (await this.rules()).filter((r) => r.referralIds?.includes(id));
+    for (const r of linked) await this.putRule({ ...r, referralIds: r.referralIds!.filter((x) => x !== id) });
     await this.redis.hdel(keys.canHelpReferrals, id);
   }
 

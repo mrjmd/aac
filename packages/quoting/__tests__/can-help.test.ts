@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildCanHelpBlock, isRuleActive, CanHelpStore, type StandingRule, type Referral } from '../src/can-help';
+import { buildCanHelpBlock, canHelpId, endRule, isRuleActive, CanHelpStore, type StandingRule, type Referral } from '../src/can-help';
 
 const referrals: Referral[] = [{ id: 'best', name: 'Henry at Best Bulkheads', phone: '(781) 801-8188', sends: 'bulkhead doors and replacement' }];
 const rules: StandingRule[] = [
@@ -13,6 +13,24 @@ describe('can-help', () => {
     expect(isRuleActive(rules[0]!, '2026-11-03')).toBe(false);
     expect(isRuleActive(rules[0]!, '2026-11-04')).toBe(true);
     expect(isRuleActive(rules[2]!, '2026-11-04')).toBe(false);
+    expect(isRuleActive({ ...rules[0]!, paused: true }, '2026-11-04')).toBe(false);
+  });
+
+  it('canHelpId slugs the name and avoids taken ids', () => {
+    expect(canHelpId("Knight's Masonry", [])).toBe('knight-s-masonry');
+    expect(canHelpId('Air Guardian', ['air-guardian'])).toBe('air-guardian-2');
+  });
+
+  it('endRule makes a rule inactive from today', () => {
+    const ended = endRule(rules[1]!, '2027-03-01');
+    expect(ended.until).toBe('2027-02-28');
+    expect(isRuleActive(ended, '2027-03-01')).toBe(false);
+    expect(isRuleActive(ended, '2027-02-28')).toBe(true);
+  });
+
+  it('never puts the private note in the prompt block', () => {
+    const block = buildCanHelpBlock({ rules, referrals: [{ ...referrals[0]!, note: 'owner cell 555' }], today: '2026-11-04' });
+    expect(block).not.toContain('owner cell');
   });
 
   it('builds the prompt block with referrals, end conditions, and no expired rules', () => {
@@ -34,6 +52,9 @@ describe('can-help', () => {
     await store.putReferral(referrals[0]!);
     await store.putRule(rules[0]!);
     expect(await store.block('2026-11-04')).toContain('Henry at Best Bulkheads');
+    await store.removeReferral('best');
+    expect(await store.referrals()).toHaveLength(0);
+    expect((await store.rules())[0]!.referralIds).toEqual(['missing']);
     await store.removeRule('block');
     expect(await store.rules()).toHaveLength(0);
   });
