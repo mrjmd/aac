@@ -71,6 +71,7 @@ import {
   type CalendarEvent,
 } from '@aac/api-clients/google-calendar';
 import { keys } from '@aac/shared-utils/redis';
+import { EVENT_CLASS_COLOR_IDS as COLORS } from '@aac/shared-utils/calendar';
 
 // ── Env loading ──────────────────────────────────────────────────
 
@@ -201,8 +202,8 @@ function estimateStatusToStage(status: QBEstimate['TxnStatus']): DealStage | nul
 /** Past green/purple events have already happened; backfilled deals should reflect that. */
 function eventStageFor(event: CalendarEvent): DealStage {
   const isPast = new Date(event.end).getTime() < Date.now();
-  if (event.colorId === '10') return isPast ? 'job_done' : 'job_scheduled';
-  if (event.colorId === '3') return isPast ? 'assessment_done' : 'assessment_scheduled';
+  if (event.colorId === COLORS.job) return isPast ? 'job_done' : 'job_scheduled';
+  if (event.colorId === COLORS.assessment) return isPast ? 'assessment_done' : 'assessment_scheduled';
   // Unknown color — assume future-job by default. Callers filter by color first.
   return 'job_scheduled';
 }
@@ -500,7 +501,7 @@ async function backfillEvents(): Promise<EventAction[]> {
   const events = await cal.listEvents({
     timeMin,
     timeMax,
-    colorIds: ['10', '3'],
+    colorIds: [COLORS.job, COLORS.assessment],
     excludeKeywords: ['lunch', 'dinner', 'meeting'],
   });
   const slice = argv.limitEvents ? events.slice(0, argv.limitEvents) : events;

@@ -14,6 +14,7 @@
  */
 
 import { sameStreet, streetKey } from './address.js';
+import { EVENT_CLASS_COLOR_IDS } from './calendar.js';
 
 /** Minimal shape of a calendar event this module needs. */
 export interface MultidayEvent {
@@ -26,7 +27,7 @@ export interface MultidayEvent {
 }
 
 /** Green = job. Continuations only make sense between job events. */
-const JOB_COLOR_ID = '10';
+const JOB_COLOR_ID = EVENT_CLASS_COLOR_IDS.job;
 
 /**
  * Continuations start within this many days of the prior day's event.

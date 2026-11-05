@@ -5,6 +5,8 @@
  * Stripped: qstash (campaign queuing), searchbug (phone validation).
  */
 
+import { technicianEmails } from '@aac/shared-utils/calendar';
+
 export interface EnvConfig {
   pipedrive: {
     apiKey: string;
@@ -169,10 +171,7 @@ export function getEnv(): EnvConfig {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || null,
       refreshToken: process.env.GOOGLE_REFRESH_TOKEN || null,
       calendarId: process.env.GOOGLE_CALENDAR_ID || 'matt@attackacrack.com',
-      technicianEmails: (process.env.TECHNICIAN_EMAILS || 'mike@attackacrack.com,harrringtonm@gmail.com')
-        .split(',')
-        .map((e) => e.trim())
-        .filter(Boolean),
+      technicianEmails: technicianEmails(process.env.TECHNICIAN_EMAILS),
     },
     notifications: {
       alertPhoneNumber: requireEnv('ALERT_PHONE_NUMBER'),

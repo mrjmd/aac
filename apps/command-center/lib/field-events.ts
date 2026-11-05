@@ -1,6 +1,12 @@
 import type { TimelineEvent } from "@aac/customers";
-import { EVENT_CLASS_COLOR_IDS, HOLD_COLOR_ID, HOLD_TITLE_PREFIX, STUB_TITLE_PREFIX } from "@aac/scheduling";
-import { isOutOfOffice, type TechWeek } from "@aac/metrics";
+import {
+  EVENT_CLASS_COLOR_IDS,
+  HOLD_COLOR_ID,
+  HOLD_TITLE_PREFIX,
+  STUB_TITLE_PREFIX,
+  isTechOutOfOffice,
+} from "@aac/shared-utils/calendar";
+import type { TechWeek } from "@aac/metrics";
 
 /** The mockup's calendar dot classes. */
 export type FieldClass = "job" | "assess" | "cb" | "stub" | "hold";
@@ -70,5 +76,5 @@ export function bookedAhead(weeks: TechWeek[], today: string): { full: number; o
 
 /** True when a "Mike OOO" event covers the day (all-day ends are exclusive). */
 export function techOut(events: TimelineEvent[], day: string): boolean {
-  return events.some((e) => isOutOfOffice(e.summary) && eventDay(e.start) <= day && day < (e.end.length === 10 ? e.end : eventDay(e.end) + "~"));
+  return events.some((e) => isTechOutOfOffice(e.summary) && eventDay(e.start) <= day && day < (e.end.length === 10 ? e.end : eventDay(e.end) + "~"));
 }

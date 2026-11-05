@@ -31,6 +31,7 @@
  */
 
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
+import { HOLD_TITLE_PREFIX } from '@aac/shared-utils/calendar';
 import { createLogger } from '@aac/shared-utils/logger';
 import type { SchedulingDirective } from './types.js';
 import { isManualSchedule } from './types.js';
@@ -626,7 +627,7 @@ export function syntheticDayBlocker(
   const dayKey = localDateKey(new Date(slotStartIso), timezone);
   return {
     id: `synthetic-day-blocker-${dayKey}`,
-    summary: 'HOLD — synthetic-day-blocker',
+    summary: `${HOLD_TITLE_PREFIX}synthetic-day-blocker`,
     start: isoAtLocalHour(dayKey, 0, 0, timezone),
     end: isoAtLocalHour(dayKey, 23, 59, timezone),
     attendees: [],

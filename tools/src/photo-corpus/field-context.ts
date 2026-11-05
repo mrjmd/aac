@@ -28,6 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { lastFirstTokens } from '@aac/customers';
 import { GeminiClient } from '@aac/api-clients/gemini';
+import { EVENT_CLASS_COLOR_IDS as COLORS } from '@aac/shared-utils/calendar';
 
 const OUT_DIR = 'analysis/data/photo-corpus';
 const OUT_PATH = path.join(OUT_DIR, 'field-context.jsonl');
@@ -120,7 +121,7 @@ async function main(): Promise<void> {
       const x = eventStartMs(e);
       if (!(x >= lo && x <= hi)) return false;
       const hay = `${e.summary} ${e.location ?? ''} ${e.description ?? ''}`;
-      return hasLast(hay) || (hasFirst(hay) && String(e.colorId) === '3');
+      return hasLast(hay) || (hasFirst(hay) && String(e.colorId) === COLORS.assessment);
     });
     const visitTimes = custEvents.map(eventStartMs);
     const nearVisit = (at?: string) => {
@@ -157,7 +158,7 @@ async function main(): Promise<void> {
     // 4. LLM extraction of quote-relevant field findings
     const evidence: string[] = [];
     for (const e of custEvents) {
-      evidence.push(`CALENDAR [${String(e.colorId) === '3' ? 'ASSESSMENT' : String(e.colorId) === '10' ? 'JOB' : 'event'}] ${new Date(eventStartMs(e)).toISOString().slice(0, 10)}: ${e.summary}${e.location ? ` @ ${e.location}` : ''}`);
+      evidence.push(`CALENDAR [${String(e.colorId) === COLORS.assessment ? 'ASSESSMENT' : String(e.colorId) === COLORS.job ? 'JOB' : 'event'}] ${new Date(eventStartMs(e)).toISOString().slice(0, 10)}: ${e.summary}${e.location ? ` @ ${e.location}` : ''}`);
     }
     for (const m of texts.slice(0, 40)) {
       evidence.push(`TEXT ${String(m.createdAt).slice(0, 10)} ${m.direction === 'outgoing' ? 'MATT' : 'MIKE'}: ${(m.text ?? '').slice(0, 300)}`);

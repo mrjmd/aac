@@ -14,6 +14,7 @@
  */
 
 import { lastFirstTokens } from '@aac/customers';
+import { EVENT_CLASS_COLOR_IDS } from '@aac/shared-utils/calendar';
 
 const DAY = 86_400_000;
 
@@ -51,14 +52,14 @@ export function matchEventsToCustomer(
   return events
     .filter((e) => {
       const hay = `${e.summary ?? ''} ${e.location ?? ''} ${e.description ?? ''}`.toLowerCase();
-      return last.some((t) => hay.includes(t)) || (String(e.colorId) === '3' && first.some((t) => hay.includes(t)));
+      return last.some((t) => hay.includes(t)) || (String(e.colorId) === EVENT_CLASS_COLOR_IDS.assessment && first.some((t) => hay.includes(t)));
     })
     .map((e) => ({
       id: e.id,
       summary: e.summary ?? '',
       startMs: e.startMs,
       colorId: e.colorId,
-      isAssessment: String(e.colorId) === '3',
+      isAssessment: String(e.colorId) === EVENT_CLASS_COLOR_IDS.assessment,
     }));
 }
 

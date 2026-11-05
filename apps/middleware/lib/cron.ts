@@ -10,6 +10,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { EVENT_CLASS_COLOR_IDS } from '@aac/shared-utils/calendar';
 import { createLogger } from '@aac/shared-utils/logger';
 import type { DealStage } from '@aac/api-clients/pipedrive';
 import { getEnv } from './env.js';
@@ -58,7 +59,11 @@ export const GREEN_COLOR_IDS: string[] = ['10'];
  * (assessment). Broader than the invoicing set because all of these need
  * day-before reminders.
  */
-export const REMINDER_COLOR_IDS: string[] = ['10', '5', '3'];
+export const REMINDER_COLOR_IDS: string[] = [
+  EVENT_CLASS_COLOR_IDS.job,
+  EVENT_CLASS_COLOR_IDS.callback,
+  EVENT_CLASS_COLOR_IDS.assessment,
+];
 
 /** Keywords that mark an event as not a real billable job. */
 export const NON_JOB_KEYWORDS: string[] = [

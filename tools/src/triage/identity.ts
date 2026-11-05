@@ -35,6 +35,7 @@ import { nameTokens, tokensAlike } from '@aac/customers';
 import { streetKey } from '@aac/shared-utils/address';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import type { CustomerSnapshot, EmailThreadSnapshot, ThreadSnapshot } from './collect.ts';
+import { EVENT_CLASS_COLOR_IDS as COLORS } from '@aac/shared-utils/calendar';
 
 const DAY = 86_400_000;
 
@@ -286,7 +287,7 @@ export class IdentityIndex {
       if (id && phone) directivePhone.set(id, phone);
     }
     for (const ev of inp.calendar) {
-      if (ev.colorId !== '10') continue;
+      if (ev.colorId !== COLORS.job) continue;
       if (new Date(ev.start).getTime() < inp.now - DAY) continue;
       const roots = new Set<string>();
       const desc = ev.description ?? '';

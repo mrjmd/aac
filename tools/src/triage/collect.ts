@@ -23,6 +23,7 @@ import { GmailClient, type GmailMessage } from '@aac/api-clients/gmail';
 import { isInternalPhone, quickNormalizePhone } from '@aac/shared-utils/phone';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
+import { EVENT_CLASS_COLOR_IDS as COLORS } from '@aac/shared-utils/calendar';
 
 // ── env ──────────────────────────────────────────────────────────────
 
@@ -354,7 +355,7 @@ async function main(): Promise<void> {
   console.log(`  ${customers.length} customers (${customers.filter((c) => c.phones.length > 0).length} with phones)`);
 
   // 3 ── Redis: field completions for job-colored calendar events
-  const jobEvents = events.filter((e) => e.colorId === '10');
+  const jobEvents = events.filter((e) => e.colorId === COLORS.job);
   console.log(`Field completions for ${jobEvents.length} job events…`);
   const completions: Record<string, Record<string, unknown> | null> = {};
   for (let i = 0; i < jobEvents.length; i += 50) {

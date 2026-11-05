@@ -30,6 +30,7 @@
 
 import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { streetKey } from '@aac/shared-utils/address';
+import { HOLD_COLOR_ID, HOLD_TITLE_PREFIX } from '@aac/shared-utils/calendar';
 import { createLogger } from '@aac/shared-utils/logger';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { STUB_DEFAULT_HOURS } from './execute-stub.js';
@@ -38,11 +39,6 @@ import type { KnownSlot, SchedulingDirective } from './types.js';
 import { isManualSchedule } from './types.js';
 
 const log = createLogger('scheduling:execute-hold');
-
-export const HOLD_TITLE_PREFIX = 'HOLD — ';
-
-/** Graphite — deliberately none of the work colors (job 10 / assessment 3 / callback 5). */
-export const HOLD_COLOR_ID = '8';
 
 /** Description lines D13 parses. Keep stable — triage greps for these. */
 export const HOLD_OFFERED_AT_LABEL = 'Offered-At:';

@@ -13,6 +13,7 @@ import {
   CONTINUATION_WINDOW_DAYS,
   type MultidayEvent,
 } from '@aac/shared-utils/multiday';
+import { EVENT_CLASS_COLOR_IDS } from '@aac/shared-utils/calendar';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import { getCalendar } from './clients';
 
@@ -25,7 +26,7 @@ const DAY_MS = 86_400_000;
  * rather than blocking Mike in the field.
  */
 export async function findEventContinuation(evt: CalendarEvent): Promise<CalendarEvent | null> {
-  if (evt.colorId !== '10') return null;
+  if (evt.colorId !== EVENT_CLASS_COLOR_IDS.job) return null;
   const startMs = new Date(evt.start).getTime();
   if (Number.isNaN(startMs)) return null;
 

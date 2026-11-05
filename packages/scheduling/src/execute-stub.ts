@@ -25,21 +25,13 @@
 
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { createLogger } from '@aac/shared-utils/logger';
-import { holdBelongsTo, HOLD_RELEASE_LOOKAHEAD_MS, HOLD_TITLE_PREFIX } from './execute-hold.js';
+import { EVENT_CLASS_COLOR_IDS, HOLD_TITLE_PREFIX, STUB_TITLE_PREFIX } from '@aac/shared-utils/calendar';
+import { holdBelongsTo, HOLD_RELEASE_LOOKAHEAD_MS } from './execute-hold.js';
 import { summaryMatchesCustomer } from '@aac/customers';
 import type { EventClass, KnownSlot, SchedulingDirective } from './types.js';
 import { isAppointmentConfirmed, isManualSchedule } from './types.js';
 
 const log = createLogger('scheduling:execute-stub');
-
-export const STUB_TITLE_PREFIX = 'STUB — ';
-
-/** Mirrors project_calendar_color_ids: Job green, Assessment grape, Callback yellow. */
-export const EVENT_CLASS_COLOR_IDS: Record<EventClass, string> = {
-  job: '10',
-  assessment: '3',
-  callback: '5',
-};
 
 /** Default stub durations in hours, per Matt (2026-09-30). */
 export const STUB_DEFAULT_HOURS: Record<EventClass, number> = {

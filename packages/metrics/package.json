@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@aac/api-clients": "workspace:*",
-    "@aac/scheduling": "workspace:*"
+    "@aac/shared-utils": "workspace:*"
   },
   "devDependencies": {
     "@aac/tsconfig": "workspace:*",

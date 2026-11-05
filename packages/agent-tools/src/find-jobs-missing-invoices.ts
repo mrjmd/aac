@@ -15,6 +15,7 @@
  */
 
 import { parseDealMarker } from '@aac/api-clients/pipedrive';
+import { EVENT_CLASS_COLOR_IDS } from '@aac/shared-utils/calendar';
 import {
   toCalendarEventSummary,
   toPersonSummary,
@@ -46,8 +47,6 @@ export interface FindJobsMissingInvoicesConfig {
   pdCompanyDomain: string;
 }
 
-const JOB_COLOR_ID = '10';
-
 export async function findJobsMissingInvoices(
   deps: ToolDeps,
   config: FindJobsMissingInvoicesConfig,
@@ -60,7 +59,7 @@ export async function findJobsMissingInvoices(
   const events = await deps.cal.listEvents({
     timeMin: input.rangeStart,
     timeMax: input.rangeEnd,
-    colorIds: [JOB_COLOR_ID],
+    colorIds: [EVENT_CLASS_COLOR_IDS.job],
   });
 
   const results: MissingInvoiceItem[] = [];

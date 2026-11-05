@@ -9,12 +9,14 @@
  *   anything else       → OTHER      — internal meetings / non-customer
  */
 
+import { EVENT_CLASS_COLOR_IDS } from '@aac/shared-utils/calendar';
+
 export type EventType = 'repair' | 'assessment' | 'callback' | 'other';
 
 export function classifyEvent(colorId: string | undefined): EventType {
-  if (colorId === '10') return 'repair';
-  if (colorId === '3') return 'assessment';
-  if (colorId === '5') return 'callback';
+  if (colorId === EVENT_CLASS_COLOR_IDS.job) return 'repair';
+  if (colorId === EVENT_CLASS_COLOR_IDS.assessment) return 'assessment';
+  if (colorId === EVENT_CLASS_COLOR_IDS.callback) return 'callback';
   return 'other';
 }
 

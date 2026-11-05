@@ -17,6 +17,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { EVENT_CLASS_COLOR_IDS } from '@aac/shared-utils/calendar';
 import { createLogger } from '@aac/shared-utils/logger';
 import {
   isContinuationTitle,
@@ -130,7 +131,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // reminder of their own. Chain lookup failure degrades to a plain
     // single-day reminder rather than blocking.
     let upcomingJobs: CalendarEvent[] = [];
-    if (events.some((e) => e.colorId === '10' && !isContinuationTitle(e.summary))) {
+    if (events.some((e) => e.colorId === EVENT_CLASS_COLOR_IDS.job && !isContinuationTitle(e.summary))) {
       try {
         upcomingJobs = await calendar.listEvents({
           timeMin,

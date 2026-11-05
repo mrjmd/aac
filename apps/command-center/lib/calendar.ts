@@ -1,4 +1,5 @@
 import { GoogleCalendarClient } from "@aac/api-clients/google-calendar";
+import { technicianEmails as parseTechnicianEmails } from "@aac/shared-utils/calendar";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -20,8 +21,5 @@ export function getCalendar(): GoogleCalendarClient {
 
 /** Broad read filter for "Mike is on this event" (current + legacy address), as in middleware/field. */
 export function technicianEmails(): string[] {
-  return (process.env.TECHNICIAN_EMAILS || "mike@attackacrack.com,harrringtonm@gmail.com")
-    .split(",")
-    .map((e) => e.trim())
-    .filter(Boolean);
+  return parseTechnicianEmails(process.env.TECHNICIAN_EMAILS);
 }

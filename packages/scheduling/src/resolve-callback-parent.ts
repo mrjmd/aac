@@ -26,6 +26,7 @@ import { createLogger } from '@aac/shared-utils/logger';
 import { parseDealMarker } from '@aac/api-clients/pipedrive';
 import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { nameTokensForMatch, summaryMatchesCustomer } from '@aac/customers';
+import { EVENT_CLASS_COLOR_IDS } from '@aac/shared-utils/calendar';
 
 const log = createLogger('resolve-callback-parent');
 
@@ -84,7 +85,7 @@ export async function resolveCallbackParent(
     events = await deps.cal.listEvents({
       timeMin,
       timeMax,
-      colorIds: ['10', '5'],
+      colorIds: [EVENT_CLASS_COLOR_IDS.job, EVENT_CLASS_COLOR_IDS.callback],
       maxResults: 250,
     });
   } catch (err) {
@@ -106,7 +107,7 @@ export async function resolveCallbackParent(
 
   // Most recent job event = parent. Sort by start descending.
   const jobs = customerEvents
-    .filter((e) => e.colorId === '10')
+    .filter((e) => e.colorId === EVENT_CLASS_COLOR_IDS.job)
     .sort((a, b) => b.start.localeCompare(a.start));
   if (jobs.length === 0) {
     log.info('Customer has callbacks but no parent job in window', {
@@ -129,7 +130,7 @@ export async function resolveCallbackParent(
 
   // Count callbacks that occurred AFTER the parent job.
   const callbacks = customerEvents.filter(
-    (e) => e.colorId === '5' && e.start > parent.start,
+    (e) => e.colorId === EVENT_CLASS_COLOR_IDS.callback && e.start > parent.start,
   );
   const callbackSequence = callbacks.length + 1;
 

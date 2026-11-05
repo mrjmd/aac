@@ -1,5 +1,11 @@
 import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
-import { EVENT_CLASS_COLOR_IDS, HOLD_TITLE_PREFIX } from '@aac/scheduling';
+import {
+  EVENT_CLASS_COLOR_IDS,
+  HOLD_COLOR_ID,
+  HOLD_TITLE_PREFIX,
+  isBusyEvent,
+  isTechOutOfOffice,
+} from '@aac/shared-utils/calendar';
 
 /** One Monday-to-Sunday week of a technician's calendar. */
 export interface TechWeek {
@@ -33,11 +39,6 @@ const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) 
 const weekday = (d: string) => new Date(`${d}T00:00:00Z`).getUTCDay(); // 0 Sun .. 6 Sat
 const mondayOf = (d: string) => addDays(d, -((weekday(d) + 6) % 7));
 const round1 = (n: number) => Math.round(n * 10) / 10;
-
-/** Same test as middleware's isTechOutOfOffice: the tech's name AND an OOO marker. */
-export function isOutOfOffice(summary: string): boolean {
-  return /\bmike\b/i.test(summary) && /\booo\b|out of office/i.test(summary);
-}
 
 function typeOf(e: CalendarEvent): keyof TechWeek['byType'] {
   if (e.colorId === EVENT_CLASS_COLOR_IDS.job) return 'job';
@@ -106,10 +107,9 @@ export function buildTechUtilization(args: {
   const bookedByDay = new Map<string, Array<[number, number]>>();
   const sorted = [...args.events].sort((a, b) => a.start.localeCompare(b.start));
   for (const e of sorted) {
-    const hold = e.summary.startsWith(HOLD_TITLE_PREFIX);
-    const ooo = isOutOfOffice(e.summary);
-    const attends = e.attendees.some((a) => emails.includes(a.toLowerCase()));
-    if (!hold && !ooo && !attends) continue;
+    if (!isBusyEvent(e, emails)) continue;
+    const hold = e.summary.startsWith(HOLD_TITLE_PREFIX) || e.colorId === HOLD_COLOR_ID;
+    const ooo = isTechOutOfOffice(e.summary);
     for (const [day, start, end] of pieces(e)) {
       const w = weeks.get(mondayOf(day));
       if (!w) continue;

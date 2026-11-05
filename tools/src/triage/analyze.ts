@@ -13,7 +13,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { GeminiClient } from '@aac/api-clients/gemini';
-import { HOLD_TITLE_PREFIX, STUB_TITLE_PREFIX } from '@aac/scheduling';
+import {
+  EVENT_CLASS_COLOR_IDS as COLORS,
+  HOLD_TITLE_PREFIX,
+  STUB_TITLE_PREFIX,
+  technicianEmails,
+} from '@aac/shared-utils/calendar';
 import { hasContinuation } from '@aac/shared-utils/multiday';
 import { eventMatchesName } from '@aac/customers';
 import type { EmailThreadSnapshot, Snapshot, ThreadSnapshot } from './collect.ts';
@@ -41,7 +46,7 @@ const OFFER_UNANSWERED_HOURS = 24; // offered slot quiet this long → D13
 const UPCOMING_COMPLETE_DAYS = 7; // work events this far out must be complete → D11
 // Both addresses count as "Mike is assigned" (attackacrack = new events,
 // gmail = legacy; see project_mike_email_addresses).
-const TECHNICIAN_EMAILS = ['mike@attackacrack.com', 'harrringtonm@gmail.com'];
+const TECHNICIAN_EMAILS = technicianEmails(process.env.TECHNICIAN_EMAILS);
 const LLM_CONCURRENCY = 4;
 
 // ── env (same pattern as collect.ts) ─────────────────────────────────
@@ -411,7 +416,7 @@ async function main(): Promise<void> {
 
   // ── D1: job done, not invoiced ────────────────────────────────────
   for (const ev of events) {
-    if (ev.colorId !== '10') continue;
+    if (ev.colorId !== COLORS.job) continue;
     // Multi-day job: only the final day is judged — earlier days have no
     // invoice or completed flow by design (docs/projects/multiday-jobs.md).
     if (hasContinuation(ev, events)) continue;
@@ -548,7 +553,7 @@ async function main(): Promise<void> {
         (eventMatchesName(ev, tokens) ||
           estAddrs.some((e) => addrsAlike(addrKey(ev.location ?? ''), e))),
     );
-    const jobMatch = matches.find((ev) => ev.colorId === '10');
+    const jobMatch = matches.find((ev) => ev.colorId === COLORS.job);
     if (jobMatch) continue;
 
     const ageDays = Math.floor((now - acceptedMs) / DAY);
@@ -639,7 +644,7 @@ async function main(): Promise<void> {
   // around-or-after the visit, or a green job event (same-day conversions).
   let assessedUnquoted = 0;
   for (const ev of events) {
-    if (ev.colorId !== '3') continue;
+    if (ev.colorId !== COLORS.assessment) continue;
     const endMs = new Date(ev.end).getTime();
     if (endMs > now - ASSESSED_UNQUOTED_GRACE_DAYS * DAY || endMs < now - 60 * DAY) continue;
     const tokens = nameTokens(ev.summary);
@@ -668,7 +673,7 @@ async function main(): Promise<void> {
     // edit distance 1 ("Morse" ≈ "White Horse Rd").
     const laterJob = events.some(
       (j) =>
-        j.colorId === '10' &&
+        j.colorId === COLORS.job &&
         new Date(j.start).getTime() >= endMs - DAY &&
         (nameTokens(j.summary).some((h) => tokensAlike(h, last)) ||
           addrsAlike(addrKey(j.location ?? ''), evAddr)),
@@ -723,7 +728,7 @@ async function main(): Promise<void> {
       ? summary.slice(STUB_TITLE_PREFIX.length).trim()
       : summary.replace(/^stub\b[\s—:-]*/i, '').trim();
     const kind =
-      ev.colorId === '10' ? 'job' : ev.colorId === '3' ? 'assessment' : ev.colorId === '5' ? 'callback' : 'event';
+      ev.colorId === COLORS.job ? 'job' : ev.colorId === COLORS.assessment ? 'assessment' : ev.colorId === COLORS.callback ? 'callback' : 'event';
     const past = startMs <= now;
     stubAwaitingReview++;
     findings.push({
@@ -975,7 +980,7 @@ async function main(): Promise<void> {
   let incompleteUpcoming = 0;
   for (const ev of events) {
     const kind =
-      ev.colorId === '10' ? 'Job' : ev.colorId === '3' ? 'Assessment' : ev.colorId === '5' ? 'Callback' : null;
+      ev.colorId === COLORS.job ? 'Job' : ev.colorId === COLORS.assessment ? 'Assessment' : ev.colorId === COLORS.callback ? 'Callback' : null;
     if (!kind) continue;
     const startMs = new Date(ev.start).getTime();
     if (startMs < now || startMs > now + UPCOMING_COMPLETE_DAYS * DAY) continue;
@@ -988,7 +993,7 @@ async function main(): Promise<void> {
     if (!ev.description?.trim()) problems.push('no description');
     const attendees = (ev.attendees ?? []).map((a) => a.toLowerCase());
     if (
-      (ev.colorId === '10' || ev.colorId === '5') &&
+      (ev.colorId === COLORS.job || ev.colorId === COLORS.callback) &&
       !TECHNICIAN_EMAILS.some((t) => attendees.includes(t))
     ) {
       problems.push('Mike not assigned');
@@ -1063,7 +1068,7 @@ async function main(): Promise<void> {
   const calendarContext = events
     .filter((ev) => new Date(ev.end).getTime() > now - 14 * DAY)
     .map((ev) => {
-      const kind = ev.colorId === '10' ? 'JOB' : ev.colorId === '3' ? 'ASSESS' : ev.colorId === '5' ? 'CALLBACK' : 'OTHER';
+      const kind = ev.colorId === COLORS.job ? 'JOB' : ev.colorId === COLORS.assessment ? 'ASSESS' : ev.colorId === COLORS.callback ? 'CALLBACK' : 'OTHER';
       return `${ev.start.slice(0, 16)} ${kind} | ${ev.summary}${ev.location ? ` | ${ev.location}` : ''}`;
     })
     .join('\n');
@@ -1523,7 +1528,7 @@ due_at: only when the thread pins the open action to a specific time: Matt promi
 
   // ── pulse + output ────────────────────────────────────────────────
   const jobsBetween = (fromMs: number, toMs: number): number =>
-    events.filter((ev) => ev.colorId === '10' && new Date(ev.start).getTime() >= fromMs && new Date(ev.start).getTime() < toMs).length;
+    events.filter((ev) => ev.colorId === COLORS.job && new Date(ev.start).getTime() >= fromMs && new Date(ev.start).getTime() < toMs).length;
 
   const out: FindingsFile = {
     generatedAt: nowIso,

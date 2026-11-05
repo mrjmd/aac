@@ -51,6 +51,7 @@ import { nameCorroborated } from '@aac/customers';
 import { isBotDraft } from '@aac/quoting';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
+import { EVENT_CLASS_COLOR_IDS, isBusyEvent, technicianEmails } from '@aac/shared-utils/calendar';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
 
 // ── config ───────────────────────────────────────────────────────────
@@ -77,7 +78,7 @@ const MANUAL_HOLDS = new Map<string, { why: string; until?: string }>([
   ['1499', { why: 'Mityushin pool deck: personal spring follow-up', until: '2027-03-01' }],
   ['1493', { why: 'Mulvaney stairs: personal spring follow-up', until: '2027-03-01' }],
 ]);
-const MIKE_EMAIL = 'mike@attackacrack.com';
+const TECH_EMAILS = technicianEmails(process.env.TECHNICIAN_EMAILS);
 
 // A/B variants (plan §4.7): stable hash of estimate ID picks the cell.
 const T1_VARIANTS = [2, 3]; // days after quote
@@ -315,19 +316,11 @@ function expandEvent(e: CalendarEvent): DayEvent {
   };
 }
 
-const OOO_RE = /\booo\b|out of office|vacation|away|off\b/i;
-
-/** Is this event calendar inventory consumed? (selectBusyEvents spirit:
- *  Mike-attended + HOLDs; Matt's own meetings never block.) */
-function consumesCapacity(ev: DayEvent): boolean {
-  if (ev.colorId === '10' || ev.colorId === '5' || ev.colorId === '8') return true; // job / callback / HOLD
-  return ev.attendees.some((a) => a.toLowerCase() === MIKE_EMAIL);
-}
-
 function computeBookingHorizon(events: DayEvent[], nowMs: number): { firstOpen: string; text: string } {
   const busy = new Set<string>();
   for (const ev of events) {
-    if (OOO_RE.test(ev.summary) || consumesCapacity(ev)) {
+    // Same rule as suggestSlot: Mike's work, HOLDs, "Mike OOO". Matt's meetings never block.
+    if (isBusyEvent(ev, TECH_EMAILS)) {
       for (const d of ev.days) busy.add(d);
     }
   }
@@ -358,7 +351,7 @@ function findBookedEvent(
   nowMs: number,
 ): DayEvent | null {
   for (const ev of events) {
-    if (ev.colorId !== '10' || ev.startMs < nowMs - 7 * DAY) continue; // green jobs, recent/future
+    if (ev.colorId !== EVENT_CLASS_COLOR_IDS.job || ev.startMs < nowMs - 7 * DAY) continue; // green jobs, recent/future
     if (nameCorroborated(`${ev.summary} ${ev.location}`, customerName, address)) return ev;
   }
   return null;

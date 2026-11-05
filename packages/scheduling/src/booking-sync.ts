@@ -20,7 +20,7 @@ import { streetKey } from '@aac/shared-utils/address';
 import { isBotDraft } from '@aac/quoting';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { createLogger } from '@aac/shared-utils/logger';
-import { EVENT_CLASS_COLOR_IDS, STUB_TITLE_PREFIX } from './execute-stub.js';
+import { EVENT_CLASS_COLOR_IDS, STUB_TITLE_PREFIX } from '@aac/shared-utils/calendar';
 import { summaryMatchesCustomer } from '@aac/customers';
 
 const log = createLogger('scheduling:booking-sync');

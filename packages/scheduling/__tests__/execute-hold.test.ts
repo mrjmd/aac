@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { GoogleCalendarClient, CalendarEvent } from '@aac/api-clients/google-calendar';
+import { HOLD_COLOR_ID, HOLD_TITLE_PREFIX } from '@aac/shared-utils/calendar';
 import {
   holdBelongsTo,
   executeHoldEvent,
   getOfferedSlot,
-  HOLD_COLOR_ID,
   HOLD_CUSTOMER_PHONE_LABEL,
   HOLD_OFFERED_AT_LABEL,
-  HOLD_TITLE_PREFIX,
   type ExecuteHoldDeps,
 } from '../src/execute-hold.js';
 import type {

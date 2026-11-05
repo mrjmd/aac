@@ -5,6 +5,8 @@
  * Grow as new integrations (Resend auth, Blob, etc.) are added.
  */
 
+import { technicianEmails } from '@aac/shared-utils/calendar';
+
 export interface EnvConfig {
   google: {
     clientId: string;
@@ -147,10 +149,7 @@ export function getEnv(): EnvConfig {
       .split(',')
       .map((e) => e.trim().toLowerCase())
       .filter(Boolean),
-    technicianEmails: (process.env.TECHNICIAN_EMAILS || 'mike@attackacrack.com,harrringtonm@gmail.com')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean),
+    technicianEmails: technicianEmails(process.env.TECHNICIAN_EMAILS),
   };
 
   return cached;

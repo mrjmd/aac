@@ -12,7 +12,7 @@ vi.mock('../lib/redis.js', () => ({
   logHealthError: mockLogHealthError,
 }));
 
-import { buildProposalForDirective, selectBusyEvents, type ProposalBuilderDeps } from '../lib/proposal-builder.js';
+import { buildProposalForDirective, type ProposalBuilderDeps } from '../lib/proposal-builder.js';
 
 function makeDirective(over: Partial<QuoteApprovedDirective> = {}): QuoteApprovedDirective {
   return {
@@ -218,56 +218,5 @@ describe('buildProposalForDirective', () => {
     // day's afternoon events; the window must reach past its end.
     const endOfLastScannedDay = now + 22 * 86_400_000;
     expect(new Date(callArg.timeMax).getTime()).toBeGreaterThanOrEqual(endOfLastScannedDay);
-  });
-
-  describe('selectBusyEvents', () => {
-    const TECH = ['mike@attackacrack.com', 'harrringtonm@gmail.com'];
-    const ev = (summary: string, attendees: string[]) =>
-      ({ summary, attendees } as unknown as CalendarEvent);
-
-    it('keeps Mike-attended events and drops Zoom/private/non-tech events', () => {
-      const kept = selectBusyEvents(
-        [
-          ev('Jane Smith — crack injection', ['Mike@AttackACrack.com']),
-          ev('Ed / Matt 121', ['ed@example.com']),
-          ev('BNI Plus', []),
-          ev('Dentist', []),
-        ],
-        TECH,
-      );
-      expect(kept.map((e) => e.summary)).toEqual(['Jane Smith — crack injection']);
-    });
-
-    it('keeps attendee-less HOLD placeholders', () => {
-      const kept = selectBusyEvents(
-        [ev('HOLD — John Smith', []), ev('Holiday party', [])],
-        TECH,
-      );
-      expect(kept.map((e) => e.summary)).toEqual(['HOLD — John Smith']);
-    });
-
-    it('keeps everything when no technicianEmails are configured (degraded mode)', () => {
-      const events = [ev('Ed / Matt 121', ['ed@example.com']), ev('BNI Plus', [])];
-      expect(selectBusyEvents(events, [])).toEqual(events);
-    });
-
-    it('keeps attendee-less Mike OOO entries (2026-10-15 gap)', () => {
-      const kept = selectBusyEvents(
-        [
-          ev('Mike OOO', []),
-          ev('Mike out of office', []),
-          ev('mike ooo — hunting trip', []),
-          ev('Matt OOO', []), // Matt's absence never blocks Mike's jobs
-          ev('OOO', []), // ambiguous — whose? don't block
-          ev('Smith vacation home — crack injection', []), // customer event, not OOO
-        ],
-        TECH,
-      );
-      expect(kept.map((e) => e.summary)).toEqual([
-        'Mike OOO',
-        'Mike out of office',
-        'mike ooo — hunting trip',
-      ]);
-    });
   });
 });

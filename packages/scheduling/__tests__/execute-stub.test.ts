@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { GoogleCalendarClient, CalendarEvent } from '@aac/api-clients/google-calendar';
+import { EVENT_CLASS_COLOR_IDS, STUB_TITLE_PREFIX } from '@aac/shared-utils/calendar';
 import {
   enrichStubEvent,
   executeStubEvent,
   getActionableSlot,
-  EVENT_CLASS_COLOR_IDS,
   STUB_DEFAULT_HOURS,
-  STUB_TITLE_PREFIX,
   type ExecuteStubDeps,
 } from '../src/execute-stub.js';
 import type {
