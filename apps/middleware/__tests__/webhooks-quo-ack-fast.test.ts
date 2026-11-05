@@ -177,3 +177,24 @@ describe('first-touch intake scheduling', () => {
     expect(redisMocks.scheduleIntakeDraft).not.toHaveBeenCalled();
   });
 });
+
+describe('internal numbers skip the customer pipeline', () => {
+  it.each([
+    ['Matt texting Ed from the business line', { direction: 'outgoing', from: '+16176681677', to: '+13392175091', body: 'Can we move our meeting to 2pm?' }, 'message.delivered'],
+    ['Ed\'s line texting the business line', { direction: 'outgoing', from: '+13392175091', to: '+16176681677', body: 'can we see if theyre available between 1-2pm?' }, 'message.delivered'],
+    ['Mike texting in', { direction: 'incoming', from: '+18573126761', to: '+16176681677', body: 'Running late, there by 10' }, 'message.received'],
+  ])('%s: no PD lookup, no intake draft, no scheduling dispatch', async (_label, overrides, type) => {
+    const evt = makeMessageEvent(overrides);
+    (evt.object as { type: string }).type = type;
+    const res = await POST(req(evt));
+    expect(await res.json()).toMatchObject({ status: 'skipped', reason: 'internal_phone' });
+    expect(redisMocks.getPipedriveIdFromPhone).not.toHaveBeenCalled();
+    expect(redisMocks.scheduleIntakeDraft).not.toHaveBeenCalled();
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  it('a customer message still reaches scheduling dispatch', async () => {
+    await POST(req(makeMessageEvent()));
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+  });
+});

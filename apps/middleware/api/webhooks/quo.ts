@@ -16,7 +16,7 @@
  * This matches how the old Next.js App Router handler worked.
  */
 
-import { normalizePhone } from '@aac/shared-utils/phone';
+import { isInternalPhone, normalizePhone } from '@aac/shared-utils/phone';
 import { createLogger } from '@aac/shared-utils/logger';
 import { verifyOpenPhoneWebhookSignature } from '@aac/shared-utils/webhook-signature';
 import { GeminiClient, ExtractionError } from '@aac/api-clients/gemini';
@@ -411,6 +411,21 @@ export async function POST(request: Request): Promise<Response> {
         kind: 'voicemail',
         callId: eventData.id,
       });
+    }
+
+    // ============================================
+    // INTERNAL NUMBERS STOP HERE
+    // Matt↔Ed, Matt↔Mike, and the business line itself (Ed's line texting
+    // it) are not customers. Past this point everything treats the remote
+    // phone as a customer: PD person sync, AI extraction, and scheduling
+    // dispatch, which minted holds/stubs (with Mike invited) from internal
+    // texts like "can we move our meeting to 2pm" (2026-11-04/05). The
+    // quote-trigger enqueue above stays: T2 needs Mike's debrief calls.
+    // ============================================
+    if (isInternalPhone(e164Phone, env.quo.phoneNumber) || TECHNICIAN_PHONES.has(e164Phone)) {
+      log.info('Internal number, skipping customer pipeline', { eventId: event.id, type: event.type });
+      await trackWebhookProcessed('quo');
+      return json({ status: 'skipped', reason: 'internal_phone' });
     }
 
     // ============================================

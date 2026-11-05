@@ -184,7 +184,7 @@ already handled (`/api/qb-webhook` is CloudEvents-only).
 | **Virtual receptionist** | Brand value: humans answer. |
 | **2nd technician hire** | Planned Mar 1 2027, gated on winter 1.5× multiplier + \$60–70k vaulted (see `analysis/02-strategy/tech2-hiring-plan-2026-08.md`). |
 | **PD API v1→v2 migration** | No announced removal date; queued. |
-| **Internal-number skip list in the Quo webhook** | Needed: Matt↔Ed texts (Ed's cell +13392175091) flow through PD person sync, AI entity extraction, and scheduling dispatch as if Ed were a customer — on 2026-10-27 this minted a stub for the wrong person and had built a franken PD contact ("Mike Wohl") over months. Design the skip set (Ed's cell, technician cells, agent line +16177660151) and which pipeline stages it gates (activity logging? extraction? scheduling?) before implementing — middleware is sacrosanct. Contact cleanup itself was done 2026-10-27. |
+| **Internal-number skip list in the Quo webhook** | BUILT 2026-11-05 (pending push): Quo webhook returns `internal_phone` for INTERNAL_PHONES + the business line + TECHNICIAN_PHONES right after the quote-trigger enqueue (T2 Mike debriefs still flow), so no PD sync, AI extraction, intake draft, or scheduling dispatch. Found after a "HOLD — Sunji" ghost (Ed's line texting the business line matched PD 4641, which carries the business number) and a Matt→Ed meeting text that minted an event with Mike invited; 21 ghost directives unlisted the same day. PD 4641 "Sunji" still holds the business number (harmless now). |
 
 ---
 
