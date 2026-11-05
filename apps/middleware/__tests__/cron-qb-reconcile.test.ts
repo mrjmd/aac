@@ -3,7 +3,7 @@ import type { QBEstimate, QBCustomer } from '@aac/api-clients/quickbooks';
 import type { PipedrivePerson } from '@aac/api-clients/pipedrive';
 
 const mockIsConnected = vi.fn();
-const mockListRecentEstimates = vi.fn();
+const mockListEstimatesUpdatedSince = vi.fn();
 const mockGetCustomer = vi.fn();
 const mockSearchPersonByPhone = vi.fn();
 const mockListEvents = vi.fn();
@@ -14,7 +14,7 @@ const mockUpdateEstimate = vi.fn();
 vi.mock('../lib/clients.js', () => ({
   getQuickBooks: () => ({
     isConnected: mockIsConnected,
-    listRecentEstimates: mockListRecentEstimates,
+    listEstimatesUpdatedSince: mockListEstimatesUpdatedSince,
     getCustomer: mockGetCustomer,
     listAllCustomers: mockListAllCustomers,
     getEstimatesByCustomer: mockGetEstimatesByCustomer,
@@ -155,7 +155,7 @@ describe('qb-reconcile cron', () => {
     };
 
     it("marks a booked customer's one open quote Accepted", async () => {
-      mockListRecentEstimates.mockResolvedValue([]);
+      mockListEstimatesUpdatedSince.mockResolvedValue([]);
       mockListEvents.mockResolvedValue([greenJob]);
       mockListAllCustomers.mockResolvedValue([makeCustomer()]);
       mockGetEstimatesByCustomer.mockResolvedValue([
@@ -175,7 +175,7 @@ describe('qb-reconcile cron', () => {
     });
 
     it('does not run when the calendar is unavailable', async () => {
-      mockListRecentEstimates.mockResolvedValue([]);
+      mockListEstimatesUpdatedSince.mockResolvedValue([]);
       mockListEvents.mockRejectedValue(new Error('cal 500'));
 
       const res = makeRes();
@@ -186,7 +186,7 @@ describe('qb-reconcile cron', () => {
     });
 
     it('a sync failure is counted but the directive pass still lands', async () => {
-      mockListRecentEstimates.mockResolvedValue([makeEstimate({ Id: 'est-new' })]);
+      mockListEstimatesUpdatedSince.mockResolvedValue([makeEstimate({ Id: 'est-new' })]);
       mockListEvents.mockResolvedValue([{ ...greenJob, summary: 'Someone Else' }]);
       mockListAllCustomers.mockRejectedValue(new Error('qbo 500'));
 
@@ -200,7 +200,7 @@ describe('qb-reconcile cron', () => {
   });
 
   it('skips an estimate whose customer already has an upcoming event (prereq 1)', async () => {
-    mockListRecentEstimates.mockResolvedValue([makeEstimate({ Id: 'est-manual' })]);
+    mockListEstimatesUpdatedSince.mockResolvedValue([makeEstimate({ Id: 'est-manual' })]);
     mockListEvents.mockResolvedValue([
       {
         id: 'evt-booked',
@@ -227,7 +227,7 @@ describe('qb-reconcile cron', () => {
   });
 
   it('does not skip when the upcoming event belongs to a different customer', async () => {
-    mockListRecentEstimates.mockResolvedValue([makeEstimate({ Id: 'est-other' })]);
+    mockListEstimatesUpdatedSince.mockResolvedValue([makeEstimate({ Id: 'est-other' })]);
     mockListEvents.mockResolvedValue([
       {
         id: 'evt-jane',
@@ -249,7 +249,7 @@ describe('qb-reconcile cron', () => {
   });
 
   it('degrades to directive creation when the calendar is unavailable', async () => {
-    mockListRecentEstimates.mockResolvedValue([makeEstimate({ Id: 'est-cal-down' })]);
+    mockListEstimatesUpdatedSince.mockResolvedValue([makeEstimate({ Id: 'est-cal-down' })]);
     mockListEvents.mockRejectedValue(new Error('cal 500'));
 
     const req = makeReq();
@@ -272,11 +272,11 @@ describe('qb-reconcile cron', () => {
       status: 'skipped',
       reason: 'qb_not_connected',
     });
-    expect(mockListRecentEstimates).not.toHaveBeenCalled();
+    expect(mockListEstimatesUpdatedSince).not.toHaveBeenCalled();
   });
 
   it('creates directives for accepted estimates with no prior directive', async () => {
-    mockListRecentEstimates.mockResolvedValue([
+    mockListEstimatesUpdatedSince.mockResolvedValue([
       makeEstimate({ Id: 'est-1' }),
       makeEstimate({ Id: 'est-2', CustomerRef: { value: 'cust-1', name: 'Smith, John' } }),
     ]);
@@ -305,7 +305,7 @@ describe('qb-reconcile cron', () => {
   });
 
   it('skips estimates that already have a directive (dedup against webhook)', async () => {
-    mockListRecentEstimates.mockResolvedValue([
+    mockListEstimatesUpdatedSince.mockResolvedValue([
       makeEstimate({ Id: 'est-already' }),
       makeEstimate({ Id: 'est-new' }),
     ]);
@@ -332,7 +332,7 @@ describe('qb-reconcile cron', () => {
   });
 
   it('ignores non-Accepted estimates', async () => {
-    mockListRecentEstimates.mockResolvedValue([
+    mockListEstimatesUpdatedSince.mockResolvedValue([
       makeEstimate({ Id: 'est-pending', TxnStatus: 'Pending' }),
       makeEstimate({ Id: 'est-rejected', TxnStatus: 'Rejected' }),
       makeEstimate({ Id: 'est-accepted', TxnStatus: 'Accepted' }),
@@ -355,33 +355,47 @@ describe('qb-reconcile cron', () => {
   });
 
   it('uses requested windowDays when provided', async () => {
-    mockListRecentEstimates.mockResolvedValue([]);
+    mockListEstimatesUpdatedSince.mockResolvedValue([]);
 
     const req = makeReq({ windowDays: '14' });
     const res = makeRes();
     await handler(req, res);
 
-    expect(mockListRecentEstimates).toHaveBeenCalledTimes(1);
-    const since = mockListRecentEstimates.mock.calls[0][0] as string;
-    // 14 days ago, YYYY-MM-DD
-    const expected = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
-    expect(since).toBe(expected);
+    expect(mockListEstimatesUpdatedSince).toHaveBeenCalledTimes(1);
+    const since = Date.parse(mockListEstimatesUpdatedSince.mock.calls[0][0] as string);
+    expect(Math.abs(since - (Date.now() - 14 * 86_400_000))).toBeLessThan(5_000);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ windowDays: 14 }),
     );
   });
 
   it('defaults to 7-day window when query param missing or invalid', async () => {
-    mockListRecentEstimates.mockResolvedValue([]);
+    mockListEstimatesUpdatedSince.mockResolvedValue([]);
 
     await handler(makeReq({ windowDays: 'not-a-number' }), makeRes());
-    const since = mockListRecentEstimates.mock.calls[0][0] as string;
-    const expected = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
-    expect(since).toBe(expected);
+    const since = Date.parse(mockListEstimatesUpdatedSince.mock.calls[0][0] as string);
+    expect(Math.abs(since - (Date.now() - 7 * 86_400_000))).toBeLessThan(5_000);
+  });
+
+  it('skips an Accepted quote that is already invoiced (an edit bumped LastUpdatedTime)', async () => {
+    mockListEstimatesUpdatedSince.mockResolvedValue([
+      makeEstimate({ Id: 'est-invoiced', LinkedTxn: [{ TxnId: 'inv-9', TxnType: 'Invoice' }] }),
+      makeEstimate({ Id: 'est-open' }),
+    ]);
+
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockWritePendingDirective).toHaveBeenCalledTimes(1);
+    expect(mockWritePendingDirective.mock.calls[0][0].qbEstimateId).toBe('est-open');
+    expect(mockGetDirectiveIdByEstimate).not.toHaveBeenCalledWith('est-invoiced');
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ summary: expect.objectContaining({ filtered: 1, directivesCreated: 1 }) }),
+    );
   });
 
   it('continues processing after one estimate errors and logs the failure', async () => {
-    mockListRecentEstimates.mockResolvedValue([
+    mockListEstimatesUpdatedSince.mockResolvedValue([
       makeEstimate({ Id: 'est-good-1' }),
       makeEstimate({ Id: 'est-bad' }),
       makeEstimate({ Id: 'est-good-2' }),
@@ -413,7 +427,7 @@ describe('qb-reconcile cron', () => {
   });
 
   it('tracks the run via trackCronRun', async () => {
-    mockListRecentEstimates.mockResolvedValue([makeEstimate({ Id: 'est-1' })]);
+    mockListEstimatesUpdatedSince.mockResolvedValue([makeEstimate({ Id: 'est-1' })]);
 
     await handler(makeReq(), makeRes());
 

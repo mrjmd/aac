@@ -7,8 +7,10 @@
  * live), the SchedulingDirective for that estimate never gets created
  * and Matt never sees it on /scheduling.
  *
- * This cron sweeps the last `windowDays` of Estimates via
- * `qb.listRecentEstimates(sinceISO)`, filters client-side to Accepted,
+ * This cron sweeps Estimates changed in the last `windowDays` via
+ * `qb.listEstimatesUpdatedSince(sinceISO)` (LastUpdatedTime, not TxnDate:
+ * a quote written weeks ago and accepted today must still be caught),
+ * filters client-side to Accepted, skips already-invoiced work,
  * skips any estimate already directive-ized (`scheduling:directive-by-
  * qb-estimate:{id}`), and replays the missing ones through the same
  * `normalizeQbApproval` the webhook uses — with `source: 'qb_reconciliation'`
@@ -86,8 +88,8 @@ export default async function handler(
       return;
     }
 
-    const sinceISODate = isoDateNDaysAgo(windowDays);
-    const estimates = await qb.listRecentEstimates(sinceISODate);
+    const sinceISO = new Date(Date.now() - windowDays * 86_400_000).toISOString();
+    const estimates = await qb.listEstimatesUpdatedSince(sinceISO);
     summary.scanned = estimates.length;
 
     const pd = getPipedrive();
@@ -109,6 +111,13 @@ export default async function handler(
     for (const estimate of estimates) {
       if (estimate.TxnStatus !== 'Accepted') continue;
       summary.accepted++;
+
+      // An edit to an old, already-invoiced quote bumps LastUpdatedTime;
+      // the job is done, so there is nothing to schedule.
+      if (estimate.LinkedTxn?.some((t) => t.TxnType === 'Invoice')) {
+        summary.filtered++;
+        continue;
+      }
 
       try {
         const existing = await getDirectiveIdByEstimate(estimate.Id);
@@ -207,9 +216,4 @@ export default async function handler(
     await trackCronRun('qb-reconcile', { sent: 0, skipped: 0, errors: 1 });
     res.status(200).json({ status: 'error', message: err.message });
   }
-}
-
-function isoDateNDaysAgo(n: number): string {
-  const d = new Date(Date.now() - n * 86_400_000);
-  return d.toISOString().slice(0, 10);
 }

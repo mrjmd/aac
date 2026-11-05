@@ -634,6 +634,27 @@ export class QuickBooksClient {
   }
 
   /**
+   * Estimates changed since `sinceISO` (`MetaData.LastUpdatedTime`), paged.
+   * Use this, not `listRecentEstimates`, to catch status flips: a quote
+   * written weeks ago and accepted today has an old TxnDate but a fresh
+   * LastUpdatedTime.
+   */
+  async listEstimatesUpdatedSince(sinceISO: string): Promise<QBEstimate[]> {
+    const pageSize = 1000;
+    const all: QBEstimate[] = [];
+    for (let start = 1; ; start += pageSize) {
+      const sql = `SELECT * FROM Estimate WHERE MetaData.LastUpdatedTime >= '${sinceISO}' STARTPOSITION ${start} MAXRESULTS ${pageSize}`;
+      const result = await this.request<{ QueryResponse?: { Estimate?: QBEstimate[] } }>(
+        `/query?query=${encodeURIComponent(sql)}&minorversion=70`,
+      );
+      const page = result.QueryResponse?.Estimate ?? [];
+      all.push(...page);
+      if (page.length < pageSize) break;
+    }
+    return all;
+  }
+
+  /**
    * Set an estimate's TxnStatus (e.g. mark a dead quote 'Closed' so it
    * stops counting as open pipeline). Sparse update — fetches the estimate
    * first for a fresh SyncToken.

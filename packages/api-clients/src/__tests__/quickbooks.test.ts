@@ -537,6 +537,24 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('listEstimatesUpdatedSince', () => {
+    it('filters on LastUpdatedTime and pages until a short page', async () => {
+      const client = makeClient();
+      const full = Array.from({ length: 1000 }, (_, i) => ({ Id: `e${i}`, SyncToken: '0', CustomerRef: { value: 'c' }, Line: [] }));
+      mockFetch
+        .mockReturnValueOnce(mockResponse({ QueryResponse: { Estimate: full } }))
+        .mockReturnValueOnce(mockResponse({ QueryResponse: { Estimate: [{ Id: 'last', SyncToken: '0', CustomerRef: { value: 'c' }, Line: [] }] } }));
+
+      const result = await client.listEstimatesUpdatedSince('2026-11-01T00:00:00.000Z');
+
+      const decoded = mockFetch.mock.calls.map((c) => decodeURIComponent((c[0] as string).split('query=')[1].split('&')[0]));
+      expect(decoded[0]).toContain("MetaData.LastUpdatedTime >= '2026-11-01T00:00:00.000Z'");
+      expect(decoded[0]).toContain('STARTPOSITION 1 ');
+      expect(decoded[1]).toContain('STARTPOSITION 1001 ');
+      expect(result).toHaveLength(1001);
+    });
+  });
+
   describe('listRecentInvoices', () => {
     it('queries all invoices with optional sinceISODate', async () => {
       const client = makeClient();
