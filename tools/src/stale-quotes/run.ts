@@ -67,8 +67,15 @@ const MAX_UNANSWERED = 3; // consecutive unanswered touches, then stop
 const FINAL_AGE_OUT_DAYS = 14; // final touch unanswered this long → close flag
 const RECENT_OUTBOUND_COOLOFF_H = 48; // any outbound this fresh → not this run
 const OUR_EMAILS = new Set(['matt@attackacrack.com', 'attackacrackma@gmail.com']);
-/** DocNumbers never touched by automation (owner holds). */
-const MANUAL_HOLD_DOCS = new Set(['1523']); // Michael Fridman
+/** DocNumbers never touched by automation (owner holds). A hold with
+ *  `until` resurfaces on that date as a needs-call flag: Matt follows up
+ *  personally, never the automated ladder. */
+const MANUAL_HOLDS = new Map<string, { why: string; until?: string }>([
+  ['1523', { why: 'Michael Fridman: scope confusion, deliberate pause' }],
+  // Outdoor resurfacing, can't be done until it warms up (owner, 2026-11-05).
+  ['1499', { why: 'Mityushin pool deck: personal spring follow-up', until: '2027-03-01' }],
+  ['1493', { why: 'Mulvaney stairs: personal spring follow-up', until: '2027-03-01' }],
+]);
 const MIKE_EMAIL = 'mike@attackacrack.com';
 
 // A/B variants (plan §4.7): stable hash of estimate ID picks the cell.
@@ -574,7 +581,13 @@ Write the single SMS follow-up now. Output ONLY the message text, no quotes, no 
   return { systemPrompt, userPrompt };
 }
 
-function buildReviewPrompt(draft: string, horizonText: string, tier: 'T1' | 'T2' | 'T3', quoteContext: string): string {
+function buildReviewPrompt(
+  draft: string,
+  horizonText: string,
+  tier: 'T1' | 'T2' | 'T3',
+  quoteContext: string,
+  smsTail: string,
+): string {
   // Owner decision 2026-11-05: "I'll close out the quote/file if I don't hear back"
   // is true on the real final touch, so it's allowed there and nowhere else.
   const closeRule =
@@ -585,11 +598,14 @@ function buildReviewPrompt(draft: string, horizonText: string, tier: 'T1' | 'T2'
 
 The quote this follows up on: ${quoteContext}
 
+The text thread with this customer (the drafter saw this too; details taken from it, like "garage", "bulkhead", a closing date or an insurance claim, are real, NOT invented):
+${smsTail || '(no prior text thread beyond the quote)'}
+
 Fail it if ANY of these appear:
 ${closeRule}
 - refers to a property, town, or piece of work that is not the one in the quote above (mixing up two jobs)
 - mentions price/cost/discount/"prices have changed" in any form
-- invents a fact, conversation, or promise
+- invents a fact, conversation, or promise that appears in neither the quote nor the thread above
 - claims availability other than: "${horizonText}" (paraphrase is fine, contradiction is not; implying a sooner slot or fake scarcity = fail)
 - calls the quote an "estimate"
 - longer than ~600 characters or contains multiple messages
@@ -812,9 +828,13 @@ async function main(): Promise<void> {
     const label = `#${doc} ${customer} $${amount.toLocaleString()} (${ageDays}d, ${svc.cls}${svc.largeResurf ? ' LARGE' : ''})`;
 
     // ── gate: manual hold
-    if (MANUAL_HOLD_DOCS.has(doc)) {
-      st.suspended = { reason: 'manual-hold', detail: 'owner hold list', at: new Date(now).toISOString() };
-      skip('manual hold');
+    const hold = MANUAL_HOLDS.get(doc);
+    if (hold) {
+      st.suspended = { reason: 'manual-hold', detail: hold.why, at: new Date(now).toISOString(), until: hold.until };
+      if (hold.until && now >= new Date(hold.until).getTime()) {
+        queue.flags.push({ kind: 'needs-call', doc, customer, amount, detail: `owner hold ended ${hold.until}: ${hold.why}` });
+      }
+      skip(`manual hold: ${hold.why}`);
       continue;
     }
 
@@ -1109,7 +1129,7 @@ async function main(): Promise<void> {
     let draft = (await generateWithRetry(gemini, userPrompt, systemPrompt)).trim().replace(/^["']|["']$/g, '');
     // reviewer gate — one regeneration on failure
     for (let pass = 0; pass < 2; pass++) {
-      const reviewRaw = await generateWithRetry(gemini, buildReviewPrompt(draft, horizonText, tier, quoteContext));
+      const reviewRaw = await generateWithRetry(gemini, buildReviewPrompt(draft, horizonText, tier, quoteContext, smsTail));
       const review = parseExtractionLoose<{ ok: boolean; problems?: string[] }>(reviewRaw);
       if (review?.ok) break;
       const problems = review?.problems?.join('; ') ?? 'unparseable review';
