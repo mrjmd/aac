@@ -77,6 +77,12 @@ export interface IntakeResult {
 
 export type IntakeVerdict = 'can-help' | 'cant-help' | 'need-info';
 
+/** How the first reply reads for each verdict; shared by both intake prompts. */
+const INTAKE_REPLY_BY_VERDICT = `   - can-help: thank them / acknowledge what they sent specifically; confirm we can help; then ask ONLY for the items they have NOT already provided (full name, address of the property, email address for the quote). If they sent photos of a crack, mention the lifetime guarantee naturally. If they sent NO photos, ask for photos of the issue.
+   - cant-help: kindly and briefly say this isn't something we're able to help with and why, in plain words (e.g. "because the walls are cinder block, which is hollow, our injection process can't stop the water"). If a referral fits, recommend them by name with their number. Do NOT ask for name, address, email, or more photos. Keep it short and warm.
+   - need-info: thank them, then ask ONLY that one deciding question (and, if it helps, a photo from a few steps back). Do NOT ask for name, address or email yet.
+   End every draft with Matt's signature line: "-- Matt at Attack A Crack".`;
+
 export async function draftIntake(
   gemini: GeminiClient,
   args: {
@@ -114,10 +120,7 @@ Steps:
    - "can-help": plausibly crack repair / concrete work we do.
    Put a one-sentence reason in verdictReason (what you saw that decided it).
 5. If classification is "lead" AND the state is NOT "CT": draft Matt's reply, by verdict.
-   - can-help: thank them / acknowledge what they sent specifically; confirm we can help; then ask ONLY for the items they have NOT already provided (full name, address of the property, email address for the quote). If they sent photos of a crack, mention the lifetime guarantee naturally. If they sent NO photos, ask for photos of the issue.
-   - cant-help: kindly and briefly say this isn't something we're able to help with and why, in plain words (e.g. "because the walls are cinder block, which is hollow, our injection process can't stop the water"). If a referral fits, recommend them by name with their number. Do NOT ask for name, address, email, or more photos. Keep it short and warm.
-   - need-info: thank them, then ask ONLY that one deciding question (and, if it helps, a photo from a few steps back). Do NOT ask for name, address or email yet.
-   End every draft with Matt's signature line: "-- Matt at Attack A Crack".
+${INTAKE_REPLY_BY_VERDICT}
 6. If "solicitation" or "other", or the state IS "CT": draft must be an empty string (CT inquiries get a different reply drafted separately).
 
 Return ONLY JSON: {"classification": "...", "propertyState": "...", "provided": {"name": bool, "address": bool, "email": bool}, "extracted": {"name": str|null, "address": str|null, "email": str|null}, "verdict": "can-help"|"cant-help"|"need-info", "verdictReason": "...", "draft": "..."}`;
@@ -134,6 +137,55 @@ Return ONLY JSON: {"classification": "...", "propertyState": "...", "provided": 
     parsed.extracted ??= { name: null, address: null, email: null };
     if (parsed.verdict !== 'cant-help' && parsed.verdict !== 'need-info') parsed.verdict = 'can-help';
     return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Draft-only first reply for the inbound router (phase 4): the router's read
+ * already classified the inquiry, judged it against the can't-help rules and
+ * described the photos, so this call only writes the reply.
+ */
+export async function draftIntakeReply(
+  gemini: GeminiClient,
+  args: {
+    customerText: string;
+    mediaCount: number;
+    /** The read's description of each photo, in place of the images. */
+    photoNotes: string[];
+    exemplars: Array<{ customer: string; text: string }>;
+    verdict: IntakeVerdict;
+    reason: string;
+    question: string | null;
+    /** "Name (phone)" for each referral that fits, best first. */
+    referrals: string[];
+  },
+): Promise<string | null> {
+  const decided =
+    args.verdict === 'cant-help'
+      ? `cant-help. Why: ${args.reason}\n${args.referrals.length ? `Referrals that fit (recommend the first, by name with the number): ${args.referrals.join('; ')}` : 'No referral fits: a straight, kind decline.'}`
+      : args.verdict === 'need-info'
+        ? `need-info. The one deciding question: ${args.question ?? args.reason}`
+        : `can-help. ${args.reason}`;
+  const prompt = `${VOICE_RULES}
+
+REAL examples of Matt's first replies to new inquiries (customer message → Matt's reply):
+${args.exemplars.map((e, i) => `--- example ${i + 1} ---\nCUSTOMER: ${e.customer}\nMATT: ${e.text}`).join('\n')}
+
+A NEW inquiry arrived on the business line. Draft Matt's first reply.
+
+THE NEW INQUIRY (first message(s) from this number):
+${args.customerText || '(no text — photos only)'}
+${args.mediaCount > 0 ? `[customer attached ${args.mediaCount} photo(s); what they show:]\n${args.photoNotes.map((n) => `- ${n}`).join('\n') || '- (not described)'}` : '[no photos attached]'}
+
+VERDICT (already decided; do not second-guess it): ${decided}
+
+Draft the reply by verdict:
+${INTAKE_REPLY_BY_VERDICT}`;
+  try {
+    const out = await gemini.generateContent(prompt, { maxOutputTokens: 4096 });
+    return out.trim() || null;
   } catch {
     return null;
   }

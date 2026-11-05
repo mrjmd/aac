@@ -17,7 +17,9 @@ import {
   isFollowupCandidate,
   processFollowupEstimate,
   processIntakePhone,
+  processRoutedIntake,
   type DraftDeps,
+  type RoutedIntake,
 } from '../src/index.js';
 
 const NOW = new Date('2026-10-21T15:00:00Z').getTime();
@@ -366,6 +368,91 @@ describe('processIntakePhone', () => {
     expect(await state.getIntake('+19785550130')).toBe('skipped:no-quo-contact');
   });
 
+});
+
+describe('processRoutedIntake (inbound router, phase 4)', () => {
+  const routed = (over: Partial<RoutedIntake> = {}): RoutedIntake => ({
+    route: 'intake',
+    verdict: 'can-help',
+    reason: 'Poured wall crack, standard injection.',
+    question: null,
+    referrals: [],
+    entities: { name: null, address: null, email: null },
+    customerText: 'Crack in my basement wall, leaks when it rains',
+    mediaCount: 2,
+    photoNotes: ['vertical crack in poured wall, water staining', 'same crack, close up'],
+    mediaUrls: ['https://m/0.jpg', 'https://m/1.jpg'],
+    inquiryAt: NOW - 4 * 60_000,
+    ...over,
+  });
+  const ask =
+    'Hello, thanks for reaching out and sending photos! We can definitely help get that crack sealed, all our crack repairs come with a lifetime guarantee. Could you send your full name, the address of the property, and an email address for the quote? -- Matt at Attack A Crack';
+
+  it('drafts from the read: one draft-only call, no photo downloads, router record', async () => {
+    const { deps, state, mocks } = makeDeps();
+    mocks.generateContent.mockResolvedValue(ask);
+    const outcome = await processRoutedIntake(deps, '+19785550140', routed());
+    expect(outcome.kind).toBe('drafted');
+    expect(mocks.generateContent).toHaveBeenCalledTimes(1);
+    expect(mocks.downloadMessageMedia).not.toHaveBeenCalled();
+    expect(mocks.listMessages).not.toHaveBeenCalled();
+    const [prompt, opts] = mocks.generateContent.mock.calls[0] as [string, { imageParts?: unknown[] }];
+    expect(prompt).toContain('vertical crack in poured wall, water staining');
+    expect(prompt).toContain('VERDICT (already decided');
+    expect(opts.imageParts).toBeUndefined();
+    const note = mocks.createContactNote.mock.calls[0][1] as string;
+    expect(note).toContain('FIRST-TOUCH INTAKE');
+    expect(note).toContain('New inquiry 4 min ago');
+    expect(await state.getIntake('+19785550140')).not.toBeNull();
+    expect(state.records.at(-1)).toMatchObject({ type: 'intake', via: 'router', outcome: 'drafted', verdict: 'can-help' });
+  });
+
+  it('a decline names the referral the read picked and never asks for contact details', async () => {
+    const { deps, mocks } = makeDeps();
+    mocks.generateContent.mockResolvedValue('generation fails the gate on purpose');
+    const outcome = await processRoutedIntake(
+      deps,
+      '+19785550141',
+      routed({ route: 'decline', verdict: 'cant-help', reason: 'Leaking block bulkhead.', referrals: ['Air Guardian ((508) 355-0044)'] }),
+    );
+    expect(outcome.kind).toBe('drafted');
+    const prompt = mocks.generateContent.mock.calls[0][0] as string;
+    expect(prompt).toContain('Referrals that fit (recommend the first, by name with the number): Air Guardian');
+    const note = mocks.createContactNote.mock.calls[0][1] as string;
+    expect(note).toContain("CAN'T HELP");
+    expect(note).toContain('Why: Leaking block bulkhead.');
+    expect(note).toContain('fallback skeleton used');
+    expect(note).not.toContain('full name');
+  });
+
+  it('CT → routing reply + Luc handoff from the read entities', async () => {
+    const { deps, mocks } = makeDeps();
+    mocks.generateContent.mockResolvedValue('generation fails the gate on purpose');
+    const outcome = await processRoutedIntake(
+      deps,
+      '+18605550142',
+      routed({ route: 'ct-routing', entities: { name: 'Sam Smith', address: '1 Main St, Enfield CT', email: null } }),
+    );
+    expect(outcome.kind).toBe('drafted');
+    const note = mocks.createContactNote.mock.calls[0][1] as string;
+    expect(note).toContain('CT→LUC ROUTING');
+    expect(note).toContain('HANDOFF TO LUC');
+    expect(note).toContain('Sam Smith');
+    expect(note).toContain('https://m/0.jpg');
+  });
+
+  it('already done → skipped; missing Quo contact → retry later', async () => {
+    const { deps, state, mocks } = makeDeps();
+    await state.setIntake('+19785550143', new Date(NOW).toISOString());
+    expect(await processRoutedIntake(deps, '+19785550143', routed())).toEqual({ kind: 'skipped', reason: 'already-done' });
+    mocks.generateContent.mockResolvedValue(ask);
+    mocks.findContactByPhone.mockResolvedValue(null);
+    expect((await processRoutedIntake(deps, '+19785550144', routed())).kind).toBe('retry-later');
+    expect(await state.getIntake('+19785550144')).toBeNull();
+  });
+});
+
+describe('followup candidates', () => {
   it('isFollowupCandidate requires EmailSent + Pending', () => {
     expect(isFollowupCandidate(makeEstimate())).toBe(true);
     expect(isFollowupCandidate(makeEstimate({ TxnStatus: 'Accepted' } as Partial<QBEstimate>))).toBe(false);

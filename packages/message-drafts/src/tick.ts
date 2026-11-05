@@ -52,3 +52,15 @@ export async function drainIntakeDue(deps: DraftDeps, redis: Redis): Promise<Dra
   }
   return records;
 }
+
+/**
+ * The inbound router owns first touch (`inbound-router:live` has intake):
+ * clear the due intake phones without drafting, so the ZSET the webhook
+ * still arms doesn't grow. Returns how many were dropped.
+ */
+export async function dropIntakeDue(deps: DraftDeps, redis: Redis): Promise<number> {
+  const now = deps.now?.() ?? Date.now();
+  const due = await redis.zrange<string[]>(keys.messageDraftIntakeDue, 0, now, { byScore: true });
+  if (due.length) await redis.zrem(keys.messageDraftIntakeDue, ...due);
+  return due.length;
+}

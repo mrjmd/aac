@@ -5,6 +5,8 @@
  */
 import { createLogger } from '@aac/shared-utils/logger';
 import { MAX_DRAFTS_PER_RUN, sweepFollowups, sweepIntake } from '@aac/message-drafts';
+import { liveRoutes, sweepInbound } from '@aac/inbound-router';
+import { CanHelpStore } from '@aac/quoting';
 import { getWorkerDeps } from '../lib/deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
 
@@ -14,15 +16,20 @@ export async function GET(request: Request): Promise<Response> {
   if (!isCronRequest(request) && !isMiddlewareRequest(request)) {
     return json({ error: 'unauthorized' }, 401);
   }
-  const { deps } = getWorkerDeps();
+  const { deps, redis } = getWorkerDeps();
   try {
     const firstRunAt = await deps.state.getFirstRunAt();
     const firstRun = !firstRunAt;
     if (firstRun) await deps.state.setFirstRunAt(new Date().toISOString());
-    const records = [
-      ...(await sweepFollowups(deps, { maxDrafts: MAX_DRAFTS_PER_RUN, firstRun })),
-      ...(await sweepIntake(deps, { maxDrafts: MAX_DRAFTS_PER_RUN })),
-    ];
+    const records = [...(await sweepFollowups(deps, { maxDrafts: MAX_DRAFTS_PER_RUN, firstRun }))];
+    // Once the inbound router owns intake, the backstop re-arms the router
+    // for missed customer messages instead of drafting intake itself.
+    if ((await liveRoutes({ redis })).has('intake')) {
+      const armed = await sweepInbound({ redis, quo: deps.quo, gemini: deps.gemini, canHelp: new CanHelpStore(redis) });
+      if (armed.length) log.info('sweep re-armed inbound router', { armed: armed.length });
+    } else {
+      records.push(...(await sweepIntake(deps, { maxDrafts: MAX_DRAFTS_PER_RUN })));
+    }
     const drafted = records.filter((r) => r.outcome === 'drafted').length;
     if (records.length) log.info('sweep complete', { drafted, records: records.length });
     return json({ status: 'ok', drafted, records: records.length });

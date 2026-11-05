@@ -8,7 +8,8 @@
  */
 import { createLogger } from '@aac/shared-utils/logger';
 import { keys } from '@aac/shared-utils/redis';
-import { drainFollowupQueue, drainIntakeDue } from '@aac/message-drafts';
+import { drainFollowupQueue, drainIntakeDue, dropIntakeDue } from '@aac/message-drafts';
+import { liveRoutes } from '@aac/inbound-router';
 import { getWorkerDeps } from '../lib/deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
 
@@ -20,10 +21,12 @@ export async function GET(request: Request): Promise<Response> {
   }
   const { deps, redis } = getWorkerDeps();
   try {
-    const records = [
-      ...(await drainFollowupQueue(deps, redis)),
-      ...(await drainIntakeDue(deps, redis)),
-    ];
+    // The inbound router owns first touch once intake is live; the old
+    // intake queue is cleared, not drafted.
+    const routerIntake = (await liveRoutes({ redis })).has('intake');
+    const records = [...(await drainFollowupQueue(deps, redis))];
+    if (routerIntake) await dropIntakeDue(deps, redis);
+    else records.push(...(await drainIntakeDue(deps, redis)));
     await redis.set(keys.heartbeat('worker'), new Date().toISOString());
     const drafted = records.filter((r) => r.outcome === 'drafted').length;
     if (records.length) log.info('tick drained', { drafted, records: records.length });

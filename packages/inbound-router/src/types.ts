@@ -6,6 +6,7 @@ import type { Redis } from '@upstash/redis';
 import type { QuoClient } from '@aac/api-clients/quo';
 import type { GeminiClient } from '@aac/api-clients/gemini';
 import type { Referral, StandingRule } from '@aac/quoting';
+import type { DraftDeps } from '@aac/message-drafts';
 
 export type InboundIntent =
   | 'new_lead'
@@ -82,7 +83,20 @@ export interface RouterDeps {
   quo: QuoClient;
   gemini: GeminiClient;
   canHelp: { rules(): Promise<StandingRule[]>; referrals(): Promise<Referral[]> };
+  /** The drafters' deps; needed only when a route is live. */
+  drafts?: DraftDeps;
   now?: () => number;
+}
+
+/** Routes the router can own (phase 4), each replacing an old path. Redis `inbound-router:live`. */
+export type LiveRoute = 'intake' | 'quote' | 'referral';
+export const LIVE_ROUTES: readonly LiveRoute[] = ['intake', 'quote', 'referral'];
+
+/** What a live route did. */
+export interface Acted {
+  route: RouteName;
+  outcome: 'drafted' | 'skipped' | 'retry-later';
+  reason?: string;
 }
 
 /** One line of `inbound:shadow`. */
@@ -107,4 +121,6 @@ export interface ShadowEntry {
   routes?: Route[];
   /** What the old paths had done for this phone when the router decided. */
   legacy?: { intake: string | null; quoteSettling: boolean };
+  /** Live routes only: what the drafters did. */
+  acted?: Acted[];
 }

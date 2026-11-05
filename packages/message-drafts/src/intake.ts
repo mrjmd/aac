@@ -13,6 +13,7 @@
  * Entry points:
  *  - processIntakePhone: one thread (worker tick draining the due ZSET)
  *  - sweepIntake: 6h conversation poll (backstop)
+ *  - processRoutedIntake: the inbound router's first touch, already decided
  */
 import {
   AUTO_RE,
@@ -33,10 +34,12 @@ import {
   ctRoutingFallback,
   draftCtRouting,
   draftIntake,
+  draftIntakeReply,
   gateCtRouting,
   gateIntake,
   intakeFallback,
   pickExemplars,
+  type IntakeVerdict,
 } from './voice.js';
 import { CT_ROUTING_EXEMPLARS, INTAKE_EXEMPLARS } from './data/exemplars.js';
 import { postDraftNote } from './note.js';
@@ -206,9 +209,24 @@ export async function processIntakePhone(deps: DraftDeps, phone: string): Promis
     extra = `New inquiry ${Math.round(ageMin)} min ago, no reply yet.${mediaCount ? ` ${mediaCount} photo(s) attached${imageParts.length ? ', read' : ''}.` : ''}${why}${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}`;
   }
 
-  const posted = await postDraftNote(deps, phone, kind, draft, extra);
+  return postIntakeNote(deps, phone, {
+    kind, draft, extra, now,
+    record: { type: isCt ? 'ct-routing' : 'intake', phone, outcome: 'drafted', fallback: gateFail ?? null, draft, verdict: result.verdict ?? null },
+  });
+}
+
+/**
+ * Post the intake note and mark the phone done. No Quo contact yet (sync
+ * usually creates one within minutes) → retry later, up to MAX_NOTE_ATTEMPTS.
+ */
+async function postIntakeNote(
+  deps: DraftDeps,
+  phone: string,
+  n: { kind: string; draft: string; extra: string; now: number; record: DraftRecord },
+): Promise<IntakeOutcome> {
+  const { dryRun } = deps;
+  const posted = await postDraftNote(deps, phone, n.kind, n.draft, n.extra);
   if (!posted) {
-    // no Quo contact yet (sync usually creates one within minutes) — retry
     if (!dryRun) {
       await deps.state.releaseIntake(phone);
       const attempts = await deps.state.incrNoteAttempts(phone);
@@ -220,16 +238,82 @@ export async function processIntakePhone(deps: DraftDeps, phone: string): Promis
     }
     return { kind: 'retry-later', reason: 'no-quo-contact' };
   }
-  const record: DraftRecord = {
-    type: isCt ? 'ct-routing' : 'intake', phone, outcome: 'drafted', fallback: gateFail ?? null, draft,
-    verdict: result.verdict ?? null,
-  };
   if (!dryRun) {
-    await deps.state.setIntake(phone, new Date(now).toISOString());
+    await deps.state.setIntake(phone, new Date(n.now).toISOString());
     await deps.state.clearNoteAttempts(phone);
-    await deps.state.appendRecord(record);
+    await deps.state.appendRecord(n.record);
   }
-  return { kind: 'drafted', record };
+  return { kind: 'drafted', record: n.record };
+}
+
+/** What the inbound router hands intake: its read of the burst, already decided. */
+export interface RoutedIntake {
+  route: 'intake' | 'ct-routing' | 'decline';
+  verdict: IntakeVerdict;
+  reason: string;
+  question: string | null;
+  /** "Name (phone)" for each referral that fits, best first. */
+  referrals: string[];
+  entities: { name: string | null; address: string | null; email: string | null };
+  /** The customer's inbound texts (and voicemail transcripts), oldest first. */
+  customerText: string;
+  mediaCount: number;
+  photoNotes: string[];
+  mediaUrls: string[];
+  /** When this burst began, for the note's "N min ago". */
+  inquiryAt: number;
+}
+
+/**
+ * Router-driven first touch (inbound router phase 4, `inbound-router:live`
+ * includes intake). The router already judged lead / CT / verdict from one
+ * read with the photos, so this only drafts, gates and posts. Same note
+ * kinds, state and records as processIntakePhone; the record says `via: 'router'`.
+ */
+export async function processRoutedIntake(deps: DraftDeps, phone: string, r: RoutedIntake): Promise<IntakeOutcome> {
+  const now = deps.now?.() ?? Date.now();
+  const { gemini, state, dryRun } = deps;
+  const seed = Math.floor(now / 600_000);
+  if (isDone(await state.getIntake(phone), now)) return { kind: 'skipped', reason: 'already-done' };
+  if (!dryRun && !(await state.claimIntake(phone))) return { kind: 'skipped', reason: 'claimed-elsewhere' };
+
+  const ageMin = Math.max(0, Math.round((now - r.inquiryAt) / 60_000));
+  const photos = r.mediaCount ? ` ${r.mediaCount} photo(s) attached, read.` : '';
+  let kind: string;
+  let draft: string;
+  let extra: string;
+  let gateFail: string | null;
+  if (r.route === 'ct-routing') {
+    const reply = await draftCtRouting(gemini, { customerText: r.customerText, exemplars: pickExemplars(CT_ROUTING_EXEMPLARS, 6, seed) });
+    gateFail = reply ? gateCtRouting(reply) : 'generation failed';
+    kind = 'CT→LUC ROUTING';
+    draft = gateFail ? ctRoutingFallback(r.entities.name?.split(' ')[0] ?? null) : reply!;
+    extra = `CT property detected${CT_AREA_CODES.has(phone.slice(2, 5)) ? ' (CT area code)' : ''}. New inquiry ${ageMin} min ago, no reply yet.${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}\n\n——— HANDOFF TO LUC (copy/paste to him, then forward the photos) ———\n${buildLucHandoff({ phone, extracted: r.entities, customerText: r.customerText, mediaUrls: r.mediaUrls })}\n———`;
+  } else {
+    const verdict: IntakeVerdict = r.route === 'decline' ? 'cant-help' : r.verdict;
+    const reply = await draftIntakeReply(gemini, {
+      customerText: r.customerText,
+      mediaCount: r.mediaCount,
+      photoNotes: r.photoNotes,
+      exemplars: pickExemplars(INTAKE_EXEMPLARS, 6, seed),
+      verdict,
+      reason: r.reason,
+      question: r.question,
+      referrals: r.referrals,
+    });
+    kind = verdict === 'cant-help' ? "CAN'T HELP (kind decline)" : verdict === 'need-info' ? 'NEEDS ONE ANSWER FIRST' : 'FIRST-TOUCH INTAKE';
+    gateFail = reply ? gateIntake(reply, r.customerText, r.mediaCount, verdict) : 'generation failed';
+    draft = gateFail ? intakeFallback(r.mediaCount, verdict) : reply!;
+    const why = verdict !== 'can-help' && r.reason ? ` Why: ${r.reason}` : '';
+    extra = `New inquiry ${ageMin} min ago, no reply yet.${photos}${why}${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}`;
+  }
+  return postIntakeNote(deps, phone, {
+    kind, draft, extra, now,
+    record: {
+      type: r.route === 'ct-routing' ? 'ct-routing' : 'intake', via: 'router', phone, outcome: 'drafted',
+      fallback: gateFail ?? null, draft, verdict: r.route === 'ct-routing' ? null : r.route === 'decline' ? 'cant-help' : r.verdict,
+    },
+  });
 }
 
 /**

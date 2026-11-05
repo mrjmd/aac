@@ -144,6 +144,15 @@ Each phase is its own commit set and its own push, with your approval.
 4. **Cut over intake, quote drafter and referrals** to the router, behind
    flags (`INBOUND_ROUTER_INTAKE`, `..._QUOTE`, `..._REFERRAL`), one at a time.
    Remove the intake sweep and `quote-trigger:*` keys once each is live.
+   Built (intake): the flag is Redis `inbound-router:live` (comma list, no
+   redeploy to flip). With `intake` live the router posts the intake, CT
+   routing and first-reply decline notes via message-drafts
+   `processRoutedIntake`: one draft-only call from the read's verdict and photo
+   descriptions, same note kinds, gates, fallbacks and state. The worker
+   clears the old intake queue; the 10-min sweep re-arms the router for any
+   customer message newer than its saved read (also retries failed reads).
+   Drafts land about 2 min after the burst settles instead of the old 10-min
+   preemption window. Quote and referral next.
 5. **Scheduling** (after cleanup step 4 moves stub/hold dispatch into
    `@aac/scheduling`).
 

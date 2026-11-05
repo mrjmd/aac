@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockDrain = vi.hoisted(() => ({
   drainFollowupQueue: vi.fn().mockResolvedValue([]),
   drainIntakeDue: vi.fn().mockResolvedValue([]),
+  dropIntakeDue: vi.fn().mockResolvedValue(0),
   sweepFollowups: vi.fn().mockResolvedValue([]),
   sweepIntake: vi.fn().mockResolvedValue([]),
   processFollowupById: vi.fn().mockResolvedValue({ outcome: 'drafted' }),
@@ -13,6 +14,15 @@ vi.mock('@aac/message-drafts', async (importOriginal) => ({
   ...mockDrain,
 }));
 
+const mockRouter = vi.hoisted(() => ({ sweepInbound: vi.fn().mockResolvedValue([]) }));
+vi.mock('@aac/inbound-router', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...mockRouter,
+}));
+
+/** Redis `inbound-router:live`, read by the worker to turn old paths off. */
+const live = vi.hoisted(() => ({ value: null as string | null }));
+
 const mockState = {
   getFirstRunAt: vi.fn().mockResolvedValue('2026-10-19T11:00:00Z'),
   setFirstRunAt: vi.fn(),
@@ -20,7 +30,7 @@ const mockState = {
 vi.mock('../lib/deps.js', () => ({
   getWorkerDeps: vi.fn(() => ({
     deps: { state: mockState },
-    redis: { set: vi.fn() },
+    redis: { set: vi.fn(), get: vi.fn(async () => live.value) },
   })),
 }));
 
@@ -40,6 +50,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.CRON_SECRET = 'cron-secret';
   process.env.WORKER_SHARED_SECRET = 'worker-secret';
+  live.value = null;
 });
 
 describe('auth', () => {
@@ -75,7 +86,20 @@ describe('behavior', () => {
     await sweep(req({ authorization: 'Bearer cron-secret' }));
     expect(mockDrain.sweepFollowups).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ firstRun: false }));
     expect(mockDrain.sweepIntake).toHaveBeenCalledTimes(1);
+    expect(mockRouter.sweepInbound).not.toHaveBeenCalled();
     expect(mockState.setFirstRunAt).not.toHaveBeenCalled();
+  });
+
+  it('router owns intake (inbound-router:live): tick clears the old queue, sweep re-arms the router', async () => {
+    live.value = 'intake';
+    await tick(req({ authorization: 'Bearer cron-secret' }));
+    expect(mockDrain.drainFollowupQueue).toHaveBeenCalledTimes(1);
+    expect(mockDrain.drainIntakeDue).not.toHaveBeenCalled();
+    expect(mockDrain.dropIntakeDue).toHaveBeenCalledTimes(1);
+    await sweep(req({ authorization: 'Bearer cron-secret' }));
+    expect(mockDrain.sweepFollowups).toHaveBeenCalledTimes(1);
+    expect(mockDrain.sweepIntake).not.toHaveBeenCalled();
+    expect(mockRouter.sweepInbound).toHaveBeenCalledTimes(1);
   });
 
   it('draft-followup acks 202 immediately and still runs the draft', async () => {

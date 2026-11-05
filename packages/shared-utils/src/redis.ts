@@ -327,6 +327,8 @@ export const keys = {
 
   /** 'off' | 'shadow'. Unset = off (settled bursts cleared unread). */
   inboundRouterMode: 'inbound-router:mode' as const,
+  /** Routes the router owns (phase 4), comma list of intake | quote | referral. Each replaces an old path. */
+  inboundRouterLive: 'inbound-router:live' as const,
 
   /** Shadow decisions, newest first (LPUSH + LTRIM 500): what the router would do next to what the old paths had done. */
   inboundShadowLog: 'inbound:shadow' as const,

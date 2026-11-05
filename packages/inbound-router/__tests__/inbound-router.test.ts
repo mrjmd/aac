@@ -1,9 +1,18 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
+vi.mock('@aac/message-drafts', async (orig) => ({
+  ...(await orig<typeof import('@aac/message-drafts')>()),
+  processRoutedIntake: vi.fn(),
+}));
+import { processRoutedIntake, type DraftDeps } from '@aac/message-drafts';
 import {
+  act,
   burstContent,
   decide,
+  liveRoutes,
+  routedIntake,
+  sweepInbound,
   parseRead,
   routePhone,
   rulesForRead,
@@ -60,8 +69,19 @@ class MiniRedis {
     for (const f of fields) if (this.hashes.get(key)?.delete(f)) n++;
     return n;
   }
-  async zadd(key: string, m: { score: number; member: string }): Promise<number> {
+  async hsetnx(key: string, field: string, value: unknown): Promise<number> {
+    if (this.hashes.get(key)?.has(field)) return 0;
+    await this.hset(key, { [field]: value });
+    return 1;
+  }
+  async zadd(
+    key: string,
+    a: { score: number; member: string } | { nx?: boolean },
+    b?: { score: number; member: string },
+  ): Promise<number> {
+    const m = (b ?? a) as { score: number; member: string };
     const z = this.zsets.get(key) ?? new Map();
+    if (b && (a as { nx?: boolean }).nx && z.has(m.member)) return 0;
     z.set(m.member, m.score);
     this.zsets.set(key, z);
     return 1;
@@ -478,5 +498,115 @@ describe('threadFingerprint', () => {
     const a = threadFingerprint(t([msg('m1', 'incoming', 4, 'x')]));
     expect(threadFingerprint(t([msg('m1', 'incoming', 4, 'x')]))).toBe(a);
     expect(threadFingerprint(t([msg('m1', 'incoming', 4, 'x'), msg('m2', 'incoming', 1, 'y')]))).not.toBe(a);
+  });
+});
+
+// ── phase 4: live routes ────────────────────────────────────────────────
+
+describe('live routes', () => {
+  const routed = vi.mocked(processRoutedIntake);
+  beforeEach(() => {
+    routed.mockReset();
+    routed.mockResolvedValue({ kind: 'drafted', record: {} });
+  });
+  const drafts = {} as DraftDeps;
+  const thread = {
+    messages: [msg('m1', 'incoming', 6, 'Water in my bulkhead'), msg('m2', 'incoming', 5, '', 2)],
+    calls: [{ id: 'c1', direction: 'incoming', duration: 0, createdAt: new Date(NOW - 8 * 60_000).toISOString() }],
+    voicemails: new Map([['c1', 'Hi, bulkhead leaks, call me']]),
+  } as unknown as Thread;
+  const ctx = (routes: Array<{ route: string; why: string }>, state = st()) => ({
+    read: read({ photos: { 'm2:0': 'block wall, wet', 'm2:1': 'puddle' } }, { verdict: 'cant-help', reason: 'leaking block', referralIds: ['air-guardian'] }),
+    thread,
+    state,
+    routes: routes as never,
+    referrals: new Map(REFERRALS.map((r) => [r.id, r])),
+    burstFromMs: NOW - 8 * 60_000,
+  });
+
+  it('liveRoutes parses the comma list and ignores unknown names', async () => {
+    const { deps, redis } = makeDeps({ messages: [] });
+    expect([...(await liveRoutes(deps))]).toEqual([]);
+    await redis.set(keys.inboundRouterLive, 'intake, bogus,quote');
+    expect([...(await liveRoutes(deps))]).toEqual(['intake', 'quote']);
+  });
+
+  it('routedIntake carries the texts, voicemail, photo descriptions oldest first, referral numbers, and the burst start', () => {
+    const r = routedIntake('decline', ctx([]).read, thread, ctx([]).referrals, NOW - 8 * 60_000);
+    expect(r).toMatchObject({
+      route: 'decline',
+      verdict: 'cant-help',
+      referrals: ['Air Guardian ((508) 355-0044)'],
+      customerText: 'Water in my bulkhead\n[voicemail transcript] Hi, bulkhead leaks, call me',
+      mediaCount: 2,
+      photoNotes: ['block wall, wet', 'puddle'],
+      inquiryAt: NOW - 8 * 60_000,
+    });
+  });
+
+  it('intake live: intake, CT routing and a first-reply decline go to intake; nothing else does', async () => {
+    const { deps } = makeDeps({ messages: [] });
+    deps.drafts = drafts;
+    const live = new Set(['intake'] as const);
+    expect(await act(deps, PHONE, live, ctx([{ route: 'intake', why: '' }, { route: 'quote', why: '' }]))).toEqual([
+      { route: 'intake', outcome: 'drafted' },
+    ]);
+    await act(deps, PHONE, live, ctx([{ route: 'ct-routing', why: '' }]));
+    await act(deps, PHONE, live, ctx([{ route: 'decline', why: '' }]));
+    expect(routed.mock.calls.map((c) => c[2].route)).toEqual(['intake', 'ct-routing', 'decline']);
+
+    routed.mockClear();
+    // a decline after Matt has engaged is not intake's; quote/scheduling aren't live
+    expect(await act(deps, PHONE, live, ctx([{ route: 'decline', why: '' }], st({ mattEngaged: true })))).toEqual([]);
+    expect(await act(deps, PHONE, live, ctx([{ route: 'quote', why: '' }, { route: 'scheduling', why: '' }]))).toEqual([]);
+    expect(await act(deps, PHONE, new Set(), ctx([{ route: 'intake', why: '' }]))).toEqual([]);
+    expect(routed).not.toHaveBeenCalled();
+  });
+
+  it('tick with intake live: drafts, logs what it did; a retry re-arms without another read', async () => {
+    const messages = [msg('m1', 'incoming', 4, 'Water coming in my bulkhead'), msg('m2', 'incoming', 3, '', 2)];
+    const { deps, redis, prompts } = makeDeps({ messages, answer: ANSWER });
+    deps.drafts = drafts;
+    redis.strings.delete(keys.inboundRouterMode);
+    await redis.set(keys.inboundRouterLive, 'intake');
+    await redis.zadd(keys.inboundDue, { score: NOW - 1000, member: PHONE });
+    await redis.hset(keys.inboundFirst, { [PHONE]: NOW - 4 * 60_000 });
+
+    routed.mockResolvedValueOnce({ kind: 'retry-later', reason: 'no-quo-contact' });
+    const first = await runInboundTick(deps);
+    expect(first.mode).toBe('live');
+    expect(first.entries[0].acted).toEqual([{ route: 'decline', outcome: 'retry-later', reason: 'no-quo-contact' }]);
+    expect(await redis.zscore(keys.inboundDue, PHONE)).toBe(NOW + 2 * 60_000);
+    expect(await redis.hget(keys.inboundFirst, PHONE)).toBe(NOW - 4 * 60_000);
+
+    deps.now = () => NOW + 2 * 60_000;
+    const second = await runInboundTick(deps);
+    expect(second.entries[0]).toMatchObject({ outcome: 'unchanged', acted: [{ route: 'decline', outcome: 'drafted' }] });
+    expect(prompts).toHaveLength(1);
+    expect(await redis.zscore(keys.inboundDue, PHONE)).toBeNull();
+  });
+
+  it('sweepInbound arms phones with a customer message newer than the saved read, and nothing else', async () => {
+    const at = (m: number) => new Date(NOW - m * 60_000).toISOString();
+    const { deps, redis } = makeDeps({ messages: [] });
+    const conv = (p: string, lastMin: number) => ({ participants: [p], lastActivityAt: at(lastMin) });
+    const threads: Record<string, Array<{ direction: string; createdAt: string }>> = {
+      '+15085550001': [{ direction: 'incoming', createdAt: at(30) }], // missed webhook, never read
+      '+15085550002': [{ direction: 'incoming', createdAt: at(90) }, { direction: 'outgoing', createdAt: at(20) }], // Matt texted after the read
+      '+15085550003': [{ direction: 'incoming', createdAt: at(40) }], // read since
+    };
+    deps.quo = {
+      listConversations: async () => ({
+        data: [conv('+15085550001', 30), conv('+15085550002', 20), conv('+15085550003', 40), conv('+16177660151', 5)],
+      }),
+      listMessages: async ({ participantE164 }: { participantE164: string }) => ({ data: threads[participantE164] ?? [] }),
+      listCalls: async () => ({ data: [] }),
+    } as unknown as RouterDeps['quo'];
+    await redis.set(keys.inboundRead('+15085550002'), JSON.stringify(read({ at: at(60) })));
+    await redis.set(keys.inboundRead('+15085550003'), JSON.stringify(read({ at: at(35) })));
+
+    expect(await sweepInbound(deps)).toEqual(['+15085550001']);
+    expect(await redis.zscore(keys.inboundDue, '+15085550001')).toBe(NOW);
+    expect(await redis.hget(keys.inboundFirst, '+15085550001')).toBe(NOW - 30 * 60_000);
   });
 });

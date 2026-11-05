@@ -42,7 +42,9 @@ Plain Vercel Serverless Functions (no framework) that run the
   (`@aac/inbound-router`, docs/plans/inbound-router.md). Off by default: clears
   settled bursts (`inbound:due`, armed by the Quo webhook) unread. Redis
   `inbound-router:mode` = `shadow` reads each one once and logs the routes it
-  would take to `inbound:shadow`. Posts nothing.
+  would take to `inbound:shadow`. Routes in Redis `inbound-router:live` run
+  their drafters; with `intake` live, `/api/tick` clears the old intake queue
+  and `/api/sweep` re-arms the router instead of sweeping intake.
 - `api/health.ts` — liveness.
 
 ## Rules

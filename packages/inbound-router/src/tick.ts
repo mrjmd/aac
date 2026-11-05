@@ -1,18 +1,20 @@
 /**
  * Per-minute router pass (worker /api/inbound-tick). Off by default: it only
- * clears settled bursts so the settle clock never carries a stale burst start
- * into phase 4. Redis `inbound-router:mode` = 'shadow' turns on the shadow
- * pass: for each settled burst it reads the thread once, decides the routes,
- * and logs them to `inbound:shadow` next to what the old paths had done. It
- * posts no notes and touches no drafter state; the old paths run unchanged.
+ * clears settled bursts so the settle clock never carries a stale burst start.
+ * Redis `inbound-router:mode` = 'shadow' reads each settled burst once,
+ * decides the routes, and logs them to `inbound:shadow` next to what the old
+ * paths had done, posting nothing. Routes listed in `inbound-router:live`
+ * (phase 4) also run their drafters (act.ts); the worker turns the matching
+ * old path off.
  */
 import { keys } from '@aac/shared-utils/redis';
 import { AUTO_RE, isDone, VOICEMAIL_GRACE_MIN } from '@aac/message-drafts';
 import { getOpenQuote, INTERNAL, POST_SEND_RE, QUOTE_PROMISE_RE } from '@aac/quote-drafter';
 import { decide } from './decide.js';
+import { act, liveRoutes } from './act.js';
 import { loadThread, readInbound, type Thread } from './read.js';
 import { SETTLE_CAP_MS, SETTLE_QUIET_MS } from '@aac/shared-utils/inbound-settle';
-import type { RouterDeps, ShadowEntry, ThreadState } from './types.js';
+import type { LiveRoute, RouterDeps, ShadowEntry, ThreadState } from './types.js';
 
 /** Bursts read per tick; the rest wait a minute (each read is one Gemini call with photos). */
 export const MAX_READS_PER_TICK = 4;
@@ -20,10 +22,13 @@ export const MAX_READS_PER_TICK = 4;
 const LOCK_TTL_S = 900;
 const SHADOW_LOG_MAX = 500;
 
-export type RouterMode = 'off' | 'shadow';
+/** live = at least one route in `inbound-router:live`; reads happen in shadow and live. */
+export type RouterMode = 'off' | 'shadow' | 'live';
 
-export async function resolveRouterMode(deps: RouterDeps): Promise<RouterMode> {
-  return (await deps.redis.get<string>(keys.inboundRouterMode)) === 'shadow' ? 'shadow' : 'off';
+export async function resolveRouterMode(deps: RouterDeps): Promise<{ mode: RouterMode; live: Set<LiveRoute> }> {
+  const live = await liveRoutes(deps);
+  if (live.size) return { mode: 'live', live };
+  return { mode: (await deps.redis.get<string>(keys.inboundRouterMode)) === 'shadow' ? 'shadow' : 'off', live };
 }
 
 /** What the thread says has already happened. `burstFromMs` bounds "this burst". */
@@ -68,8 +73,13 @@ export function burstContent(thread: Thread, burstFromMs: number, nowMs: number)
   return lastMissed && nowMs - lastMissed < VOICEMAIL_GRACE_MIN * 60_000 ? 'waiting' : 'none';
 }
 
-/** Read, decide and log one settled phone. Never throws. */
-export async function routePhone(deps: RouterDeps, phone: string, burstFromMs: number): Promise<ShadowEntry> {
+/** Read, decide, run the live routes, and log one settled phone. Never throws. */
+export async function routePhone(
+  deps: RouterDeps,
+  phone: string,
+  burstFromMs: number,
+  live: Set<LiveRoute> = new Set(),
+): Promise<ShadowEntry> {
   const now = deps.now?.() ?? Date.now();
   const at = new Date(now).toISOString();
   if (INTERNAL.has(phone) || !phone.startsWith('+')) return { at, phone, outcome: 'skipped', detail: 'not a customer line' };
@@ -92,6 +102,8 @@ export async function routePhone(deps: RouterDeps, phone: string, burstFromMs: n
       openQuote: !!openQuote,
     });
     const referrals = new Map((await deps.canHelp.referrals()).map((r) => [r.id, r]));
+    const routes = decide(read, state);
+    const acted = live.size ? await act(deps, phone, live, { read, thread: outcome.thread, state, routes, referrals, burstFromMs }) : undefined;
     return {
       at,
       phone,
@@ -111,8 +123,9 @@ export async function routePhone(deps: RouterDeps, phone: string, burstFromMs: n
         entities: read.entities,
       },
       state,
-      routes: decide(read, state),
+      routes,
       legacy,
+      ...(acted ? { acted } : {}),
     };
   } catch (err) {
     return { at, phone, outcome: 'failed', detail: (err as Error).message };
@@ -131,7 +144,7 @@ export interface RouterTickSummary {
  * the clock for the next one; it is never dropped.
  */
 export async function runInboundTick(deps: RouterDeps): Promise<RouterTickSummary> {
-  const mode = await resolveRouterMode(deps);
+  const { mode, live } = await resolveRouterMode(deps);
   const now = deps.now?.() ?? Date.now();
   const due = await deps.redis.zrange<string[]>(keys.inboundDue, 0, now, { byScore: true });
   if (mode === 'off') {
@@ -152,12 +165,15 @@ export async function runInboundTick(deps: RouterDeps): Promise<RouterTickSummar
       await deps.redis.zrem(keys.inboundDue, phone);
       await deps.redis.hdel(keys.inboundFirst, phone);
       const burstFrom = Number.isFinite(firstMs) && firstMs > 0 ? firstMs : now - SETTLE_CAP_MS;
-      const entry = await routePhone(deps, phone, burstFrom);
-      if (entry.outcome === 'waiting') {
-        // Check again shortly; keep the burst start so the read covers it all.
+      const entry = await routePhone(deps, phone, burstFrom, live);
+      // Voicemail still transcribing, or a drafter asked to retry (no Quo
+      // contact yet): check again shortly, keeping the burst start. A retry
+      // re-decides from the saved read without another Gemini call.
+      const retry = entry.acted?.some((a) => a.outcome === 'retry-later');
+      if (entry.outcome === 'waiting' || retry) {
         await deps.redis.hset(keys.inboundFirst, { [phone]: burstFrom });
         await deps.redis.zadd(keys.inboundDue, { score: now + SETTLE_QUIET_MS, member: phone });
-        continue;
+        if (entry.outcome === 'waiting') continue;
       }
       entries.push(entry);
       try {

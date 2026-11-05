@@ -4,7 +4,9 @@
  * Off by default (docs/plans/inbound-router.md): clears settled bursts
  * unread. Redis `inbound-router:mode` = 'shadow' (no redeploy) reads each
  * settled customer burst once and logs which drafters it would run to
- * `inbound:shadow`, next to what the old paths did. Posts nothing either way.
+ * `inbound:shadow`, next to what the old paths did, posting nothing. Routes
+ * in Redis `inbound-router:live` (phase 4) also run their drafters; /api/tick
+ * and /api/sweep turn the matching old path off.
  * Cheap when idle: one GET (mode) + one ZRANGEBYSCORE.
  */
 import { createLogger } from '@aac/shared-utils/logger';
@@ -26,14 +28,16 @@ export async function GET(request: Request): Promise<Response> {
       quo: deps.quo,
       gemini: deps.gemini,
       canHelp: new CanHelpStore(redis),
+      drafts: deps,
     });
     for (const e of summary.entries) {
-      log.info('inbound shadow', {
+      log.info('inbound route', {
         phone: e.phone,
         outcome: e.outcome,
         routes: e.routes?.map((r) => r.route).join(',') ?? null,
         verdict: e.read?.verdict ?? null,
         legacyIntake: e.legacy?.intake ?? null,
+        acted: e.acted?.map((a) => `${a.route}:${a.outcome}${a.reason ? `(${a.reason})` : ''}`).join(',') ?? null,
         detail: e.detail ?? null,
       });
     }
