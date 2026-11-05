@@ -389,4 +389,27 @@ describe('buildQuoteDraftPrompt', () => {
     expect(userPrompt).toContain('OUT 2026-10-14T09:05: Can you send photos?');
     expect(userPrompt).toContain('PHOTOS: 2 attached');
   });
+
+  it('with the /referrals block, declines name who to call; without it the prompt is unchanged', () => {
+    const base = {
+      customerName: 'Jane Doe',
+      phone: '+16175550100',
+      today: '2026-11-05',
+      rulesetText: 'SECTION 0',
+      itemNames: ITEM_NAMES,
+      thread: [{ direction: 'incoming' as const, at: '2026-11-05T09:00:00Z', text: 'brick wall leaks' }],
+      photoCount: 0,
+    };
+    const without = buildQuoteDraftPrompt(base).systemPrompt;
+    expect(without).toContain('what kind of company to call instead');
+    expect(without).not.toContain("WE CAN'T HELP WITH");
+
+    const block = "WE CAN'T HELP WITH (owner's standing rules):\n- Brick → refer: MRW Masonry (617) 412-7696";
+    const withBlock = buildQuoteDraftPrompt({ ...base, canHelpBlock: block }).systemPrompt;
+    expect(withBlock).toContain('- Brick → refer: MRW Masonry (617) 412-7696');
+    expect(withBlock).toContain("the WE CAN'T HELP WITH list above");
+    expect(withBlock).toContain('names who to call with their phone number');
+    expect(withBlock).toContain('straight decline');
+    expect(withBlock).not.toContain('what kind of company to call instead');
+  });
 });

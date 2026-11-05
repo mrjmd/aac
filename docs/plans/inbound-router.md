@@ -106,11 +106,14 @@ of the newest message id so a re-run is a no-op):
 
 ### One decline source
 
-- Move the seed defaults into `@aac/quoting` (`DEFAULT_CAN_HELP_RULES`,
-  `DEFAULT_REFERRALS`) so "empty = code defaults" is true; the seed script
-  imports them.
-- Delete rule 11 from `llm-ruleset.md` section 0 and the hard-coded decline
-  text in `draft-quote.ts`; the ruleset keeps pricing only.
+- The quote drafter reads `CanHelpStore.block()` into its prompt (done in
+  phase 2), so a rule edited on `/referrals` reaches both drafters.
+- No code-default fallback: the store is seeded and edited on `/referrals`,
+  and a fallback would resurrect rules the owner deleted. The Redis key
+  comments now say so.
+- `llm-ruleset.md` rule 11 keeps its guardrails (bowing over 1 inch, drainage
+  first, fieldstone needs a site visit); they agree with the store. Folding
+  them into the store happens with the router's read (phase 4).
 
 ## Rollout
 
@@ -120,8 +123,7 @@ Each phase is its own commit set and its own push, with your approval.
    webhook after the response (`defer()`), so a slow Gemini call can never
    again get the webhook auto-disabled (10/19 incident). Same writes, later.
    Middleware: minimal, unit tested.
-2. **One decline source.** Defaults into code, quote drafter reads
-   `CanHelpStore`. This changes quote-drafter decline wording (it starts naming
+2. **One decline source.** Quote drafter reads `CanHelpStore`. This changes quote-drafter decline wording (it starts naming
    referrals), so you see before/after on recent real leads first.
 3. **Router in shadow.** Webhook records events and the settle timer; the
    worker reads and decides, and logs what it *would* do next to what the old

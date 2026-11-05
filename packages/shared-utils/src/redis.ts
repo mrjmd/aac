@@ -292,9 +292,9 @@ export const keys = {
   /** HASH: person id → JSON Person (agenda topics, past conversations, tagged items, facts). No TTL. */
   ccPeople: 'cc:people' as const,
 
-  /** HASH: referral id → JSON Referral (who we send out-of-scope work to). Empty = code defaults. No TTL. */
+  /** HASH: referral id → JSON Referral (who we send out-of-scope work to). Seeded by tools/src/can-help/seed.ts, edited on the command center /referrals page. No TTL. */
   canHelpReferrals: 'can-help:referrals' as const,
-  /** HASH: rule id → JSON StandingRule (owner policies, optionally time-bound). Empty = code defaults. No TTL. */
+  /** HASH: rule id → JSON StandingRule (owner policies, optionally time-bound). Seeded by tools/src/can-help/seed.ts, edited on /referrals; the one decline source for both drafters. No TTL. */
   canHelpRules: 'can-help:rules' as const,
 
   // ── Scheduling (SchedulingDirective Pipeline) ──────────────────────

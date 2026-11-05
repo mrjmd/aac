@@ -124,6 +124,8 @@ export function buildQuoteDraftPrompt(args: {
   photoContext?: string;
   /** Section V visual-indicators ruleset (draft until owner sign-off). */
   visualRulesetText?: string;
+  /** Owner's standing decline rules + referral list (`CanHelpStore.block`), the one decline source. */
+  canHelpBlock?: string;
 }): { systemPrompt: string; userPrompt: string } {
   const systemPrompt = `You draft quotes for Attack A Crack, a foundation-repair company in Quincy MA. Matt is the owner. You are given a customer SMS thread (OUT = Matt, IN = customer)${args.photoCount > 0 ? ` and ${args.photoCount} photos the customer texted in` : ''}. Today is ${args.today}.
 
@@ -131,7 +133,7 @@ Draft the estimate Matt would write, as line items. PRICING AUTHORITY is SECTION
 
 RULESET:
 ${args.rulesetText}
-${args.visualRulesetText ? `\nVISUAL SCOPE RULESET (how to read photos into scope — item selection and indication thresholds; prices in it are historical, Section 0 wins):\n${args.visualRulesetText}\n` : ''}
+${args.canHelpBlock ? `\n${args.canHelpBlock}\n` : ''}${args.visualRulesetText ? `\nVISUAL SCOPE RULESET (how to read photos into scope — item selection and indication thresholds; prices in it are historical, Section 0 wins):\n${args.visualRulesetText}\n` : ''}
 Each line's "item" MUST be one of these QBO item names (exact spelling):
 ${args.itemNames.join(' | ')}
 
@@ -143,7 +145,7 @@ Hard rules:
 - Do NOT include a Guarantee line — it is appended automatically.
 - One line per service with qty (e.g. 3 cracks = Crack Repair qty 3), not three separate lines — except cracks in different Section 0 rule-6 length tiers (full / partial / tiny add-on), which are separate lines at their tier price.
 - Before pricing any wall crack, decide its Section 0 rule-6 tier (full vs partial vs tiny add-on) from the photos and thread. Never price a partial crack at the full-crack price.
-- CAN'T HELP: if NOTHING the customer asked for is work AAC does (Section 0 rule 11 guardrails and declines, e.g. a leaking cinder block wall or block bulkhead, or any decline in the visual ruleset), return "lines": [] and list every ask in scope_accounting with quoted_item null, a reason, and a kind suggested_reply that says plainly we can't help with this and, where one fits, what kind of company to call instead. Never invent a line to avoid an empty quote.
+- CAN'T HELP: if NOTHING the customer asked for is work AAC does (${args.canHelpBlock ? "the WE CAN'T HELP WITH list above, " : ''}Section 0 rule 11 guardrails and declines, e.g. a leaking cinder block wall or block bulkhead, or any decline in the visual ruleset), return "lines": [] and list every ask in scope_accounting with quoted_item null, a reason, and a kind suggested_reply that says plainly we can't help with this${args.canHelpBlock ? ' and, when a referral on that list fits, names who to call with their phone number; when none fits, it is a straight decline (never a vague "a contractor" or "what kind of company")' : ' and, where one fits, what kind of company to call instead'}. Never invent a line to avoid an empty quote.
 - Line descriptions are NOT used on the estimate — each item's standard QBO description template is inserted verbatim. Instead give each line a "scope_note": 2-6 words naming the exact thing/location it covers (e.g. "bulkhead corner crack", "front flagstone landing"); it is prepended in brackets ahead of the template so the customer knows exactly what is included. You may omit "description".
 - If the thread/photos don't support a confident price (fieldstone, bowing walls, unclear scope, $4k+ complexity), set needs_site_visit true and list what's unknown in open_questions — still draft your best-guess lines.
 - If the thread mentions wall bowing or displacement over 1 inch (engineer first), drainage/grading as the root cause, or work AAC doesn't do, say so in open_questions.

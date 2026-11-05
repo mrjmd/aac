@@ -20,6 +20,7 @@ import {
   buildDescriptionLibrary,
   buildDraftPrivateNote,
   buildQuoteDraftPrompt,
+  CanHelpStore,
   areaSituationText,
   draftTotal,
   formatPhotoContext,
@@ -356,6 +357,14 @@ export async function draftOne(deps: DrafterDeps, opts: DraftOneOptions): Promis
     }
   }
 
+  // ── the one decline source: owner's standing rules + referrals (/referrals)
+  let canHelpBlock: string | undefined;
+  try {
+    canHelpBlock = await new CanHelpStore(redis).block(run.today);
+  } catch (err) {
+    log(`  ⚠ can-help rules failed (${(err as Error).message.slice(0, 100)}) — drafting without them`);
+  }
+
   // ── draft with Gemini
   const { systemPrompt, userPrompt } = buildQuoteDraftPrompt({
     customerName: resolvedName,
@@ -367,6 +376,7 @@ export async function draftOne(deps: DrafterDeps, opts: DraftOneOptions): Promis
     photoCount: imageParts.length,
     photoContext,
     visualRulesetText: assets.sectionVText,
+    canHelpBlock,
   });
 
   const raw = await generateWithRetry(gemini, userPrompt, {
@@ -381,7 +391,9 @@ export async function draftOne(deps: DrafterDeps, opts: DraftOneOptions): Promis
   if (isFullDecline(parsed)) {
     for (const a of parsed.scopeAccounting) log(`    ✗ "${a.request}" CAN'T HELP: ${a.reason ?? '(no reason)'}`);
     // Never touches QBO, even a bot-owned draft: Matt decides what to do with it.
-    if (!opts.dryRun) await postDraftNote(quo, log, phone, buildDeclineNote({ asks: parsed.scopeAccounting }));
+    const declineNote = buildDeclineNote({ asks: parsed.scopeAccounting });
+    if (opts.dryRun) log(`  [dry-run] would post decline note:\n${declineNote.replace(/^/gm, '    | ')}`);
+    else await postDraftNote(quo, log, phone, declineNote);
     return { phone, customer: resolvedName, outcome: opts.dryRun ? 'dry-run' : 'declined', detail: "can't help: no quote drafted" };
   }
   const validation = validateQuoteDraft(parsed, run.itemNames);

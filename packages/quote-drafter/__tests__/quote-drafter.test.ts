@@ -304,6 +304,62 @@ describe('draftOne guards', () => {
   });
 });
 
+describe('draftOne decline rules (one decline source, inbound router phase 2)', () => {
+  it('drafts with the /referrals rules and posts a decline naming the referral, never touching QBO', async () => {
+    const { deps, redis } = makeDeps();
+    await redis.hset(keys.canHelpRules, {
+      'leaking-block': { id: 'leaking-block', kind: 'decline', text: 'Leaking cinder block walls', referralIds: ['air-guardian'], since: '2026-01-01' },
+    });
+    await redis.hset(keys.canHelpReferrals, {
+      'air-guardian': { id: 'air-guardian', name: 'Air Guardian', phone: '(508) 355-0044', sends: 'Exterior waterproofing' },
+    });
+    (deps.qb.findCustomerByPhone as ReturnType<typeof vi.fn>).mockResolvedValue({ Id: '9', DisplayName: 'Sean Test' });
+    (deps.quo.findContactByPhone as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'c1' });
+    (deps.quo.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: [{ direction: 'incoming', createdAt: '2026-10-21T15:00:00Z', text: 'block bulkhead leaks, can you seal it?', media: [] }],
+    });
+    (deps.gemini.generateContent as ReturnType<typeof vi.fn>).mockResolvedValue(
+      JSON.stringify({
+        lines: [],
+        scope_accounting: [{
+          request: 'seal the block bulkhead',
+          quoted_item: null,
+          reason: 'leaking cinder block',
+          suggested_reply: 'Inside injection cannot stop water in hollow block; Air Guardian at (508) 355-0044 can help.',
+        }],
+        confidence: 'high',
+        needs_site_visit: false,
+        reasoning: 'r',
+        open_questions: [],
+      }),
+    );
+    const record = await draftOne(deps, draftOpts());
+    expect(record.outcome).toBe('declined');
+    const opts = (deps.gemini.generateContent as ReturnType<typeof vi.fn>).mock.calls[0][1] as { systemPrompt: string };
+    expect(opts.systemPrompt).toContain("WE CAN'T HELP WITH");
+    expect(opts.systemPrompt).toContain('Leaking cinder block walls → refer: Air Guardian (508) 355-0044');
+    expect(opts.systemPrompt).toContain('names who to call with their phone number');
+    expect(deps.quo.createContactNote).toHaveBeenCalledWith('c1', expect.stringContaining('Air Guardian at (508) 355-0044'));
+    expect(deps.qb.createEstimate).not.toHaveBeenCalled();
+  });
+
+  it('drafts without the rules when the store read fails', async () => {
+    const { deps, redis, logs } = makeDeps();
+    vi.spyOn(redis, 'hgetall').mockRejectedValue(new Error('redis down'));
+    (deps.qb.findCustomerByPhone as ReturnType<typeof vi.fn>).mockResolvedValue({ Id: '9', DisplayName: 'Sean Test' });
+    (deps.quo.listMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: [{ direction: 'incoming', createdAt: '2026-10-21T15:00:00Z', text: 'hello', media: [] }],
+    });
+    (deps.gemini.generateContent as ReturnType<typeof vi.fn>).mockResolvedValue(
+      JSON.stringify({ lines: [], scope_accounting: [{ request: 'x', quoted_item: null, reason: 'r', suggested_reply: 'no' }], confidence: 'low', needs_site_visit: false, reasoning: 'r', open_questions: [] }),
+    );
+    await draftOne(deps, draftOpts());
+    expect(logs.some((l) => l.includes('can-help rules failed (redis down)'))).toBe(true);
+    const opts = (deps.gemini.generateContent as ReturnType<typeof vi.fn>).mock.calls[0][1] as { systemPrompt: string };
+    expect(opts.systemPrompt).not.toContain("WE CAN'T HELP WITH");
+  });
+});
+
 // ── trigger loop ───────────────────────────────────────────────────────
 
 describe('runTick', () => {
