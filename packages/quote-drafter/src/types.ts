@@ -10,6 +10,7 @@ import type { QuoClient } from '@aac/api-clients/quo';
 import type { GeminiClient } from '@aac/api-clients/gemini';
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import type { GoogleDriveClient } from '@aac/api-clients/google-drive';
+import { INTERNAL_PHONES } from '@aac/shared-utils/phone';
 import type { ExemplarLibraryEntry } from '@aac/quoting';
 
 // ── trigger events (shape produced by middleware's Quo webhook) ────────
@@ -31,7 +32,7 @@ export interface TriggerEvent {
 export const DEBOUNCE_MS = 15 * 60 * 1000;
 
 /** Internal numbers that must never trigger a customer quote analysis. */
-export const INTERNAL = new Set(['+18573126761', '+16177660151', '+16176681677']);
+export const INTERNAL = new Set([...INTERNAL_PHONES, '+18573126761', '+16176681677']);
 
 export const QUOTE_PROMISE_RE =
   /\b(quote|estimate|price|write (it|that|this) up|get (that|you|a) (quote|estimate|price|number))\b/i;

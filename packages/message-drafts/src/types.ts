@@ -13,13 +13,15 @@
 import type { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import type { QuoClient } from '@aac/api-clients/quo';
 import type { GeminiClient } from '@aac/api-clients/gemini';
+import { INTERNAL_PHONES } from '@aac/shared-utils/phone';
 import type { DraftState } from './state.js';
 
 export const OWN_LINE = '+16176681677';
 /** Luc runs the CT office; Matt texts him off-platform. */
 export const LUC_LINE = '860-573-8760';
 export const CT_AREA_CODES = new Set(['860', '203', '475', '959']);
-export const INTERNAL = new Set(['+18573126761', '+16177660151', OWN_LINE]);
+/** Never a customer: the shared internal list (agent line, Ed), Mike's cell, our own line. */
+export const INTERNAL = new Set([...INTERNAL_PHONES, '+18573126761', OWN_LINE]);
 
 /** Matt's preemption window (owner-set 2026-10-19; was 15 in the analysis). */
 export const INTAKE_REPLY_WINDOW_MIN = 10;
