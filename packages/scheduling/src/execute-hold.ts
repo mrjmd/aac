@@ -28,9 +28,12 @@
  * isn't worth it — a missed hold is cheap, a spurious one erodes trust.
  */
 
-import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
+import { streetKey } from '@aac/customers';
 import { createLogger } from '@aac/shared-utils/logger';
+import { normalizePhone } from '@aac/shared-utils/phone';
 import { STUB_DEFAULT_HOURS } from './execute-stub.js';
+import { nameTokensForMatch, summaryMatchesCustomer } from './name-match.js';
 import type { KnownSlot, SchedulingDirective } from './types.js';
 import { isManualSchedule } from './types.js';
 
@@ -79,6 +82,42 @@ export type ExecuteHoldResult =
   | { status: 'created'; eventId: string; htmlLink: string }
   | { status: 'skipped'; reason: 'no_slot' | 'slot_in_past' | 'duplicate_event' };
 
+export interface HoldOwner {
+  name: string;
+  phone?: string | null;
+  address?: string | null;
+}
+
+/**
+ * Does this HOLD belong to the customer? Any of: the same phone on its
+ * `Customer-Phone:` line; every token of the shorter name (≥2 tokens) in
+ * the other ("Ann Joffre" vs "Ann and Paul Joffre"); or the same house
+ * number + street + unit ("Unit Number 35" vs "Unit 35"). Two household
+ * members texting from different phones still release each other's hold.
+ */
+export function holdBelongsTo(
+  event: Pick<CalendarEvent, 'summary' | 'description' | 'location'>,
+  owner: HoldOwner,
+): boolean {
+  if (!event.summary?.startsWith(HOLD_TITLE_PREFIX)) return false;
+
+  const ownerPhone = normalizePhone(owner.phone);
+  const line = event.description
+    ?.split('\n')
+    .find((l) => l.startsWith(HOLD_CUSTOMER_PHONE_LABEL));
+  if (ownerPhone && line && normalizePhone(line.slice(HOLD_CUSTOMER_PHONE_LABEL.length)) === ownerPhone) {
+    return true;
+  }
+
+  const a = nameTokensForMatch(event.summary.slice(HOLD_TITLE_PREFIX.length));
+  const b = nameTokensForMatch(owner.name);
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  if (shorter.length >= 2 && shorter.every((t) => longer.includes(t))) return true;
+
+  const ownerAddr = owner.address ? streetKey(owner.address) : null;
+  return !!ownerAddr && !!event.location && streetKey(event.location) === ownerAddr;
+}
+
 /**
  * Extract the offered-but-unconfirmed slot from a directive, if any.
  * Mirrors getActionableSlot: that one returns agreed slots, this one
@@ -124,17 +163,15 @@ export async function executeHoldEvent(
     timeMax: new Date(Math.max(dupMaxMs, nowMs + HOLD_RELEASE_LOOKAHEAD_MS)).toISOString(),
     maxResults: 500,
   });
-  const nameLc = customerName.trim().toLowerCase();
-  const matches = nameLc.length > 0
-    ? nearby.filter((e) => e.summary?.toLowerCase().includes(nameLc))
-    : [];
-  const holds = matches.filter((e) => e.summary?.startsWith(HOLD_TITLE_PREFIX));
+  const owner = { name: customerName, phone: directive.customerPhone, address: customerAddress };
+  const holds = nearby.filter((e) => holdBelongsTo(e, owner));
 
   // Non-hold events (stubs, hand-made bookings) only block within ±24h of
   // the slot — a customer with an unrelated event next month is not a dup.
-  const existing = matches.find(
+  const existing = nearby.find(
     (e) =>
       !e.summary?.startsWith(HOLD_TITLE_PREFIX)
+      && summaryMatchesCustomer(e.summary, customerName)
       && new Date(e.end).getTime() > dupMinMs
       && new Date(e.start).getTime() < dupMaxMs,
   );

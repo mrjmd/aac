@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { GoogleCalendarClient, CalendarEvent } from '@aac/api-clients/google-calendar';
 import {
+  holdBelongsTo,
   executeHoldEvent,
   getOfferedSlot,
   HOLD_COLOR_ID,
@@ -307,5 +308,31 @@ describe('executeHoldEvent — suggestedSlot variant (quote_approved suggestion 
       customerName: 'Jane Smith',
     });
     expect(createEvent.mock.calls[0][0].description).toContain('Time OFFERED to Jane Smith');
+  });
+});
+
+describe('holdBelongsTo', () => {
+  const hold = {
+    summary: 'HOLD — Ann Joffre',
+    location: '12 Pine Lane, Hingham MA',
+    description: 'Time OFFERED…\nCustomer-Phone: +16175550999',
+  };
+
+  it('matches on the Customer-Phone line in any format', () => {
+    expect(holdBelongsTo(hold, { name: 'Someone Else', phone: '(617) 555-0999' })).toBe(true);
+  });
+
+  it('matches when the shorter name (≥2 tokens) is inside the longer', () => {
+    expect(holdBelongsTo(hold, { name: 'Ann and Paul Joffre' })).toBe(true);
+    expect(holdBelongsTo(hold, { name: 'Joffre' })).toBe(false);
+  });
+
+  it('matches on house number + street + unit', () => {
+    expect(holdBelongsTo(hold, { name: 'Paul', address: '12 Pine Ln, Hingham' })).toBe(true);
+    expect(holdBelongsTo(hold, { name: 'Paul', address: '14 Pine Ln, Hingham' })).toBe(false);
+  });
+
+  it('never claims a non-HOLD event', () => {
+    expect(holdBelongsTo({ ...hold, summary: 'Ann Joffre' }, { name: 'Ann Joffre' })).toBe(false);
   });
 });

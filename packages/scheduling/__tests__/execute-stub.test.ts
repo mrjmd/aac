@@ -282,6 +282,68 @@ describe('executeStubEvent', () => {
     expect(createEvent).toHaveBeenCalledTimes(1);
   });
 
+  describe('hold ownership beyond the exact name (Joffre / Dacey misses, 11/03)', () => {
+    const later = { start: '2026-10-13T14:00:00.000Z', end: '2026-10-13T18:00:00.000Z' };
+
+    it('releases a same-phone hold under a shorter name variant', async () => {
+      const { deps, deleteEvent } = makeDeps([
+        { id: 'evt-hold', summary: 'HOLD — Ann Joffre', description: 'x\nCustomer-Phone: (617) 555-0999', ...later },
+      ]);
+      await executeStubEvent(deps, {
+        directive: makeConfirmed({ customerPhone: '+16175550999' }),
+        ...baseInput,
+        customerName: 'Ann and Paul Joffre',
+      });
+      expect(deleteEvent).toHaveBeenCalledWith('evt-hold');
+    });
+
+    it('releases a hold from another phone at the same address ("Unit Number 35" vs "Unit 35")', async () => {
+      const { deps, deleteEvent } = makeDeps([
+        {
+          id: 'evt-hold',
+          summary: 'HOLD — Tom Dacey',
+          location: '138 Elm Street, Unit Number 35, Kingston, MA',
+          description: 'Customer-Phone: +17815550001',
+          ...later,
+        },
+      ]);
+      await executeStubEvent(deps, {
+        directive: makeConfirmed({ customerPhone: '+17815550002' }),
+        ...baseInput,
+        customerName: 'Sarah',
+        customerAddress: '138 Elm St unit 35, Kingston MA',
+      });
+      expect(deleteEvent).toHaveBeenCalledWith('evt-hold');
+    });
+
+    it('keeps a same-surname hold with a different phone and address', async () => {
+      const { deps, deleteEvent } = makeDeps([
+        {
+          id: 'evt-hold',
+          summary: 'HOLD — Bob Smith',
+          location: '9 Oak Road, Quincy',
+          description: 'Customer-Phone: +17815550003',
+          ...later,
+        },
+      ]);
+      await executeStubEvent(deps, { directive: makeConfirmed(), ...baseInput });
+      expect(deleteEvent).not.toHaveBeenCalled();
+    });
+
+    it('a one-word "Sarah" stub is not blocked by a "Sarah Tanzi" event', async () => {
+      const { deps, createEvent } = makeDeps([
+        { id: 'evt-tanzi', summary: 'Sarah Tanzi', start: SLOT_START, end: '2026-10-06T18:00:00.000Z' },
+      ]);
+      const result = await executeStubEvent(deps, {
+        directive: makeConfirmed(),
+        ...baseInput,
+        customerName: 'Sarah',
+      });
+      expect(result.status).toBe('created');
+      expect(createEvent).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('creates when nearby events are for other customers', async () => {
     const { deps, createEvent } = makeDeps([
       { id: 'evt-other', summary: 'Bob Jones — resurfacing' },

@@ -1,6 +1,6 @@
 # Booking ↔ QBO Acceptance Sync (+ stub/HOLD cleanup)
 
-Status: BUILT 2026-11-05 (sync + webhook guard; HOLD cleanup below still open).
+Status: BUILT 2026-11-05 (sync + webhook guard + HOLD cleanup).
 Owner flagged as important automation 2026-11-03.
 
 ## What shipped (2026-11-05)
@@ -53,7 +53,7 @@ Consequences:
    call, booking) as the acceptance source rather than trusting QBO's
    AcceptedDate.
 
-## Related: stub creation doesn't remove the customer's HOLD
+## Related: stub creation doesn't remove the customer's HOLD (FIXED 2026-11-05: `holdBelongsTo` in execute-hold.ts, used by both paths)
 
 `executeStubEvent` (and `execute-hold.ts`) only delete HOLDs whose title
 contains the exact customer-name string. Misses seen 2026-11-03:

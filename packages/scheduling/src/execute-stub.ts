@@ -25,7 +25,8 @@
 
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { createLogger } from '@aac/shared-utils/logger';
-import { HOLD_RELEASE_LOOKAHEAD_MS, HOLD_TITLE_PREFIX } from './execute-hold.js';
+import { holdBelongsTo, HOLD_RELEASE_LOOKAHEAD_MS, HOLD_TITLE_PREFIX } from './execute-hold.js';
+import { summaryMatchesCustomer } from './name-match.js';
 import type { EventClass, KnownSlot, SchedulingDirective } from './types.js';
 import { isAppointmentConfirmed, isManualSchedule } from './types.js';
 
@@ -149,14 +150,13 @@ export async function executeStubEvent(
     timeMax: new Date(Math.max(dupMaxMs, nowMs + HOLD_RELEASE_LOOKAHEAD_MS)).toISOString(),
     maxResults: 500,
   });
-  const nameLc = customerName.trim().toLowerCase();
-  const matches = nameLc.length > 0
-    ? nearby.filter((e) => e.summary?.toLowerCase().includes(nameLc))
-    : [];
-  const holds = matches.filter((e) => e.summary?.startsWith(HOLD_TITLE_PREFIX));
-  const existing = matches.find(
+  const holds = nearby.filter((e) =>
+    holdBelongsTo(e, { name: customerName, phone: directive.customerPhone, address: customerAddress }),
+  );
+  const existing = nearby.find(
     (e) =>
       !e.summary?.startsWith(HOLD_TITLE_PREFIX)
+      && summaryMatchesCustomer(e.summary, customerName)
       && new Date(e.end).getTime() > dupMinMs
       && new Date(e.start).getTime() < dupMaxMs,
   );
