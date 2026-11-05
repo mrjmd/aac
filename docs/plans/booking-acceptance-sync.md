@@ -1,6 +1,26 @@
 # Booking ↔ QBO Acceptance Sync (+ stub/HOLD cleanup)
 
-Status: NEEDED, not started. Owner flagged as important automation 2026-11-03.
+Status: BUILT 2026-11-05 (sync + webhook guard; HOLD cleanup below still open).
+Owner flagged as important automation 2026-11-03.
+
+## What shipped (2026-11-05)
+
+- `@aac/scheduling` `booking-sync.ts`: pure `customersForBooking` (phone /
+  email / address / strict name, hub-guarded) + `decideBooking` (quotes
+  dated ≤180d before the event; any Accepted → covered; exactly one Pending
+  → accept; unsent bot drafts never count; otherwise none/ambiguous) +
+  `syncBookedEstimates` orchestrator. Accepting stamps the handled marker
+  first, then flips Accepted and prepends the evidence to PrivateNote.
+- Runs inside the middleware `qb-reconcile` cron (every 30 min) on the
+  calendar events it already fetches. Outcomes in
+  `keys.bookingSyncEvent` (final: accepted/covered; none/ambiguous expire 24h).
+- `qb-webhook` now has the same already-booked guard as qb-reconcile
+  (`lib/booked-events.ts`): an Accepted flip for a booked customer makes no
+  directive and no slots note (outcome `booked`).
+- Live dry run 11/05 (local scratch script `booking-sync-dry.ts`): 25 green
+  jobs, 23 covered, 2 none (Dacey; Champion's quote is under the company
+  address), 0 false flips.
+- Not done: step 1's stub-time call (the 30-min cron covers it).
 
 ## Problem
 

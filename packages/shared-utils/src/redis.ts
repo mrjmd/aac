@@ -323,6 +323,14 @@ export const keys = {
     `scheduling:directive-by-qb-estimate:${qbEstimateId}` as const,
 
   /**
+   * Booking → QBO acceptance sync outcome for a green calendar event
+   * (`accepted:{estimateId}`, `covered:{estimateId}`, `none`, `ambiguous`).
+   * Final outcomes have no TTL; `none`/`ambiguous` expire after a day so
+   * the event is looked at again (@aac/scheduling booking-sync).
+   */
+  bookingSyncEvent: (eventId: string) => `scheduling:booking-sync:${eventId}` as const,
+
+  /**
    * Counter for Quo scheduling-intent classifier calls, partitioned by event
    * type and day. Used to validate our (currently hand-waved) assumption
    * about call-transcript volume before deciding whether to drop the

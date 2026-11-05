@@ -38,7 +38,9 @@ import {
   getDirectiveIdByEstimate,
   removePendingDirective,
   enqueueEmailedEstimate,
+  markEstimateHandled,
 } from '../lib/redis.js';
+import { bookedEventFor, listUpcomingEvents } from '../lib/booked-events.js';
 import { maybePostSuggestionNote } from '../lib/suggestion-note.js';
 import { notifyWorkerFollowup } from '../lib/worker-notify.js';
 
@@ -167,13 +169,13 @@ export async function POST(request: Request): Promise<Response> {
       else acc.error++;
       return acc;
     },
-    { directive: 0, filtered: 0, duplicate: 0, ignored: 0, cleaned: 0, error: 0 },
+    { directive: 0, filtered: 0, duplicate: 0, booked: 0, ignored: 0, cleaned: 0, error: 0 },
   );
   log.info('QB webhook processed', counts);
   return json({ status: 'processed', counts });
 }
 
-type ProcessOutcome = 'directive' | 'filtered' | 'duplicate' | 'ignored' | 'cleaned';
+type ProcessOutcome = 'directive' | 'filtered' | 'duplicate' | 'booked' | 'ignored' | 'cleaned';
 
 async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
   const op = estimateOp(evt);
@@ -273,6 +275,30 @@ async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
         existingDirective,
       });
       return 'duplicate';
+    }
+
+    // Already on the calendar (Matt booked them, then flipped the quote to
+    // Accepted by hand): no directive, no "here are some slots" note. Same
+    // guard qb-reconcile applies. A calendar failure falls through to the
+    // old behavior.
+    const customerName = estimate.CustomerRef?.name ?? '';
+    try {
+      const booked = bookedEventFor(await listUpcomingEvents(), customerName);
+      if (booked) {
+        await markEstimateHandled(evt.intuitentityid, `manual-scheduled:${booked.id}`);
+        log.info('Accepted estimate already on calendar — no directive', {
+          estimateId: evt.intuitentityid,
+          customerName,
+          eventId: booked.id,
+          eventSummary: booked.summary,
+        });
+        return 'booked';
+      }
+    } catch (err) {
+      log.warn('Calendar unavailable — booked guard skipped', {
+        estimateId: evt.intuitentityid,
+        error: (err as Error).message,
+      });
     }
 
     await writePendingDirective(directive);

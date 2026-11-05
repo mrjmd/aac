@@ -7,12 +7,18 @@ const mockListRecentEstimates = vi.fn();
 const mockGetCustomer = vi.fn();
 const mockSearchPersonByPhone = vi.fn();
 const mockListEvents = vi.fn();
+const mockListAllCustomers = vi.fn();
+const mockGetEstimatesByCustomer = vi.fn();
+const mockUpdateEstimate = vi.fn();
 
 vi.mock('../lib/clients.js', () => ({
   getQuickBooks: () => ({
     isConnected: mockIsConnected,
     listRecentEstimates: mockListRecentEstimates,
     getCustomer: mockGetCustomer,
+    listAllCustomers: mockListAllCustomers,
+    getEstimatesByCustomer: mockGetEstimatesByCustomer,
+    updateEstimate: mockUpdateEstimate,
   }),
   getPipedrive: () => ({
     searchPersonByPhone: mockSearchPersonByPhone,
@@ -41,7 +47,11 @@ const {
   mockWritePendingDirective,
   mockTrackCronRun,
   mockLogHealthError,
+  mockGetBookingSyncOutcome,
+  mockSetBookingSyncOutcome,
 } = vi.hoisted(() => ({
+  mockGetBookingSyncOutcome: vi.fn(),
+  mockSetBookingSyncOutcome: vi.fn(),
   mockGetDirectiveIdByEstimate: vi.fn(),
   mockMarkEstimateHandled: vi.fn(),
   mockWritePendingDirective: vi.fn(),
@@ -55,6 +65,8 @@ vi.mock('../lib/redis.js', () => ({
   writePendingDirective: mockWritePendingDirective,
   trackCronRun: mockTrackCronRun,
   logHealthError: mockLogHealthError,
+  getBookingSyncOutcome: mockGetBookingSyncOutcome,
+  setBookingSyncOutcome: mockSetBookingSyncOutcome,
 }));
 
 import handler from '../api/cron/qb-reconcile.js';
@@ -124,6 +136,67 @@ describe('qb-reconcile cron', () => {
     mockTrackCronRun.mockResolvedValue(undefined);
     mockLogHealthError.mockResolvedValue(undefined);
     mockListEvents.mockResolvedValue([]);
+    mockListAllCustomers.mockResolvedValue([]);
+    mockGetEstimatesByCustomer.mockResolvedValue([]);
+    mockGetBookingSyncOutcome.mockResolvedValue(null);
+    mockSetBookingSyncOutcome.mockResolvedValue(undefined);
+  });
+
+  describe('booking → QBO acceptance sync', () => {
+    const greenJob = {
+      id: 'evt-job',
+      summary: 'John Smith',
+      start: '2026-11-12T13:00:00Z',
+      end: '2026-11-12T17:00:00Z',
+      colorId: '10',
+      attendees: [],
+      htmlLink: '',
+      attachments: [],
+    };
+
+    it("marks a booked customer's one open quote Accepted", async () => {
+      mockListRecentEstimates.mockResolvedValue([]);
+      mockListEvents.mockResolvedValue([greenJob]);
+      mockListAllCustomers.mockResolvedValue([makeCustomer()]);
+      mockGetEstimatesByCustomer.mockResolvedValue([
+        makeEstimate({ Id: 'est-open', TxnStatus: 'Pending', TxnDate: '2026-10-20' }),
+      ]);
+
+      const res = makeRes();
+      await handler(makeReq(), res);
+
+      expect(mockMarkEstimateHandled).toHaveBeenCalledWith('est-open', 'booking-sync:evt-job');
+      expect(mockUpdateEstimate).toHaveBeenCalledWith(
+        'est-open',
+        expect.objectContaining({ txnStatus: 'Accepted' }),
+      );
+      expect(mockSetBookingSyncOutcome).toHaveBeenCalledWith('evt-job', 'accepted:est-open', true);
+      expect(res.json.mock.calls[0][0].summary.bookingSync).toMatchObject({ jobs: 1, accepted: 1 });
+    });
+
+    it('does not run when the calendar is unavailable', async () => {
+      mockListRecentEstimates.mockResolvedValue([]);
+      mockListEvents.mockRejectedValue(new Error('cal 500'));
+
+      const res = makeRes();
+      await handler(makeReq(), res);
+
+      expect(mockListAllCustomers).not.toHaveBeenCalled();
+      expect(res.json.mock.calls[0][0].summary.bookingSync).toBeNull();
+    });
+
+    it('a sync failure is counted but the directive pass still lands', async () => {
+      mockListRecentEstimates.mockResolvedValue([makeEstimate({ Id: 'est-new' })]);
+      mockListEvents.mockResolvedValue([{ ...greenJob, summary: 'Someone Else' }]);
+      mockListAllCustomers.mockRejectedValue(new Error('qbo 500'));
+
+      const res = makeRes();
+      await handler(makeReq(), res);
+
+      expect(mockWritePendingDirective).toHaveBeenCalledTimes(1);
+      expect(res.json.mock.calls[0][0].summary.errors).toBe(1);
+      expect(mockLogHealthError).toHaveBeenCalledWith('qb-reconcile', 'booking-sync: qbo 500');
+    });
   });
 
   it('skips an estimate whose customer already has an upcoming event (prereq 1)', async () => {

@@ -398,6 +398,20 @@ export async function markEstimateHandled(
   await redis.set(keys.schedulingDirectiveByEstimate(qbEstimateId), marker);
 }
 
+/** Booking-sync outcome for a calendar event (keys.bookingSyncEvent). */
+export async function getBookingSyncOutcome(eventId: string): Promise<string | null> {
+  return (await getRedis().get<string>(keys.bookingSyncEvent(eventId))) ?? null;
+}
+
+/** Final outcomes stick; `none` / `ambiguous` expire in a day so the event is re-checked. */
+export async function setBookingSyncOutcome(
+  eventId: string,
+  outcome: string,
+  final: boolean,
+): Promise<void> {
+  await getRedis().set(keys.bookingSyncEvent(eventId), outcome, final ? undefined : { ex: 86_400 });
+}
+
 /**
  * Remove a directive from the shadow queue: blob, both pending lists, and
  * (when known) the estimate reverse index. Used by the QB status-flip

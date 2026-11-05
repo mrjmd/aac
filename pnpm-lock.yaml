@@ -514,6 +514,9 @@ importers:
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../api-clients
+      '@aac/customers':
+        specifier: workspace:*
+        version: link:../customers
       '@aac/quoting':
         specifier: workspace:*
         version: link:../quoting

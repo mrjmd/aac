@@ -11,6 +11,7 @@ vi.mock('../lib/redis.js', () => ({
   getDirectiveIdByEstimate: vi.fn().mockResolvedValue(null),
   removePendingDirective: vi.fn().mockResolvedValue(true),
   enqueueEmailedEstimate: vi.fn().mockResolvedValue(undefined),
+  markEstimateHandled: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../lib/env.js', () => ({
@@ -33,11 +34,13 @@ const mockQb = {
 };
 const mockPd = { searchPersonByPhone: vi.fn().mockResolvedValue({ id: 9001 }) };
 const mockQuo = {};
+const mockCal = { listEvents: vi.fn().mockResolvedValue([]) };
 
 vi.mock('../lib/clients.js', () => ({
   getQuickBooks: vi.fn(() => mockQb),
   getPipedrive: vi.fn(() => mockPd),
   getQuo: vi.fn(() => mockQuo),
+  getCalendar: vi.fn(() => mockCal),
 }));
 
 import { POST, verifyIntuitSignature } from '../api/qb-webhook.js';
@@ -45,6 +48,7 @@ import { notifyWorkerFollowup } from '../lib/worker-notify.js';
 import {
   enqueueEmailedEstimate,
   getDirectiveIdByEstimate,
+  markEstimateHandled,
   markEventProcessed,
   removePendingDirective,
   trackWebhookProcessed,
@@ -96,6 +100,7 @@ function makeAcceptedEstimate(overrides = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   (markEventProcessed as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+  mockCal.listEvents.mockResolvedValue([]);
 });
 
 // ── tests ─────────────────────────────────────────────────────────
@@ -207,6 +212,24 @@ describe('QB webhook POST', () => {
     expect(writePendingDirective).not.toHaveBeenCalled();
     const body = await res.json();
     expect(body.counts.duplicate).toBe(1);
+  });
+
+  it('makes no directive (and no slots note) when the customer is already booked', async () => {
+    mockQb.getEstimate.mockResolvedValueOnce(makeAcceptedEstimate());
+    mockCal.listEvents.mockResolvedValueOnce([{ id: 'evt-booked', summary: 'John Smith', start: '', end: '' }]);
+    const res = await POST(makeRequest({ events: [makeEvent()] }));
+    expect(writePendingDirective).not.toHaveBeenCalled();
+    expect(markEstimateHandled).toHaveBeenCalledWith('est-1234', 'manual-scheduled:evt-booked');
+    const body = await res.json();
+    expect(body.counts.booked).toBe(1);
+  });
+
+  it('still queues the directive when the calendar is unavailable', async () => {
+    mockQb.getEstimate.mockResolvedValueOnce(makeAcceptedEstimate());
+    mockCal.listEvents.mockRejectedValueOnce(new Error('cal 500'));
+    await POST(makeRequest({ events: [makeEvent()] }));
+    expect(writePendingDirective).toHaveBeenCalledTimes(1);
+    expect(markEstimateHandled).not.toHaveBeenCalled();
   });
 
   it('skips duplicate events', async () => {

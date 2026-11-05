@@ -24,15 +24,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { randomUUID } from 'crypto';
 import { createLogger } from '@aac/shared-utils/logger';
-import { normalizeQbApproval, summaryMatchesCustomer } from '@aac/scheduling';
+import { normalizeQbApproval, syncBookedEstimates, type BookingSyncSummary } from '@aac/scheduling';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
-import { getCalendar, getPipedrive, getQuickBooks, getQuo } from '../../lib/clients.js';
+import { getPipedrive, getQuickBooks, getQuo } from '../../lib/clients.js';
+import { bookedEventFor, listUpcomingEvents } from '../../lib/booked-events.js';
 import { verifyCronAuth } from '../../lib/cron.js';
 import { maybePostSuggestionNote } from '../../lib/suggestion-note.js';
 import {
+  getBookingSyncOutcome,
   getDirectiveIdByEstimate,
   logHealthError,
   markEstimateHandled,
+  setBookingSyncOutcome,
   trackCronRun,
   writePendingDirective,
 } from '../../lib/redis.js';
@@ -50,10 +53,9 @@ interface ReconcileSummary {
   directivesCreated: number;
   filtered: number;
   errors: number;
+  /** Booking → QBO acceptance sync over the same upcoming events (null when the calendar was unavailable). */
+  bookingSync: BookingSyncSummary | null;
 }
-
-/** How far ahead to look for a manually-created event for the customer. */
-const MANUAL_SCHEDULE_LOOKAHEAD_DAYS = 60;
 
 export default async function handler(
   req: VercelRequest,
@@ -73,6 +75,7 @@ export default async function handler(
     directivesCreated: 0,
     filtered: 0,
     errors: 0,
+    bookingSync: null,
   };
 
   try {
@@ -96,14 +99,7 @@ export default async function handler(
     // calendar failure degrades to the old behavior (guard disabled).
     let upcomingEvents: CalendarEvent[] | null = null;
     try {
-      const now = new Date();
-      upcomingEvents = await getCalendar().listEvents({
-        timeMin: now.toISOString(),
-        timeMax: new Date(
-          now.getTime() + MANUAL_SCHEDULE_LOOKAHEAD_DAYS * 86_400_000,
-        ).toISOString(),
-        maxResults: 500,
-      });
+      upcomingEvents = await listUpcomingEvents();
     } catch (err) {
       log.warn('Calendar unavailable — manual-schedule guard disabled this run', {
         error: (err as Error).message,
@@ -122,9 +118,7 @@ export default async function handler(
         }
 
         const customerName = estimate.CustomerRef?.name ?? '';
-        const booked = upcomingEvents?.find((e) =>
-          summaryMatchesCustomer(e.summary, customerName),
-        );
+        const booked = upcomingEvents ? bookedEventFor(upcomingEvents, customerName) : undefined;
         if (booked) {
           // Stamp the reverse index so later runs short-circuit on Redis.
           await markEstimateHandled(estimate.Id, `manual-scheduled:${booked.id}`);
@@ -173,6 +167,28 @@ export default async function handler(
         await logHealthError('qb-reconcile', (err as Error).message, {
           estimateId: estimate.Id,
         });
+      }
+    }
+
+    // Reverse direction: a green job on the calendar marks its one open
+    // quote Accepted (docs/plans/booking-acceptance-sync.md). Isolated so a
+    // failure here never costs the directive pass above.
+    if (upcomingEvents) {
+      try {
+        summary.bookingSync = await syncBookedEstimates(
+          {
+            qb,
+            getEventOutcome: getBookingSyncOutcome,
+            setEventOutcome: setBookingSyncOutcome,
+            markEstimateHandled,
+          },
+          upcomingEvents,
+        );
+        summary.errors += summary.bookingSync.errors;
+      } catch (err) {
+        summary.errors++;
+        log.error('Booking sync failed', err as Error);
+        await logHealthError('qb-reconcile', `booking-sync: ${(err as Error).message}`);
       }
     }
 

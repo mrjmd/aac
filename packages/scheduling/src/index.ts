@@ -35,3 +35,4 @@ export { estimateDuration } from '@aac/quoting';
 export * from './build-event-description.js';
 export * from './proposal.js';
 export * from './travel-time.js';
+export * from './booking-sync.js';
