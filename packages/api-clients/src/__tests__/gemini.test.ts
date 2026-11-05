@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GeminiClient, ExtractionError, parseJsonText } from '../gemini.js';
+import { GeminiClient, ExtractionError, parseJsonObject, parseJsonText } from '../gemini.js';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -383,6 +383,19 @@ describe('GeminiClient', () => {
     });
     it('throws when there is no JSON', () => {
       expect(() => parseJsonText('no json here')).toThrow('No JSON');
+    });
+  });
+
+  describe('parseJsonObject', () => {
+    it('digs the object out of arrays, bracketed prose and trailing notes', () => {
+      expect(parseJsonObject('[{"a":1}]')).toEqual({ a: 1 });
+      expect(parseJsonObject('```json\n[{"a":1}]\n```')).toEqual({ a: 1 });
+      expect(parseJsonObject('Photos [1] and [2] show: {"a":1}')).toEqual({ a: 1 });
+      expect(parseJsonObject('{"a":1}\n[Note: photo 3 blurry]')).toEqual({ a: 1 });
+      expect(parseJsonObject('```JSON\n{"a":1}\n```')).toEqual({ a: 1 });
+    });
+    it('throws when there is no object', () => {
+      expect(() => parseJsonObject('[1,2]')).toThrow('No JSON object');
     });
   });
 

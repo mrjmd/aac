@@ -23,10 +23,11 @@ describe('selectBusyEvents', () => {
     expect(kept.map((e) => e.summary)).toEqual(['HOLD — John Smith']);
   });
 
-  it('keeps job and callback colors without the invite, but not a solo assessment', () => {
-    expect(isBusyEvent(ev('Ann Joffre', [], '10'), TECH)).toBe(true);
-    expect(isBusyEvent(ev('Ann Joffre callback', [], '5'), TECH)).toBe(true);
-    expect(isBusyEvent(ev('Ann Joffre assessment', [], '3'), TECH)).toBe(false);
+  it('never blocks on color alone (uninvited job, callback, graphite)', () => {
+    expect(isBusyEvent(ev('Ann Joffre', [], '10'), TECH)).toBe(false);
+    expect(isBusyEvent(ev('Ann Joffre callback', [], '5'), TECH)).toBe(false);
+    expect(isBusyEvent(ev('Matt personal block', [], '8'), TECH)).toBe(false);
+    expect(isBusyEvent(ev('HOLD — Ann Joffre', [], '8'), TECH)).toBe(true);
   });
 
   it('keeps everything when no technician emails are configured (degraded mode)', () => {

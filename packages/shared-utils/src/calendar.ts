@@ -49,19 +49,18 @@ export interface BusyCheckEvent {
 }
 
 /**
- * Does this event take the technician's time? Four kinds do:
- *   1. Events Mike attends (jobs, assessments, callbacks, stubs).
- *   2. Job and callback colors even without the invite: that is Mike's work.
- *   3. HOLD placeholders: attendee-less so Mike never sees unconfirmed
- *      offers, but they exist to keep the offered time free.
- *   4. "Mike OOO" entries (isTechOutOfOffice).
- * Matt's own meetings (no Mike, no work color) never block. Assessments
- * Matt runs alone (grape, no Mike) don't either.
+ * Does this event block the technician's schedule? Three kinds do:
+ *   1. Events Mike attends (jobs, assessments, callbacks, stubs). The
+ *      attendee test is what keeps Matt's own calls and meetings from
+ *      blocking customer slots.
+ *   2. HOLD placeholders (title prefix): attendee-less so Mike never sees
+ *      unconfirmed offers, but they exist to keep the offered time free.
+ *   3. "Mike OOO" entries (isTechOutOfOffice).
+ * Color alone never blocks: a job Mike isn't invited to stays open.
  */
 export function isBusyEvent(e: BusyCheckEvent, techEmails: readonly string[]): boolean {
   const summary = e.summary ?? '';
-  if (summary.startsWith(HOLD_TITLE_PREFIX) || e.colorId === HOLD_COLOR_ID) return true;
-  if (e.colorId === EVENT_CLASS_COLOR_IDS.job || e.colorId === EVENT_CLASS_COLOR_IDS.callback) return true;
+  if (summary.startsWith(HOLD_TITLE_PREFIX)) return true;
   if (isTechOutOfOffice(summary)) return true;
   const emails = techEmails.map((t) => t.toLowerCase());
   return (e.attendees ?? []).some((a) => emails.includes(a.toLowerCase()));

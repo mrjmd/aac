@@ -4,7 +4,7 @@ import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { getCalendar, getPipedrive } from '@/lib/clients';
 import { getCompletion } from '@/lib/completion';
-import { matchEventToPerson } from '@aac/customers';
+import { matchEventToPerson } from '@/lib/customer-match';
 import { extractDriveFileId, getDriveInfos, thumbnailUrl } from '@/lib/drive';
 import { getEnv } from '@/lib/env';
 import { formatEventTime, formatDateDisplay } from '@/lib/dates';

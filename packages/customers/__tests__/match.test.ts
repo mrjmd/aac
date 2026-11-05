@@ -4,7 +4,6 @@ import {
   eventMatchesName,
   expandCompoundName,
   expandNicknames,
-  firstNamesAlike,
   lastFirstTokens,
   nameCorroborated,
   nameTokens,
@@ -78,12 +77,10 @@ describe('customerNameMatches (same person)', () => {
 });
 
 describe('nicknames', () => {
-  it('firstNamesAlike works in both directions', () => {
-    expect(firstNamesAlike('bob', 'robert')).toBe(true);
-    expect(firstNamesAlike('robert', 'bob')).toBe(true);
-    expect(firstNamesAlike('ted', 'edward')).toBe(true);
-    expect(firstNamesAlike('ted', 'theodore')).toBe(true);
-    expect(firstNamesAlike('bob', 'melanie')).toBe(false);
+  it('Ted tries Theodore, never Edward (old middleware table)', () => {
+    expect(expandNicknames('Ted Smith')).toEqual(['Theodore Smith', 'Theo Smith']);
+    expect(expandNicknames('Ed Smith')).not.toContain('Ted Smith');
+    expect(expandNicknames('Pam Smith')).toEqual([]);
   });
   it('expandNicknames varies only the first token', () => {
     expect(expandNicknames('Bob Doherty')).toContain('Robert Doherty');

@@ -14,7 +14,7 @@
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { getPipedrive, getRedis } from './clients';
-import { matchEventToPerson } from '@aac/customers';
+import { matchEventToPerson } from './customer-match';
 import { extractCity } from './location';
 
 /**

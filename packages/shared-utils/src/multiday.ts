@@ -13,7 +13,7 @@
  * whatever event objects you have; only the listed fields are read.
  */
 
-import { sameStreet, streetKey } from './address.js';
+import { streetLine } from './address.js';
 import { EVENT_CLASS_COLOR_IDS } from './calendar.js';
 
 /** Minimal shape of a calendar event this module needs. */
@@ -62,7 +62,7 @@ export function baseTitle(summary: string | undefined): string {
 /**
  * Find the next continuation of `event` among `candidates`: a green event
  * that starts later (and within CONTINUATION_WINDOW_DAYS) and matches on
- * base title or street address (`sameStreet`). Returns the earliest such event, or
+ * base title or street line (`streetLine`). Returns the earliest such event, or
  * null when `event` is the final (or only) day of its chain.
  *
  * `candidates` may include `event` itself, past events, and non-job
@@ -77,7 +77,7 @@ export function findContinuation<T extends MultidayEvent>(
   if (Number.isNaN(startMs)) return null;
 
   const title = baseTitle(event.summary);
-  const street = streetKey(event.location ?? '');
+  const street = streetLine(event.location);
 
   let best: T | null = null;
   let bestMs = Infinity;
@@ -90,7 +90,7 @@ export function findContinuation<T extends MultidayEvent>(
     if (cMs <= startMs || cMs - startMs > CONTINUATION_WINDOW_DAYS * DAY_MS) continue;
 
     const titleMatch = title !== '' && baseTitle(c.summary) === title;
-    const streetMatch = sameStreet(street, streetKey(c.location ?? ''));
+    const streetMatch = street !== '' && streetLine(c.location) === street;
     if (!titleMatch && !streetMatch) continue;
 
     if (cMs < bestMs) {

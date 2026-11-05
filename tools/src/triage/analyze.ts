@@ -12,7 +12,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { GeminiClient, parseJsonText } from '@aac/api-clients/gemini';
+import { GeminiClient, parseJsonObject } from '@aac/api-clients/gemini';
 import {
   EVENT_CLASS_COLOR_IDS as COLORS,
   HOLD_TITLE_PREFIX,
@@ -301,7 +301,7 @@ function dueFrom(v: LlmVerdict): { dueAt?: string } {
 
 function parseVerdict(raw: string): LlmVerdict | null {
   try {
-    const v = parseJsonText<LlmVerdict>(raw);
+    const v = parseJsonObject<LlmVerdict>(raw);
     if (typeof v.needs_action !== 'boolean' || !v.category) return null;
     return v;
   } catch {

@@ -154,6 +154,20 @@ export function parseJsonText<T>(raw: string): T {
   }
 }
 
+/**
+ * Parse a model's JSON answer that must be one object: the text from the
+ * first `{` to the last `}`, after stripping a ```json fence. Digs the
+ * object out of prose, a wrapping array or a trailing note. Throws when no
+ * object parses.
+ */
+export function parseJsonObject<T>(raw: string): T {
+  const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim();
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error(`No JSON object in Gemini response: ${cleaned.slice(0, 120)}`);
+  return JSON.parse(cleaned.slice(start, end + 1)) as T;
+}
+
 export type ImageAspectRatio = '1:1' | '3:4' | '4:3' | '16:9' | '9:16';
 
 export interface GenerateImageOptions {

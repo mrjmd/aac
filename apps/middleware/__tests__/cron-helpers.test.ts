@@ -76,8 +76,9 @@ describe('getDayRangeEastern', () => {
   });
 
   it('straddles the fall-back transition day correctly', () => {
-    // DST ends 2026-11-01 02:00 — noon that day is already EST
-    expect(getDayRangeEastern(0, '2026-11-01').timeMin).toBe('2026-11-01T00:00:00-05:00');
+    // DST ends 2026-11-01 02:00: the day starts in EDT and ends in EST
+    expect(getDayRangeEastern(0, '2026-11-01').timeMin).toBe('2026-11-01T00:00:00-04:00');
+    expect(getDayRangeEastern(0, '2026-11-01').timeMax).toBe('2026-11-01T23:59:59-05:00');
     expect(getDayRangeEastern(-1, '2026-11-01').timeMin).toBe('2026-10-31T00:00:00-04:00');
   });
 

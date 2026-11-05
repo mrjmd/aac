@@ -13,7 +13,7 @@
 
 import type { DraftThreadMessage } from './draft-quote.js';
 import type { Scored } from './retrieval.js';
-import { parseJsonText } from '@aac/api-clients/gemini';
+import { parseJsonObject } from '@aac/api-clients/gemini';
 
 export interface PhotoRead {
   photo: number;
@@ -91,7 +91,7 @@ Respond with ONLY a JSON object:
 
 export function parseAreaAnalysis(raw: string): AreaAnalysis | null {
   try {
-    const obj = parseJsonText<{
+    const obj = parseJsonObject<{
       photo_reads?: PhotoRead[];
       areas?: PhotoArea[];
       customer_asks?: string[];

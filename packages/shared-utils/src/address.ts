@@ -47,3 +47,37 @@ export function addressesMatch(a: string | null | undefined, b: string | null | 
   if (!a || !b) return false;
   return sameStreet(streetKey(a), streetKey(b));
 }
+
+/**
+ * Street line of a location, normalized for exact equality: everything
+ * before the first comma, lowercased, punctuation stripped, whitespace
+ * collapsed. "17 Montague Ave, Lake Pleasant, MA 01347" → "17 montague ave".
+ * Returns '' unless the line starts with a house number, so two town-only
+ * locations ("Quincy, MA") never count as the same house. Multi-day chains
+ * use this exact form (spelling must agree: "St" ≠ "Street").
+ */
+export function streetLine(location: string | null | undefined): string {
+  const line = (location ?? '')
+    .split(',')[0]
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return /^\d/.test(line) ? line : '';
+}
+
+/**
+ * Loose match: same first house number and the first word after it
+ * ("122 Allen Avenue, Falmouth" ≡ "122 Allen Ave"). Ignores units. Used to
+ * gather a customer's past visit photos, where an extra match is harmless.
+ */
+export function houseNumberAndWordMatch(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const parse = (s: string): { num: string; street: string } | null => {
+    const m = s.toLowerCase().match(/(\d+)\s+([a-z]+)/);
+    return m ? { num: m[1], street: m[2] } : null;
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  return Boolean(pa && pb && pa.num === pb.num && pa.street === pb.street);
+}

@@ -3,7 +3,6 @@ export {
   eventMatchesName,
   expandCompoundName,
   expandNicknames,
-  firstNamesAlike,
   lastFirstTokens,
   nameCorroborated,
   nameTokens,

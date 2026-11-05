@@ -49,7 +49,7 @@ import { nameCorroborated } from '@aac/customers';
 import { isBotDraft } from '@aac/quoting';
 import { keys } from '@aac/shared-utils/redis';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
-import { EVENT_CLASS_COLOR_IDS, isBusyEvent, technicianEmails } from '@aac/shared-utils/calendar';
+import { EVENT_CLASS_COLOR_IDS, HOLD_COLOR_ID, isBusyEvent, technicianEmails } from '@aac/shared-utils/calendar';
 import { geminiFromEnv, googleOAuthFromEnv, loadEnv, quickBooksFromEnv, quoFromEnv, redisFromEnv } from '../lib/env';
 
 // ── config ───────────────────────────────────────────────────────────
@@ -291,11 +291,23 @@ function expandEvent(e: CalendarEvent): DayEvent {
   };
 }
 
+/** Mike's time off, beyond isTechOutOfOffice's "Mike OOO": "Mike vacation",
+ *  "Mike off", "day off". Needs Mike or "day off" so "Drop off check" can't match. */
+const MIKE_AWAY_RE = /\bmike\b.*\b(vacation|away|off)\b|\bday off\b|\bvacation\b/i;
+
+/** Is this day's capacity used? suggestSlot's rule, plus any job, callback or
+ *  graphite event even without Mike's invite (a horizon estimate, so it
+ *  errs toward busy), plus Mike's time off. */
+function consumesCapacity(ev: DayEvent): boolean {
+  const c = ev.colorId;
+  if (c === EVENT_CLASS_COLOR_IDS.job || c === EVENT_CLASS_COLOR_IDS.callback || c === HOLD_COLOR_ID) return true;
+  return isBusyEvent(ev, TECH_EMAILS) || MIKE_AWAY_RE.test(ev.summary);
+}
+
 function computeBookingHorizon(events: DayEvent[], nowMs: number): { firstOpen: string; text: string } {
   const busy = new Set<string>();
   for (const ev of events) {
-    // Same rule as suggestSlot: Mike's work, HOLDs, "Mike OOO". Matt's meetings never block.
-    if (isBusyEvent(ev, TECH_EMAILS)) {
+    if (consumesCapacity(ev)) {
       for (const d of ev.days) busy.add(d);
     }
   }

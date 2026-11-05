@@ -1,7 +1,6 @@
 import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import {
   EVENT_CLASS_COLOR_IDS,
-  HOLD_COLOR_ID,
   HOLD_TITLE_PREFIX,
   isBusyEvent,
   isTechOutOfOffice,
@@ -101,7 +100,7 @@ export function buildTechUtilization(args: {
   const sorted = [...args.events].sort((a, b) => a.start.localeCompare(b.start));
   for (const e of sorted) {
     if (!isBusyEvent(e, emails)) continue;
-    const hold = e.summary.startsWith(HOLD_TITLE_PREFIX) || e.colorId === HOLD_COLOR_ID;
+    const hold = e.summary.startsWith(HOLD_TITLE_PREFIX);
     const ooo = isTechOutOfOffice(e.summary);
     for (const [day, start, end] of pieces(e)) {
       const w = weeks.get(mondayOf(day));

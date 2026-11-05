@@ -4,7 +4,7 @@ import SwipeDayNavigator from './swipe-day-navigator';
 import { getCalendar } from '@/lib/clients';
 import { getEnv } from '@/lib/env';
 import { formatEventTimeRange, formatDateDisplay } from '@/lib/dates';
-import { easternDate, easternDayRange, isDateLabel, shiftDate } from '@aac/shared-utils/eastern';
+import { easternDate, easternDayRange, isCalendarDate, shiftDate } from '@aac/shared-utils/eastern';
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
 import { buildDirectionsUrl } from '@/lib/location';
 import { resolveEventCity } from '@/lib/event-city';
@@ -25,7 +25,7 @@ export default async function DayPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const today = easternDate();
   const dateLabel =
-    params.date && isDateLabel(params.date) ? params.date : today;
+    params.date && isCalendarDate(params.date) ? params.date : today;
 
   let events: Awaited<ReturnType<ReturnType<typeof getCalendar>['listEvents']>> = [];
   let loadError: string | null = null;

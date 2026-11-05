@@ -43,10 +43,23 @@ export function easternOffset(dateLabel: string): string {
   return `${hours < 0 ? '-' : '+'}${String(Math.abs(hours)).padStart(2, '0')}:00`;
 }
 
-/** The whole Eastern day as a calendar query window. */
+/** Eastern UTC offset in effect at an instant ("-04:00" / "-05:00"). */
+function offsetAt(at: Date): string {
+  const name = OFFSET_FMT.formatToParts(at).find((p) => p.type === 'timeZoneName')?.value; // "GMT-5"
+  const hours = Number(name?.match(/GMT([+-]\d+)/)?.[1] ?? -5);
+  return `${hours < 0 ? '-' : '+'}${String(Math.abs(hours)).padStart(2, '0')}:00`;
+}
+
+/**
+ * The whole Eastern day as a calendar query window. Start and end each use
+ * their own offset, so the two clock-change days (one 23h, one 25h) are
+ * covered midnight to midnight. 04:30Z is just after Eastern midnight in
+ * either zone; 03:30Z the next day is just before the following midnight.
+ */
 export function easternDayRange(dateLabel: string): { timeMin: string; timeMax: string; dateLabel: string } {
-  const off = easternOffset(dateLabel);
-  return { timeMin: `${dateLabel}T00:00:00${off}`, timeMax: `${dateLabel}T23:59:59${off}`, dateLabel };
+  const startOff = offsetAt(new Date(`${dateLabel}T04:30:00Z`));
+  const endOff = offsetAt(new Date(`${shiftDate(dateLabel, 1)}T03:30:00Z`));
+  return { timeMin: `${dateLabel}T00:00:00${startOff}`, timeMax: `${dateLabel}T23:59:59${endOff}`, dateLabel };
 }
 
 /** An Eastern wall-clock time on a date, as an instant. */
@@ -68,4 +81,11 @@ export function daysBetween(a: string, b: string): number {
 
 export function isDateLabel(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+/** A YYYY-MM-DD label naming a real calendar day ("2026-13-01" and "2026-02-30" don't). */
+export function isCalendarDate(s: string): boolean {
+  if (!isDateLabel(s)) return false;
+  const t = Date.parse(`${s}T00:00:00Z`);
+  return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === s;
 }

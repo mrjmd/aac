@@ -18,7 +18,7 @@
 import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import type { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import { createLogger } from '@aac/shared-utils/logger';
-import { addressesMatch } from '@aac/shared-utils/address';
+import { houseNumberAndWordMatch } from '@aac/shared-utils/address';
 import { customerNameMatches } from '@aac/customers';
 import {
   uploadPhotoAttachments,
@@ -103,7 +103,7 @@ export async function collectFieldPhotoAttachments(
       .filter(
         (e: CalendarEvent) =>
           customerNameMatches(e.summary ?? '', input.customerName) ||
-          addressesMatch(e.location, input.customerAddress),
+          houseNumberAndWordMatch(e.location, input.customerAddress),
       )
       .sort((a: CalendarEvent, b: CalendarEvent) => b.start.localeCompare(a.start))
       .slice(0, MAX_VISITS);

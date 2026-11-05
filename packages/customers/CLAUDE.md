@@ -5,9 +5,9 @@ triage detectors (`tools/src/triage/identity.ts`), the command center
 Customer page, and (planned) scheduling's hold matching.
 
 - `match.ts`: pure name/address matching (`nameTokens`, `tokensAlike`,
-  `streetKey`, `eventMatchesName`). Calendar titles are typed by ear, so
+  `eventMatchesName`, `nameCorroborated`). Calendar titles are typed by ear, so
   matching tolerates one-letter drift; addresses join on house number +
-  street name + unit.
+  street name + unit (`@aac/shared-utils/address`).
 - `timeline.ts`: pure `buildCustomerTimeline` (QBO estimates/invoices/
   payments, Quo texts/calls, Gmail, calendar visits → one sorted list with
   totals) and a thin `getCustomerTimeline` that fetches through

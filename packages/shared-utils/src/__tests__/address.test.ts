@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addressesMatch, sameStreet, streetKey } from '../address';
+import { addressesMatch, houseNumberAndWordMatch, sameStreet, streetKey, streetLine } from '../address';
 
 describe('streetKey', () => {
   it('normalizes suffixes and units', () => {
@@ -34,5 +34,28 @@ describe('addressesMatch', () => {
     expect(addressesMatch('124 Allen Ave', '122 Allen Ave')).toBe(false);
     expect(addressesMatch('122 Birch St', '122 Allen Ave')).toBe(false);
     expect(addressesMatch(null, '122 Allen Ave')).toBe(false);
+  });
+});
+
+describe('streetLine', () => {
+  it('keeps the street line before the first comma, normalized', () => {
+    expect(streetLine('17 Montague Ave, Lake Pleasant, MA 01347, USA')).toBe('17 montague ave');
+    expect(streetLine('15 West St.')).toBe('15 west st');
+  });
+  it('is empty without a leading house number (town-only locations)', () => {
+    expect(streetLine('Quincy, MA')).toBe('');
+    expect(streetLine(undefined)).toBe('');
+  });
+});
+
+describe('houseNumberAndWordMatch', () => {
+  it('matches house number + first street word, ignoring suffix and units', () => {
+    expect(houseNumberAndWordMatch('122 Allen Avenue, Falmouth', '122 Allen Ave')).toBe(true);
+    expect(houseNumberAndWordMatch('15 West St', '15 West Street')).toBe(true);
+    expect(houseNumberAndWordMatch('30 Randlett St Unit 2', '30 Randlett St Unit 3')).toBe(true);
+  });
+  it('rejects different houses and missing input', () => {
+    expect(houseNumberAndWordMatch('122 Allen Ave', '124 Allen Ave')).toBe(false);
+    expect(houseNumberAndWordMatch(null, '122 Allen Ave')).toBe(false);
   });
 });

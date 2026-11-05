@@ -113,14 +113,26 @@ describe('findContinuation', () => {
     expect(findContinuation(day2, [sloppy])?.id).toBe('e');
   });
 
-  it('matches by street when the address is written differently and the title drifts', () => {
+  it('street matching is exact on the street line ("St" ≠ "Street", as before)', () => {
     const retyped = ev({
       id: 'e2',
       start: '2026-09-12T08:00:00-04:00',
       summary: 'Spooner day 2',
       location: '188 King St, Hanover MA',
     });
-    expect(findContinuation(day2, [retyped])?.id).toBe('e2');
+    expect(findContinuation(day2, [retyped])).toBeNull();
+  });
+
+  it('matches direction and Court-style streets ("15 West St")', () => {
+    const a = ev({ id: 'w1', start: '2026-09-11T08:00:00-04:00', summary: 'Ann Lee', location: '15 West St, Quincy' });
+    const b = ev({ id: 'w2', start: '2026-09-12T08:00:00-04:00', summary: 'Lee day 2', location: '15 West St, Quincy MA' });
+    expect(findContinuation(a, [b])?.id).toBe('w2');
+  });
+
+  it('never links two customers who share only a town', () => {
+    const a = ev({ id: 't1', start: '2026-09-11T08:00:00-04:00', summary: 'Ann Lee', location: 'Quincy, MA' });
+    const b = ev({ id: 't2', start: '2026-09-12T08:00:00-04:00', summary: 'Bob Kim', location: 'Quincy, MA' });
+    expect(findContinuation(a, [b])).toBeNull();
   });
 
   it('ignores events outside the 10-day window', () => {

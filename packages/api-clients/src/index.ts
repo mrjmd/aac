@@ -21,7 +21,7 @@ export type { QuickBooksConfig } from './quickbooks.js';
 export { SearchBugClient } from './searchbug.js';
 export type { SearchBugConfig } from './searchbug.js';
 
-export { GeminiClient, isTransientGeminiError, parseJsonText } from './gemini.js';
+export { GeminiClient, isTransientGeminiError, parseJsonObject, parseJsonText } from './gemini.js';
 export type {
   GeminiConfig,
   GenerateContentOptions,

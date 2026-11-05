@@ -3,7 +3,7 @@
 import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { getCalendar, getPipedrive, getQuo } from '@/lib/clients';
-import { matchEventToPerson } from '@aac/customers';
+import { matchEventToPerson } from '@/lib/customer-match';
 import { requireSession } from '@/lib/session';
 
 const ALLOWED_MINUTES = new Set([5, 10, 15]);

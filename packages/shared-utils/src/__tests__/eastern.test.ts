@@ -6,6 +6,7 @@ import {
   easternMinuteOfDay,
   easternOffset,
   easternWallTime,
+  isCalendarDate,
   shiftDate,
 } from '../eastern';
 
@@ -26,6 +27,27 @@ describe('easternOffset / easternDayRange', () => {
       timeMax: '2026-11-05T23:59:59-05:00',
       dateLabel: '2026-11-05',
     });
+  });
+  it('covers clock-change days midnight to midnight', () => {
+    // Fall back: 25h day, starts EDT, ends EST.
+    const fall = easternDayRange('2026-11-01');
+    expect(fall.timeMin).toBe('2026-11-01T00:00:00-04:00');
+    expect(fall.timeMax).toBe('2026-11-01T23:59:59-05:00');
+    // Spring forward: 23h day, starts EST, ends EDT.
+    const spring = easternDayRange('2026-03-08');
+    expect(spring.timeMin).toBe('2026-03-08T00:00:00-05:00');
+    expect(spring.timeMax).toBe('2026-03-08T23:59:59-04:00');
+  });
+});
+
+describe('isCalendarDate', () => {
+  it('accepts real days and rejects impossible ones', () => {
+    expect(isCalendarDate('2026-11-05')).toBe(true);
+    expect(isCalendarDate('2028-02-29')).toBe(true);
+    expect(isCalendarDate('2026-13-01')).toBe(false);
+    expect(isCalendarDate('2026-02-30')).toBe(false);
+    expect(isCalendarDate('2026-11-00')).toBe(false);
+    expect(isCalendarDate('nope')).toBe(false);
   });
 });
 

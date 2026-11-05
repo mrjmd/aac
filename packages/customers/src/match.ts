@@ -149,7 +149,7 @@ const NICKNAME_GROUPS: string[][] = [
   ['daniel', 'dan', 'danny'],
   ['david', 'dave'],
   ['donald', 'don'],
-  ['edward', 'ed', 'eddie', 'ted'],
+  ['edward', 'ed', 'eddie'],
   ['theodore', 'ted', 'theo'],
   ['joseph', 'joe', 'joey'],
   ['anthony', 'tony'],
@@ -199,7 +199,6 @@ const NICKNAME_GROUPS: string[][] = [
   ['dorothy', 'dot', 'dottie'],
   ['abigail', 'abby'],
   ['gabriel', 'gabe'],
-  ['pamela', 'pam'],
 ];
 
 const NICKNAME_MAP: Map<string, Set<string>> = (() => {
@@ -213,11 +212,6 @@ const NICKNAME_MAP: Map<string, Set<string>> = (() => {
   }
   return map;
 })();
-
-/** Same first name, or interchangeable nicknames ("bob" ≡ "robert"). Lowercase input. */
-export function firstNamesAlike(a: string, b: string): boolean {
-  return a === b || (NICKNAME_MAP.get(a)?.has(b) ?? false);
-}
 
 /** "Bob Doherty" → ["Robert Doherty", "Rob Doherty", "Bobby Doherty"].
  *  Only the first token varies. Returns [] when the first name has no
@@ -266,23 +260,71 @@ export function expandCompoundName(summary: string): string[] {
 
 // ── corroborated: surname + first name or street number ──────────────
 
+/** Levenshtein ratio for fuzzy surname matching (Eriksen vs Erikson). */
+function similarity(a: string, b: string): number {
+  if (a === b) return 1;
+  const m = a.length;
+  const n = b.length;
+  if (!m || !n) return 0;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return 1 - prev[n] / Math.max(m, n);
+}
+
+/** Formal name → nicknames for corroboration (the calendar says "Bob
+ *  Doherty"; QBO says "Robert Doherty"). Kept as stale-quotes tuned it. */
+const CORROBORATION_NICKNAMES: Record<string, string[]> = {
+  robert: ['bob', 'rob', 'bobby'], william: ['bill', 'will', 'billy'],
+  michael: ['mike'], james: ['jim', 'jimmy'], richard: ['rick', 'rich', 'dick'],
+  joseph: ['joe', 'joey'], thomas: ['tom', 'tommy'], christopher: ['chris'],
+  daniel: ['dan', 'danny'], matthew: ['matt'], anthony: ['tony'],
+  steven: ['steve'], stephen: ['steve'], edward: ['ed', 'eddie', 'ted'],
+  andrew: ['andy', 'drew'], david: ['dave'], kenneth: ['ken'],
+  ronald: ['ron'], donald: ['don'], gregory: ['greg'], timothy: ['tim'],
+  jonathan: ['jon'], nicholas: ['nick'], samuel: ['sam'], benjamin: ['ben'],
+  lawrence: ['larry'], raymond: ['ray'], gerald: ['jerry'], john: ['jack', 'johnny'],
+  elizabeth: ['liz', 'beth', 'betsy'], katherine: ['kate', 'katie', 'kathy'],
+  margaret: ['maggie', 'meg', 'peggy'], patricia: ['pat', 'patty'],
+  jennifer: ['jen', 'jenny'], susan: ['sue'], deborah: ['deb', 'debbie'],
+  rebecca: ['becky'], kimberly: ['kim'], pamela: ['pam'], sandra: ['sandy'],
+};
+
+function firstNameCorroborates(first: string, words: string[]): boolean {
+  if (words.includes(first)) return true;
+  const aliases = CORROBORATION_NICKNAMES[first] ?? [];
+  if (aliases.some((a) => words.includes(a))) return true;
+  // reverse direction: QBO has the nickname, calendar has the formal name
+  for (const [formal, nicks] of Object.entries(CORROBORATION_NICKNAMES)) {
+    if (nicks.includes(first) && words.includes(formal)) return true;
+  }
+  return false;
+}
+
 /**
  * True when `text` (an event's summary + location) names this customer:
- * the surname matches with one-letter drift ("Erikson" for "Eriksen") AND
- * a first name (nickname-aware) or the street number from `address` also
- * appears. Surname alone is never enough: it matched Melanie Doherty to
- * Bob Doherty's job on the stale-quotes dry run.
+ * the surname matches fuzzily (Levenshtein ratio ≥ 0.78 for surnames of 5+
+ * letters, so "Erikson" finds "Eriksen") AND a first name (nickname-aware)
+ * or the street number from `address` also appears. Surname alone is never
+ * enough: it matched Melanie Doherty to Bob Doherty's job on the
+ * stale-quotes dry run.
  */
 export function nameCorroborated(text: string, customerName: string, address = ''): boolean {
   const tokens = customerName.toLowerCase().split(/[^a-z]+/).filter((t) => t.length >= 3);
   if (!tokens.length) return false;
   const last = tokens[tokens.length - 1];
   const first = tokens[0];
+  const streetNum = (address.match(/\b(\d{1,5})\b/) ?? [])[1];
   const hay = text.toLowerCase();
   const words = hay.split(/[^a-z0-9]+/).filter(Boolean);
-  if (!words.some((w) => w.length >= 3 && tokensAlike(w, last))) return false;
-  const firstHit = first !== last && words.some((w) => firstNamesAlike(first, w));
-  const streetNum = (address.match(/\b(\d{1,5})\b/) ?? [])[1];
+  const lastHit = words.some((w) => w.length >= 3 && (w === last || (last.length >= 5 && similarity(w, last) >= 0.78)));
+  if (!lastHit) return false;
+  const firstHit = first !== last && firstNameCorroborates(first, words);
   const addrHit = !!streetNum && hay.includes(streetNum);
   return firstHit || addrHit;
 }
