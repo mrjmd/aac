@@ -307,35 +307,47 @@ export async function runAdsConversions(
   const pending: Array<{ click: AdClick; hit: StageHit }> = [];
   if (open.length) {
     const byPhone = customersByPhone(await deps.qb.listAllCustomers({ includeInactive: true }));
-    await mapLimit(open, 3, async (click) => {
-      const thread = sent.has(`lead:${click.phone}`)
-        ? { messages: [], calls: [] }
-        : await fetchThread(deps, `+1${click.phone}`);
-      const ids = byPhone.get(click.phone) ?? [];
-      const estimates = (await Promise.all(ids.map((id) => deps.qb.getEstimatesByCustomer(id)))).flat();
-      const invoices = (await Promise.all(ids.map((id) => deps.qb.getInvoicesByCustomer(id)))).flat();
-      const hits = stagesFor(
-        click,
-        {
-          messages: thread.messages.map((m) => ({
-            at: new Date(m.createdAt),
-            direction: m.direction,
-            text: m.text ?? '',
-            hasMedia: (m.media?.length ?? 0) > 0,
-          })),
-          calls: thread.calls.map((c) => ({
-            at: new Date(c.createdAt),
-            direction: c.direction,
-            durationSec: c.duration ?? 0,
-            voicemail: !!c.voicemail,
-          })),
-        },
-        estimates,
-        invoices,
-        now,
-      );
-      for (const hit of hits) if (!sent.has(hit.orderId)) pending.push({ click, hit });
-    });
+    // One click at a time, queries in sequence: QBO allows 10 concurrent
+    // requests per company and the worker's per-minute jobs share them
+    // (a parallel version hit ThrottleExceeded 429 on 2026-11-05).
+    for (const click of open) {
+      try {
+        const thread = sent.has(`lead:${click.phone}`)
+          ? { messages: [], calls: [] }
+          : await fetchThread(deps, `+1${click.phone}`);
+        const ids = byPhone.get(click.phone) ?? [];
+        const estimates: QBEstimate[] = [];
+        const invoices: QBInvoice[] = [];
+        for (const id of ids) {
+          estimates.push(...(await deps.qb.getEstimatesByCustomer(id)));
+          invoices.push(...(await deps.qb.getInvoicesByCustomer(id)));
+        }
+        const hits = stagesFor(
+          click,
+          {
+            messages: thread.messages.map((m) => ({
+              at: new Date(m.createdAt),
+              direction: m.direction,
+              text: m.text ?? '',
+              hasMedia: (m.media?.length ?? 0) > 0,
+            })),
+            calls: thread.calls.map((c) => ({
+              at: new Date(c.createdAt),
+              direction: c.direction,
+              durationSec: c.duration ?? 0,
+              voicemail: !!c.voicemail,
+            })),
+          },
+          estimates,
+          invoices,
+          now,
+        );
+        for (const hit of hits) if (!sent.has(hit.orderId)) pending.push({ click, hit });
+      } catch (err) {
+        // One click's lookup failing shouldn't sink the run; it retries tomorrow.
+        summary.failed.push({ orderId: `click:${click.phone}`, error: (err as Error).message.slice(0, 300) });
+      }
+    }
   }
   for (const p of pending) summary.pending[p.hit.stage]++;
   if (opts.mode === 'dry') {

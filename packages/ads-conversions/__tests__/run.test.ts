@@ -156,6 +156,17 @@ describe('runAdsConversions', () => {
     expect(redis.data.get(keys.adsConversionsSent)).toBeUndefined();
   });
 
+  it('a QBO error on one click is recorded and the rest still upload', async () => {
+    const { deps, upload } = makeDeps();
+    deps.qb.getEstimatesByCustomer = async () => {
+      throw new Error('QuickBooks API error: 429');
+    };
+    const s = await runAdsConversions(deps, { mode: 'live' });
+    expect(s.failed).toEqual([{ orderId: 'click:6175550002', error: 'QuickBooks API error: 429' }]);
+    expect(s.uploaded).toBe(1); // the ref-matched lead (no QBO customer)
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
   it('off does nothing', async () => {
     const { deps, upload } = makeDeps();
     expect((await runAdsConversions(deps, { mode: 'off' })).skipped).toBe('off');
