@@ -31,7 +31,7 @@ function flash(id: string) {
   setTimeout(() => el.classList.remove("hot"), 1400);
 }
 
-/** The approved Referrals mockup: who we send what, the decline rules, time-bound policies. */
+/** The approved Referrals mockup: who we send what, the decline and case-by-case rules, time-bound policies. */
 export function ReferralsView({ initial, today }: { initial: Data; today: string }) {
   const [data, setData] = useState(initial);
   const [editing, setEditing] = useState<string | null>(null);
@@ -57,11 +57,12 @@ export function ReferralsView({ initial, today }: { initial: Data; today: string
   const byId = new Map(data.referrals.map((r) => [r.id, r]));
   // Newest rules first: the latest owner decisions are the ones to check.
   const declines = data.rules.filter((r) => r.kind === "decline").sort((a, b) => b.since.localeCompare(a.since) || a.id.localeCompare(b.id));
+  const caseByCase = data.rules.filter((r) => r.kind === "case-by-case").sort((a, b) => b.since.localeCompare(a.since) || a.id.localeCompare(b.id));
   const policies = data.rules.filter((r) => r.kind === "policy");
   const missing = data.referrals.filter((r) => !r.phone);
   const reviews = policies.filter((p) => p.reviewBy && p.reviewBy <= today && active(p, today));
   const shown = declines.filter((r) => filter === "all" || (filter === "ref" ? r.referralIds?.length : !r.referralIds?.length));
-  const usedBy = (id: string) => declines.filter((r) => r.referralIds?.includes(id));
+  const usedBy = (id: string) => [...declines, ...caseByCase].filter((r) => r.referralIds?.includes(id));
 
   const jumpToRule = (id: string) => {
     if (filter !== "all") setFilter("all");
@@ -77,7 +78,7 @@ export function ReferralsView({ initial, today }: { initial: Data; today: string
       <PageHeader
         eyebrow="What we send out"
         title="Referrals"
-        sub="Who gets the work we don't do, and the rules for what we decline. The intake reply and the quote drafter read this page's list every time they draft."
+        sub="Who gets the work we don't do, the rules for what we decline, and what you decide case by case. The intake reply and the quote drafter read this page's list every time they draft."
         right={
           <button className="btn primary" type="button" onClick={() => setEditing("ref:new")}>
             + Referral
@@ -93,6 +94,10 @@ export function ReferralsView({ initial, today }: { initial: Data; today: string
         <div className="gl">
           <span className="micro">Decline rules</span>
           <b>{declines.filter((r) => active(r, today)).length}</b>
+        </div>
+        <div className="gl">
+          <span className="micro">Case by case</span>
+          <b>{caseByCase.filter((r) => active(r, today)).length}</b>
         </div>
         <div className="gl">
           <span className="micro">Time-bound policies</span>
@@ -118,7 +123,7 @@ export function ReferralsView({ initial, today }: { initial: Data; today: string
                     <div className="title">{r.name} has no phone number</div>
                     <div className="meta">
                       <span className="tag area">Referrals</span>
-                      <span className="tag">Used by {usedBy(r.id).length} decline rules</span>
+                      <span className="tag">Used by {usedBy(r.id).length} rules</span>
                     </div>
                   </div>
                   <div className="acts">
@@ -247,41 +252,7 @@ export function ReferralsView({ initial, today }: { initial: Data; today: string
             editing === `rule:${r.id}` ? (
               <RuleForm key={r.id} rule={r} kind="decline" referrals={data.referrals} onDone={() => setEditing(null)} change={change} />
             ) : (
-              <div key={r.id} className={`rule${r.paused ? " off" : ""}`} id={`rule-${r.id}`}>
-                <div className="n">
-                  <div className="t">{r.text}</div>
-                  <div className="meta">
-                    {r.referralIds?.length ? (
-                      r.referralIds.map((id) => {
-                        const ref = byId.get(id);
-                        if (!ref) return null;
-                        return (
-                          <button key={id} type="button" className="tag link" onClick={() => flash(`ref-${id}`)}>
-                            → {ref.name}
-                            {ref.phone ? "" : " (no phone)"}
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <span className="tag">Decline kindly, no referral</span>
-                    )}
-                    <span className="tag">Since {shortDate(r.since, true)}</span>
-                    {r.paused && <span className="tag amber">Paused: drafters ignore it</span>}
-                  </div>
-                </div>
-                <div className="acts">
-                  <button className="btn sm" type="button" onClick={() => setEditing(`rule:${r.id}`)}>
-                    Edit
-                  </button>
-                  <button
-                    className="btn sm ghost"
-                    type="button"
-                    onClick={() => change({ op: "pauseRule", id: r.id, paused: !r.paused }, r.paused ? "Back on. Drafters use it on their next run." : "Paused. Drafters ignore it until you turn it back on.")}
-                  >
-                    {r.paused ? "Turn back on" : "Pause"}
-                  </button>
-                </div>
-              </div>
+              <RuleRow key={r.id} rule={r} byId={byId} onEdit={() => setEditing(`rule:${r.id}`)} change={change} />
             ),
           )}
           {editing === "rule:new" && <RuleForm rule={null} kind="decline" referrals={data.referrals} onDone={() => setEditing(null)} change={change} />}
@@ -289,6 +260,29 @@ export function ReferralsView({ initial, today }: { initial: Data; today: string
         {editing !== "rule:new" && (
           <button className="btn sm" type="button" style={{ alignSelf: "flex-start" }} onClick={() => setEditing("rule:new")}>
             + Decline rule
+          </button>
+        )}
+      </section>
+
+      <section className="sec">
+        <div className="sec-h">
+          <h2>Case by case</h2>
+          <span className="hint">Never declined automatically. The draft asks what you'd need to decide and flags it for you.</span>
+        </div>
+        <div className="card">
+          {caseByCase.length === 0 && editing !== "rule:new-cbc" && <div className="empty">Nothing case by case.</div>}
+          {caseByCase.map((r) =>
+            editing === `rule:${r.id}` ? (
+              <RuleForm key={r.id} rule={r} kind="case-by-case" referrals={data.referrals} onDone={() => setEditing(null)} change={change} />
+            ) : (
+              <RuleRow key={r.id} rule={r} byId={byId} onEdit={() => setEditing(`rule:${r.id}`)} change={change} />
+            ),
+          )}
+          {editing === "rule:new-cbc" && <RuleForm rule={null} kind="case-by-case" referrals={data.referrals} onDone={() => setEditing(null)} change={change} />}
+        </div>
+        {editing !== "rule:new-cbc" && (
+          <button className="btn sm" type="button" style={{ alignSelf: "flex-start" }} onClick={() => setEditing("rule:new-cbc")}>
+            + Case-by-case rule
           </button>
         )}
       </section>
@@ -308,6 +302,46 @@ export function ReferralsView({ initial, today }: { initial: Data; today: string
 }
 
 type Change = (body: Record<string, unknown>, ok: string) => Promise<boolean>;
+
+function RuleRow({ rule: r, byId, onEdit, change }: { rule: StandingRule; byId: Map<string, Referral>; onEdit: () => void; change: Change }) {
+  return (
+    <div className={`rule${r.paused ? " off" : ""}`} id={`rule-${r.id}`}>
+      <div className="n">
+        <div className="t">{r.text}</div>
+        <div className="meta">
+          {r.referralIds?.length ? (
+            r.referralIds.map((id) => {
+              const ref = byId.get(id);
+              if (!ref) return null;
+              return (
+                <button key={id} type="button" className="tag link" onClick={() => flash(`ref-${id}`)}>
+                  → {ref.name}
+                  {ref.phone ? "" : " (no phone)"}
+                </button>
+              );
+            })
+          ) : (
+            <span className="tag">{r.kind === "case-by-case" ? "No referral" : "Decline kindly, no referral"}</span>
+          )}
+          <span className="tag">Since {shortDate(r.since, true)}</span>
+          {r.paused && <span className="tag amber">Paused: drafters ignore it</span>}
+        </div>
+      </div>
+      <div className="acts">
+        <button className="btn sm" type="button" onClick={onEdit}>
+          Edit
+        </button>
+        <button
+          className="btn sm ghost"
+          type="button"
+          onClick={() => change({ op: "pauseRule", id: r.id, paused: !r.paused }, r.paused ? "Back on. Drafters use it on their next run." : "Paused. Drafters ignore it until you turn it back on.")}
+        >
+          {r.paused ? "Turn back on" : "Pause"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function ReferralCard({
   ref_,
@@ -432,7 +466,7 @@ function ReferralCard({
       <div className="lbl">We send them</div>
       <div className="sends">{r.sends}</div>
       {r.note && <div className="note">{r.note}</div>}
-      <div className="lbl">From these decline rules</div>
+      <div className="lbl">From these rules</div>
       <div className="chiprow">{chips}</div>
       <div className="a">
         <button className="btn sm" type="button" onClick={onEdit}>
@@ -495,7 +529,7 @@ function RuleForm({
         </label>
       </div>
       <label>
-        {kind === "policy" ? "The policy, as you'd say it" : "What we decline, as you'd say it"}
+        {kind === "policy" ? "The policy, as you'd say it" : kind === "case-by-case" ? "What you decide case by case, as you'd say it" : "What we decline, as you'd say it"}
         <textarea value={text} onChange={(e) => setText(e.target.value)} />
       </label>
       {kind === "policy" ? (

@@ -41,6 +41,14 @@ describe('can-help', () => {
     expect(block).toContain('- Henry at Best Bulkheads (781) 801-8188: bulkhead doors and replacement');
   });
 
+  it('lists case-by-case rules in their own section, never under declines', () => {
+    const cbc: StandingRule = { id: 'stone', kind: 'case-by-case', text: 'Large stone repointing', referralIds: ['best'], since: '2026-11-05' };
+    const block = buildCanHelpBlock({ rules: [...rules, cbc], referrals, today: '2026-11-05' });
+    const [declines, rest] = block.split('CASE BY CASE');
+    expect(declines).not.toContain('Large stone');
+    expect(rest).toContain('- Large stone repointing → refer: Henry at Best Bulkheads');
+  });
+
   it('store round-trips through a hash', async () => {
     const h: Record<string, Record<string, unknown>> = {};
     const redis = {

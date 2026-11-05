@@ -54,6 +54,8 @@ export function routedIntake(
     customerText: [...inbound.map((m) => (m.text ?? '').trim()).filter(Boolean), ...voicemails].join('\n'),
     mediaCount: inbound.reduce((n, m) => n + (m.media?.length ?? 0), 0),
     photoNotes: photos.map((p) => read.photos[p.key]).filter((d): d is string => !!d),
+    // The read declines past the far-drive area; inside it, the drive is Matt's call.
+    ...(read.propertyState === 'other' ? { flag: `property outside Massachusetts${read.entities.address ? ` (${read.entities.address})` : ''}, your call on the drive` } : {}),
     mediaUrls: photos.map((p) => p.url),
     inquiryAt: burstFromMs,
   };

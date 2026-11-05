@@ -116,7 +116,7 @@ Steps:
 3. Note which of these the customer ALREADY provided, and extract the values: full name, property address, email address. Use null for anything not provided.
 4. Verdict, from the text AND the photos, against the can't-help rules above (if given):
    - "cant-help": what they need is on the can't-help list (e.g. water coming through a cinder block wall or block bulkhead stairwell). Judge the material and whether it is actually leaking from the photos.
-   - "need-info": it could go either way and ONE fact decides it (e.g. you can't tell whether the bulkhead walls are cinder block or poured concrete, or whether it is actually leaking).
+   - "need-info": it could go either way and ONE fact decides it (e.g. you can't tell whether the bulkhead walls are cinder block or poured concrete, or whether it is actually leaking). Anything on the CASE BY CASE list is need-info, never cant-help: ask what Matt would need to decide (often whether he can come take a look), and start verdictReason with "Case by case:".
    - "can-help": plausibly crack repair / concrete work we do.
    Put a one-sentence reason in verdictReason (what you saw that decided it).
 5. If classification is "lead" AND the state is NOT "CT": draft Matt's reply, by verdict.

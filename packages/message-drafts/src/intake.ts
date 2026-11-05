@@ -262,6 +262,8 @@ export interface RoutedIntake {
   mediaUrls: string[];
   /** When this burst began, for the note's "N min ago". */
   inquiryAt: number;
+  /** A case-by-case call for Matt the draft doesn't make (an out-of-state property). */
+  flag?: string;
 }
 
 /**
@@ -305,7 +307,8 @@ export async function processRoutedIntake(deps: DraftDeps, phone: string, r: Rou
     gateFail = reply ? gateIntake(reply, r.customerText, r.mediaCount, verdict) : 'generation failed';
     draft = gateFail ? intakeFallback(r.mediaCount, verdict) : reply!;
     const why = verdict !== 'can-help' && r.reason ? ` Why: ${r.reason}` : '';
-    extra = `New inquiry ${ageMin} min ago, no reply yet.${photos}${why}${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}`;
+    const flag = r.flag && verdict !== 'cant-help' ? ` Case by case: ${r.flag}.` : '';
+    extra = `New inquiry ${ageMin} min ago, no reply yet.${photos}${why}${flag}${gateFail ? ` (fallback skeleton used: ${gateFail})` : ''}`;
   }
   return postIntakeNote(deps, phone, {
     kind, draft, extra, now,

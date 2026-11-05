@@ -542,6 +542,9 @@ describe('live routes', () => {
       photoNotes: ['block wall, wet', 'puddle'],
       inquiryAt: NOW - 8 * 60_000,
     });
+    expect(r.flag).toBeUndefined();
+    const nh = { ...ctx([]).read, propertyState: 'other' as const, entities: { name: null, address: 'Keene, NH', email: null } };
+    expect(routedIntake('intake', nh, thread, ctx([]).referrals, NOW).flag).toBe('property outside Massachusetts (Keene, NH), your call on the drive');
   });
 
   it('intake live: intake, CT routing and a first-reply decline go to intake; nothing else does', async () => {

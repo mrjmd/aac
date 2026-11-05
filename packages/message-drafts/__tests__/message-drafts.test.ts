@@ -407,6 +407,15 @@ describe('processRoutedIntake (inbound router, phase 4)', () => {
     expect(state.records.at(-1)).toMatchObject({ type: 'intake', via: 'router', outcome: 'drafted', verdict: 'can-help' });
   });
 
+  it('an out-of-state lead is drafted normally and the note flags the drive for Matt', async () => {
+    const { deps, mocks } = makeDeps();
+    mocks.generateContent.mockResolvedValue(ask);
+    await processRoutedIntake(deps, '+19785550140', routed({ flag: 'property outside Massachusetts (Keene, NH), your call on the drive' }));
+    const note = mocks.createContactNote.mock.calls[0][1] as string;
+    expect(note).toContain('FIRST-TOUCH INTAKE');
+    expect(note).toContain('Case by case: property outside Massachusetts (Keene, NH), your call on the drive.');
+  });
+
   it('a decline names the referral the read picked and never asks for contact details', async () => {
     const { deps, mocks } = makeDeps();
     mocks.generateContent.mockResolvedValue('generation fails the gate on purpose');

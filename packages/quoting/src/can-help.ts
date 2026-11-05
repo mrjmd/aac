@@ -18,7 +18,8 @@ export interface Referral {
   note?: string;
 }
 
-export type StandingRuleKind = 'decline' | 'policy';
+/** decline = we don't do it; case-by-case = Matt decides each one (never an automatic decline); policy = time-bound. */
+export type StandingRuleKind = 'decline' | 'case-by-case' | 'policy';
 
 export interface StandingRule {
   id: string;
@@ -56,10 +57,14 @@ export function buildCanHelpBlock(args: { rules: StandingRule[]; referrals: Refe
   };
   const active = args.rules.filter((r) => isRuleActive(r, args.today));
   const declines = active.filter((r) => r.kind === 'decline');
+  const caseByCase = active.filter((r) => r.kind === 'case-by-case');
   const policies = active.filter((r) => r.kind === 'policy');
   return [
     `WE CAN'T HELP WITH (owner's standing rules; decline kindly and point them to the referral when one fits):`,
     ...declines.map(line),
+    ...(caseByCase.length
+      ? ['', 'CASE BY CASE (Matt decides each one: never decline these yourself; flag them for him; the referral is for if he passes):', ...caseByCase.map(line)]
+      : []),
     ...(policies.length ? ['', 'CURRENT OWNER POLICIES:', ...policies.map(line)] : []),
     '',
     'REFERRALS (who we send other work to):',
