@@ -37,7 +37,7 @@ const RULES: StandingRule[] = [
   { id: 'stone-large', kind: 'decline', short: 'Large stone repointing', text: 'Large-scale stone/fieldstone repointing or fieldstone leaking across a whole wall.', referralIds: ['old-colony', 'knights-masonry'], since: '2025-03-01' },
   { id: 'trades', kind: 'decline', short: 'Other trades', text: 'Non-concrete trades: wood beams, joists, lally columns, chimneys, drywall patching, standalone painting, tile, railings, pool plaster, stamped concrete, mold, concrete cutting.', since: '2024-09-01' },
   { id: 'asphalt', kind: 'decline', short: 'Asphalt', text: 'Asphalt of any kind (we only work with concrete).', since: '2025-01-01' },
-  { id: 'too-small', kind: 'decline', short: 'Too small', text: 'Jobs below our $375 trip minimum: decline kindly with a DIY tip (e.g. Sikaflex).', since: '2024-09-01' },
+  { id: 'too-small', kind: 'decline', short: 'Too small', text: 'Jobs below our $675 trip minimum: decline kindly with a DIY tip (e.g. Sikaflex).', since: '2024-09-01' },
   { id: 'out-of-area', kind: 'decline', short: 'Out of area', text: 'Outside our service area (western CT, Nantucket, out of state). Connecticut properties go to Luc.', referralIds: ['luc'], since: '2025-06-01' },
   { id: 'special-risk', kind: 'decline', short: 'Special risk', text: 'Balconies (insurance), drive-on structural decks or carports, heavy-machinery commercial floors.', since: '2025-05-01' },
   { id: 'resurfacing-pause', kind: 'policy', short: 'Resurfacing pause', text: 'Not taking on large square-footage concrete resurfacing (full garages, pool decks, big patios or driveways). Stairs and small panels are fine. Offer to follow up then.', since: '2026-10-21', untilWhen: 'tech #2 starts, possibly spring', reviewBy: '2027-03-01' },
