@@ -38,6 +38,7 @@ export function fromAwaitingQuote(a: AwaitingQuote): ItemCandidate {
     amount: a.amount,
     ...(a.snippet ? { evidence: `Their last ${a.channel}: "${a.snippet}"` } : {}),
     action: 'Reply (the follow-up bot waits for you)',
+    waitingSince: a.lastInboundAt,
     fingerprint: fp(a.lastInboundAt),
   };
 }

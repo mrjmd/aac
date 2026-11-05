@@ -33,6 +33,9 @@ function cand(over: Partial<ItemCandidate> = {}): ItemCandidate {
   };
 }
 
+/** A candidate about a different person (no shared phone or name), so grouping leaves it alone. */
+const solo = (key: string, over: Partial<ItemCandidate> = {}) => cand({ key, customer: key, phone: undefined, ...over });
+
 function stateAfter(c: ItemCandidate, verb: Parameters<typeof applyVerb>[1], at = T0): Record<string, ItemState> {
   const { states } = reconcile([c], {}, [], at);
   return { [c.key]: applyVerb(states[c.key], verb, c, at) };
@@ -49,7 +52,7 @@ describe('reconcile', () => {
   it('baseline import starts everything placed, later arrivals are new', () => {
     const first = reconcile([cand({ key: 'a' })], {}, [], T0, { baseline: true });
     expect(first.items[0].band).toBe('list');
-    const later = reconcile([cand({ key: 'a' }), cand({ key: 'b' })], first.states, [], hoursLater(1));
+    const later = reconcile([solo('a'), solo('b')], first.states, [], hoursLater(1));
     expect(later.items.map((i) => [i.key, i.band])).toEqual([
       ['b', 'new'],
       ['a', 'list'],
@@ -100,10 +103,10 @@ describe('reconcile', () => {
     expect(reconcile([cand()], {}, [other], T0).items).toHaveLength(1);
   });
 
-  it('orders Today by Matt’s rank and never ranks new items', () => {
-    const a = cand({ key: 'a', severity: 'info' });
-    const b = cand({ key: 'b', severity: 'red' });
-    const c = cand({ key: 'c', severity: 'red' });
+  it('orders Today by Matt’s rank; new items get no rank', () => {
+    const a = solo('a', { severity: 'info' });
+    const b = solo('b', { severity: 'red' });
+    const c = solo('c', { severity: 'red' });
     let { states } = reconcile([a, b, c], {}, [], T0);
     states.a = applyVerb(states.a, { type: 'pin' }, a, T0);
     states.b = applyVerb(states.b, { type: 'pin' }, b, T0, [states.a.rank ?? 0]);

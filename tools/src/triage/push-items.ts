@@ -49,8 +49,17 @@ export function triageCandidates(data: FindingsFile): ItemCandidate[] {
       .map((r) => fromBotDraft({ ...r, customer: r.label?.customer })),
   ];
   const byKey = new Map<string, ItemCandidate>();
-  for (const c of all) if (c) byKey.set(c.key, c);
+  // Internal numbers (Ed, Mike, the business and agent lines) are never a
+  // customer, whichever detector emitted them (d13/d14 had no guard).
+  for (const c of all) if (c && !(c.phone && isInternalPhone(c.phone))) byKey.set(c.key, withCluster(c, data.contactClusters ?? {}));
   return [...byKey.values()];
+}
+
+/** Stamp the identity cluster so the command center folds one person's items together. */
+function withCluster(c: ItemCandidate, clusters: Record<string, string>): ItemCandidate {
+  const contacts = [c.phone, ...(c.who?.phones ?? []), ...(c.who?.emails ?? []).map((e) => e.toLowerCase())];
+  const cluster = contacts.map((k) => (k ? clusters[k] : undefined)).find(Boolean);
+  return cluster ? { ...c, who: { ...c.who, cluster } } : c;
 }
 
 /** Publish to keys.itemCandidates. Needs UPSTASH_REDIS_REST_URL/TOKEN in env. */

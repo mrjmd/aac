@@ -28,6 +28,14 @@ export interface ItemCandidate {
   fingerprint: string;
   /** Money and legal items ask for a confirm before dismiss or mute. */
   sensitive?: 'money' | 'legal';
+  /** A hard time: a promise ("I'll call at 2pm") or a customer ask with a time. ISO. Ranks first. */
+  dueAt?: string;
+  /** A customer has been waiting on Matt since this time (their last inbound). ISO. */
+  waitingSince?: string;
+  /** Someone selling to Matt. Sinks to the bottom and collapses. */
+  solicitation?: boolean;
+  /** Who it's about, for one-person-one-item grouping. `cluster` is the triage identity cluster (per run). */
+  who?: { phones?: string[]; emails?: string[]; cluster?: string };
 }
 
 export type ItemStatus = 'open' | 'done' | 'snoozed' | 'dismissed';
@@ -76,12 +84,19 @@ export interface Item extends ItemCandidate {
   band: Band;
   /** Days on Today since first pinned; >= 3 means do it, schedule it, or let it go. */
   rolloverDays?: number;
+  /** Ranking score (higher first) and the plain reasons behind it (rank.ts). */
+  score: number;
+  why: string[];
+  /** On Today because the ranking put it there, not because Matt pinned it. */
+  suggested?: boolean;
+  /** The same person's other items, folded under this one (group.ts). */
+  related?: Item[];
 }
 
 export type HiddenReason = 'done' | 'snoozed' | 'dismissed' | 'muted';
 
 export interface ReconcileResult {
-  /** Today (Matt's rank order), then new, then list (severity, amount). */
+  /** Today (suggested by score, then Matt's rank order), then new, then list (both by score). One item per person. */
   items: Item[];
   hidden: Array<{ key: string; reason: HiddenReason; candidate: ItemCandidate }>;
   /** Every state after this run (new ones created, reopened ones updated). Persist all. */

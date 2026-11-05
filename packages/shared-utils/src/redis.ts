@@ -280,6 +280,15 @@ export const keys = {
   /** HASH: rule id → JSON MuteRule ("this kind is noise"). */
   itemMutes: 'cc:items:mutes' as const,
 
+  /** LIST (newest first, capped): Matt's drags and verbs with each item's rank features at that moment. Training data for the Today ranking. */
+  itemRankLog: 'cc:items:rank-log' as const,
+
+  /** ISO time a middleware cron last ran. Written by middleware's trackCronRun (same string); read by the watchdog. */
+  cronLastRun: (job: string) => `cron:${job}:last-run` as const,
+
+  /** HASH: watchdog condition id → JSON {since, alertedAt} for open conditions (dedup + recovery notices). */
+  watchdogState: 'watchdog:state' as const,
+
   /** HASH: person id → JSON Person (agenda topics, past conversations, tagged items, facts). No TTL. */
   ccPeople: 'cc:people' as const,
 

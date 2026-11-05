@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { FieldEvent } from "@/lib/field-events";
-import { ago, customerHref, SortableList } from "../components/items";
+import { ago, customerHref, ItemCard, SortableList } from "../components/items";
 import { Glance, OverviewTabs, PageHeader } from "../components/layout-parts";
 import { PersonCard, pendingPeople } from "../components/people";
 import { useItems } from "../items-context";
@@ -34,7 +34,8 @@ export function TodayView({
   const { view, error, act, reorder, say } = useItems();
 
   const items = view?.items ?? [];
-  const fresh = items.filter((i) => i.band === "new" && i.lane !== "confirm");
+  const fresh = items.filter((i) => i.band === "new" && i.lane !== "confirm" && !i.solicitation);
+  const pitches = items.filter((i) => i.band !== "today" && i.lane !== "confirm" && i.solicitation);
   const mine = items.filter((i) => i.band === "today" && i.lane !== "confirm");
   const confirm = items.filter((i) => i.lane === "confirm");
   const backlog = items.filter((i) => i.band === "list" && i.lane !== "confirm");
@@ -42,12 +43,12 @@ export function TodayView({
 
   const talks = pendingPeople(usePeople().people);
 
-  /** Keys dropped into My order: pin the new ones, then save the order. */
+  /** Keys dropped into My order (or a suggestion dragged): pin the unpinned ones, then save the order. */
   const order = async (keys: string[]) => {
-    const added = keys.filter((k) => !mine.some((i) => i.key === k));
+    const added = keys.filter((k) => !mine.find((i) => i.key === k)?.state.pinnedFor);
     for (const k of added) await act(k, { type: "pin" });
     await reorder(keys);
-    if (added.length) say("Added to your list");
+    if (keys.some((k) => !mine.some((i) => i.key === k))) say("Added to your list");
   };
 
   return (
@@ -100,18 +101,12 @@ export function TodayView({
         <div className="empty">Loading items…</div>
       ) : (
         <>
-          <section className="sec band-new">
-            <div className="sec-h">
-              <h2>New since you looked · {fresh.length}</h2>
-              <span className="hint">Drag into your list, add it, or dismiss it. Nothing here moves your order.</span>
-            </div>
-            <SortableList id="newlist" items={fresh} ctx="new" empty="Nothing new. Quiet is good." group={{ pull: true, put: false }} />
-          </section>
-
           <section className="sec">
             <div className="sec-h">
               <h2>My order · {mine.length}</h2>
-              <span className="hint">Drag ⠿ to reorder. Your order stays put.</span>
+              <span className="hint">
+                Suggested items rank by deadline, then how long a customer has waited, then dollars. Drag ⠿ to set your order; it stays put.
+              </span>
             </div>
             <SortableList
               id="mylist"
@@ -125,6 +120,24 @@ export function TodayView({
               onOrder={order}
               group={{ pull: false, put: true }}
             />
+          </section>
+
+          <section className="sec band-new">
+            <div className="sec-h">
+              <h2>New since you looked · {fresh.length}</h2>
+              <span className="hint">Drag into your list, add it, or dismiss it. Nothing here moves your order.</span>
+            </div>
+            <SortableList id="newlist" items={fresh} ctx="new" empty="Nothing new. Quiet is good." group={{ pull: true, put: false }} />
+            {pitches.length > 0 && (
+              <details className="fold">
+                <summary>Solicitations · {pitches.length}</summary>
+                <div className="list">
+                  {pitches.map((i) => (
+                    <ItemCard key={i.key} item={i} ctx="area" />
+                  ))}
+                </div>
+              </details>
+            )}
           </section>
 
           {talks.length > 0 && (

@@ -380,6 +380,27 @@ export class IdentityIndex {
     return roots;
   }
 
+  /**
+   * Phone/email → cluster id, for clusters that join two or more of them
+   * (a customer's second phone, their email). The command center groups a
+   * person's items with it (@aac/items group.ts). Ids are per run.
+   */
+  contactClusters(): Record<string, string> {
+    const byRoot = new Map<string, string[]>();
+    for (const k of this.dsu.keys()) {
+      if (!k.startsWith('phone:') && !k.startsWith('email:')) continue;
+      if (this.hubs.has(k)) continue;
+      const r = this.dsu.find(k);
+      byRoot.set(r, [...(byRoot.get(r) ?? []), k]);
+    }
+    const out: Record<string, string> = {};
+    for (const [r, ks] of byRoot) {
+      if (ks.length < 2) continue;
+      for (const k of ks) out[k.slice(k.indexOf(':') + 1)] = r;
+    }
+    return out;
+  }
+
   /** Every upcoming booked job across the subject's clusters. */
   bookingsFor(s: Subject): BookedJob[] {
     const seen = new Map<string, BookedJob>();

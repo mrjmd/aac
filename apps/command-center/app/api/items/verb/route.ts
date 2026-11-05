@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { applyVerb, ConfirmRequiredError, TODO_KEY_PREFIX, type Verb } from "@aac/items";
+import { applyVerb, ConfirmRequiredError, rankFeatures, TODO_KEY_PREFIX, type Verb } from "@aac/items";
 import { getItemStore, loadCandidates, todayRanks } from "@/lib/items";
 import { completeTodo } from "@/lib/todos";
 
@@ -36,8 +36,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Unknown item ${key}` }, { status: 404 });
   }
   try {
-    const next = applyVerb(state, verb, candidate, new Date(), todayRanks(states));
+    const now = new Date();
+    const next = applyVerb(state, verb, candidate, now, todayRanks(states));
     await store.putStates({ [key]: next });
+    // Training data for the Today ranking: what he did, and what it looked like when he did it.
+    await store
+      .logRank({ at: now.toISOString(), action: verb.type, items: [rankFeatures(candidate, state, now)] })
+      .catch(() => undefined);
     // Done on a to-do completes it in the to-do store too (CLI, triage, /todos).
     if (verb.type === "done" && key.startsWith(TODO_KEY_PREFIX)) await completeTodo(key.slice(TODO_KEY_PREFIX.length));
     return NextResponse.json({ ok: true, state: next });

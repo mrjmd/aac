@@ -104,6 +104,8 @@ export interface Finding {
   /** Who this is about + when the evidence happened — feeds the shared
    *  booked-customer cross-reference (identity.ts). */
   xref?: Xref;
+  /** L1/L2: a hard time from the thread (ISO), e.g. "call at 2pm today". Ranks first on Today. */
+  dueAt?: string;
 }
 
 export interface FindingsFile {
@@ -135,6 +137,8 @@ export interface FindingsFile {
   /** Clusters with an upcoming green job — render filters the stale-quote
    *  sections (awaiting-human) on these. */
   booked?: Array<{ phones: string[]; emails: string[]; qboIds: string[]; event: string; start: string; createdAt: string | null }>;
+  /** Phone/email → identity cluster, for one-person-one-item grouping in the command center. */
+  contactClusters?: Record<string, string>;
   stats: Record<string, number>;
 }
 
@@ -237,6 +241,8 @@ interface LlmVerdict {
   suggested_action: string;
   urgency: 'red' | 'yellow' | 'info';
   confidence: 'high' | 'medium' | 'low';
+  /** A hard time in the thread (a promise or a timed ask), Eastern "YYYY-MM-DDTHH:MM". */
+  due_at?: string | null;
 }
 
 function transcriptExcerpt(transcriptDir: string, callId: string, ourDigits: string): string {
@@ -294,6 +300,19 @@ function emailDigest(t: EmailThreadSnapshot): string {
 }
 
 const gmailThreadLink = (threadId: string): string => `https://mail.google.com/mail/#all/${threadId}`;
+
+/** The verdict's Eastern wall-clock due_at as an ISO instant, when it parses. */
+function dueFrom(v: LlmVerdict): { dueAt?: string } {
+  const m = v.due_at?.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return {};
+  const [y, mo, d, h, mi] = m.slice(1).map(Number);
+  // Eastern offset for that date: EDT (UTC-4) or EST (UTC-5).
+  const probe = new Date(Date.UTC(y, mo - 1, d, 12));
+  const tz = probe.toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' });
+  const offset = tz.includes('EDT') ? 4 : 5;
+  const at = new Date(Date.UTC(y, mo - 1, d, h + offset, mi));
+  return Number.isNaN(at.getTime()) ? {} : { dueAt: at.toISOString() };
+}
 
 function parseVerdict(raw: string): LlmVerdict | null {
   const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim();
@@ -1068,7 +1087,8 @@ async function main(): Promise<void> {
     )
     .join('\n');
 
-  const systemPrompt = `You triage SMS/call/email threads for Attack A Crack, a foundation-repair company in Quincy MA. Matt is the owner. In threads, OUT messages and transcript lines starting "M:" are Matt; IN and "C:" are the other party. Today is ${nowIso.slice(0, 10)}.
+  const nowEastern = new Date(now).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'long', year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const systemPrompt = `You triage SMS/call/email threads for Attack A Crack, a foundation-repair company in Quincy MA. Matt is the owner. In threads, OUT messages and transcript lines starting "M:" are Matt; IN and "C:" are the other party. Today is ${nowIso.slice(0, 10)} (now: ${nowEastern} Eastern).
 
 Below is the company Google Calendar (past 14 days + next 60 days). Event kinds: JOB = booked paid work, ASSESS = assessment visit, CALLBACK = warranty rework.
 
@@ -1089,7 +1109,9 @@ For the thread you are given, decide if it contains a genuinely actionable gap:
 - "none": nothing pending on our side (vendors we already work with, personal threads, or threads where Matt's last message settles everything).
 
 Be conservative: a real gap only. If a matching calendar event exists, it is NOT a booked_gap. Respond with ONLY a JSON object:
-{"needs_action": boolean, "category": "booked_gap"|"quote_promised"|"deal_closer"|"unresolved"|"solicitation"|"none", "customer_name": string|null, "title": "short label", "summary": "1-2 sentences", "evidence": "short verbatim quote from the thread", "suggested_action": "imperative, short", "urgency": "red"|"yellow"|"info", "confidence": "high"|"medium"|"low"}`;
+{"needs_action": boolean, "category": "booked_gap"|"quote_promised"|"deal_closer"|"unresolved"|"solicitation"|"none", "customer_name": string|null, "title": "short label", "summary": "1-2 sentences", "evidence": "short verbatim quote from the thread", "suggested_action": "imperative, short", "urgency": "red"|"yellow"|"info", "confidence": "high"|"medium"|"low", "due_at": "YYYY-MM-DDTHH:MM"|null}
+
+due_at: only when the thread pins the open action to a specific time: Matt promised one ("I'll call you at 2", "I'll call tomorrow morning", "I'll have the quote to you Friday") or the customer asked for one ("can you call me at 2pm today?"). Resolve it to an Eastern-time date and time using the message's date ("tomorrow morning" = 09:00 the next day, "end of day" = 17:00, a day with no time = 09:00 that day). No specific time in the thread = null. Never invent one from urgency.`;
 
   let llmErrors = 0;
   const askVerdict = async (label: string, userPrompt: string): Promise<LlmVerdict | null> => {
@@ -1189,6 +1211,7 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
         source: 'L1',
         confidence: v.confidence,
         xref: threadXref,
+        ...dueFrom(v),
       });
     } else if (det && (!v || det.kind === 'voicemail')) {
       // LLM failed for this thread — keep the deterministic flag. For
@@ -1286,6 +1309,7 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
         confidence: v.confidence,
         link: gmailThreadLink(t.threadId),
         xref: emailXref,
+        ...dueFrom(v),
       });
     } else if (!v && last.direction === 'incoming') {
       const ageH = Math.round((now - new Date(last.at).getTime()) / 3_600_000);
@@ -1530,6 +1554,7 @@ Be conservative: a real gap only. If a matching calendar event exists, it is NOT
     },
     quoteDrafterRunlog: worker.quoteDrafterRunlog,
     suppressed: booked.suppressed,
+    contactClusters: identity.contactClusters(),
     booked: identity.bookedClusters().map((c) => ({
       phones: c.phones,
       emails: c.emails,

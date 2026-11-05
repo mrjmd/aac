@@ -56,6 +56,8 @@ function Tags({ item, ctx }: { item: Item; ctx: Ctx }) {
       {item.detector.startsWith("L") && <span className="tag ai">AI-detected</span>}
       {item.state.reopenedAt && <span className="tag auto">Back: new evidence</span>}
       {ctx === "area" && item.band === "today" && <span className="tag ontoday">On Today</span>}
+      {item.suggested && <span className="tag auto">Suggested</span>}
+      {item.related?.length ? <span className="tag">+{item.related.length} more for this person</span> : null}
     </>
   );
 }
@@ -80,14 +82,21 @@ export function ItemCard({ item, ctx, n }: { item: Item; ctx: Ctx; n?: number })
   };
   const undo = () => act(item.key, { type: "restore" }).then(() => undefined);
 
-  const done = () => run(async () => (await act(item.key, { type: "done" }), say("Marked done", undo)));
+  // One person = one item: Done and Snooze cover the person's folded items too.
+  const everyKey = [item.key, ...(item.related ?? []).map((r) => r.key)];
+  const undoAll = () => Promise.all(everyKey.map((k) => act(k, { type: "restore" }))).then(() => undefined);
+  const done = () =>
+    run(async () => {
+      for (const k of everyKey) await act(k, { type: "done" });
+      say(everyKey.length > 1 ? `Marked done (${everyKey.length} items)` : "Marked done", everyKey.length > 1 ? undoAll : undo);
+    });
   const pin = () =>
     run(async () => (await act(item.key, { type: "pin" }), say("On Today, at the bottom of your list")));
   const snooze = (label: string, until: string) =>
     run(async () => {
-      await act(item.key, { type: "snooze", until });
+      for (const k of everyKey) await act(k, { type: "snooze", until });
       setPanel(null);
-      say(`Snoozed until ${label.toLowerCase()}`, undo);
+      say(`Snoozed until ${label.toLowerCase()}`, everyKey.length > 1 ? undoAll : undo);
     });
   const dismiss = (reason: DismissReason, confirmed = false) =>
     run(async () => {
@@ -178,6 +187,10 @@ export function ItemCard({ item, ctx, n }: { item: Item; ctx: Ctx; n?: number })
             <div className="evidence">{[item.detail, item.evidence].filter(Boolean).join(" ")}</div>
           )}
           {item.action && <div className="evidence">→ {item.action}</div>}
+          <Related item={item} />
+          {ctx !== "area" && (item.band !== "today" || item.suggested) && item.why.length > 0 && (
+            <div className="why">Why here: {item.why.join(" · ")}</div>
+          )}
         </div>
         <div className="acts">{acts}</div>
       </div>
@@ -268,6 +281,21 @@ export function ItemCard({ item, ctx, n }: { item: Item; ctx: Ctx; n?: number })
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** The same person's other items, folded under this one. Click one for its details. */
+function Related({ item }: { item: Item }) {
+  const { setOpen } = useItems();
+  if (!item.related?.length) return null;
+  return (
+    <div className="related">
+      {item.related.map((r) => (
+        <button key={r.key} type="button" className="rel" onClick={() => setOpen(r)}>
+          <span className="k">{KIND[r.detector] ?? r.detector}</span> {r.title}
+        </button>
+      ))}
     </div>
   );
 }
@@ -384,9 +412,16 @@ export function Drawer() {
           <Tags item={i} ctx="today" />
         </div>
         {(i.detail || i.evidence) && <div>{[i.detail, i.evidence].filter(Boolean).join(" ")}</div>}
+        <Related item={i} />
         <dl className="kv">
           <dt>Status</dt>
-          <dd>{status}</dd>
+          <dd>{i.suggested ? "Suggested for Today" : status}</dd>
+          {i.why.length > 0 && (
+            <>
+              <dt>Why it ranks here</dt>
+              <dd>{i.why.join(" · ")}</dd>
+            </>
+          )}
           {i.action && (
             <>
               <dt>Next step</dt>

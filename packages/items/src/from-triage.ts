@@ -15,7 +15,14 @@ export interface TriageFinding {
   action?: string;
   source: string;
   link?: string;
+  /** Who it's about and when the evidence happened (triage identity.ts). */
+  xref?: { phones?: string[]; emails?: string[]; evidenceAt?: string };
+  /** A hard time from the thread (ISO). */
+  dueAt?: string;
 }
+
+/** Detectors where the evidence time is a customer's unanswered inbound. */
+const WAITING_SOURCES = new Set(['L1', 'L2', 'D6', 'D7', 'D8', 'D12', 'D15']);
 
 const AREA_BY_SECTION: Record<string, Area> = {
   system: 'system',
@@ -70,5 +77,14 @@ export function fromTriageFinding(f: TriageFinding): ItemCandidate {
   if (f.evidence) candidate.evidence = f.evidence;
   if (f.link) candidate.link = f.link;
   if (area === 'money') candidate.sensitive = 'money';
+  if (f.dueAt) candidate.dueAt = f.dueAt;
+  if (f.section === 'solicitation') candidate.solicitation = true;
+  else if (WAITING_SOURCES.has(f.source) && f.xref?.evidenceAt) candidate.waitingSince = f.xref.evidenceAt;
+  if (f.xref?.phones?.length || f.xref?.emails?.length) {
+    candidate.who = {
+      ...(f.xref.phones?.length ? { phones: f.xref.phones } : {}),
+      ...(f.xref.emails?.length ? { emails: f.xref.emails } : {}),
+    };
+  }
   return candidate;
 }
