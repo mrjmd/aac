@@ -26,6 +26,11 @@ Plain Vercel Serverless Functions (no framework) that run the
   recent inbound Gmail against the open-quote index and enqueues
   synthetic trigger events. Degrades to a logged skip without
   gmail.readonly on the Google token.
+- `api/watchdog.ts` — 5-min cron: outside-in pipe checks (`@aac/watchdog`).
+  Texts Matt from the agent line only when a pipe is down (Quo webhook,
+  middleware crons, worker heartbeats, middleware health), every 6h while
+  it lasts, and once on recovery. Env: `MATT_PERSONAL_PHONE_NUMBER`
+  (required), `QUO_AGENT_PHONE_NUMBER`, `MIDDLEWARE_HEALTH_URL`.
 - `api/health.ts` — liveness.
 
 ## Rules
@@ -41,7 +46,7 @@ Plain Vercel Serverless Functions (no framework) that run the
   `WORKER_SHARED_SECRET` (middleware) must be set; endpoints 401 without
   them.
 - **This app never texts customers.** The deliverable is a 🤖 draft note
-  on the Quo contact.
+  on the Quo contact. The one text it sends is the watchdog's, to Matt.
 
 ## Deploy
 

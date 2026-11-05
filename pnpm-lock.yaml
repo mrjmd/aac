@@ -301,6 +301,9 @@ importers:
       '@aac/shared-utils':
         specifier: workspace:*
         version: link:../../packages/shared-utils
+      '@aac/watchdog':
+        specifier: workspace:*
+        version: link:../../packages/watchdog
       '@upstash/redis':
         specifier: ^1.38.0
         version: 1.38.0
@@ -579,6 +582,25 @@ importers:
       typescript:
         specifier: ^5.8
         version: 5.9.3
+
+  packages/watchdog:
+    dependencies:
+      '@aac/shared-utils':
+        specifier: workspace:*
+        version: link:../shared-utils
+    devDependencies:
+      '@aac/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: ^22
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8
+        version: 5.9.3
+      vitest:
+        specifier: ^3
+        version: 3.2.4(@edge-runtime/vm@3.2.0)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)
 
   tools:
     dependencies:

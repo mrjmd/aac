@@ -16,6 +16,8 @@ import { verifyCronAuth } from '../../lib/cron.js';
 import { getEnv } from '../../lib/env.js';
 import { getQuo } from '../../lib/clients.js';
 import { runErrorSurfaceTick } from '../../lib/error-surface.js';
+import { checkWatchdogHeartbeat } from '../../lib/watchdog-watch.js';
+import { getRedis } from '../../lib/redis.js';
 
 const log = createLogger('agent:cron:error-surface');
 
@@ -25,13 +27,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const env = getEnv();
+    const quo = getQuo();
     const result = await runErrorSurfaceTick({
-      quo: getQuo(),
+      quo,
       recipient: env.notifications.mattPersonalPhone,
       sender: env.quo.agentPhoneNumber,
     });
-    log.info('error-surface tick complete', { ...result });
-    return res.status(200).json(result);
+    // Watch the worker's pipe watchdog from this separate project.
+    const watchdog = await checkWatchdogHeartbeat({
+      redis: getRedis(),
+      sms: async (text) => {
+        await quo.sendMessage(env.notifications.mattPersonalPhone, text, env.quo.agentPhoneNumber);
+      },
+    }).catch((err: Error) => `error: ${err.message}`);
+    log.info('error-surface tick complete', { ...result, watchdog });
+    return res.status(200).json({ ...result, watchdog });
   } catch (error) {
     log.error('error-surface tick failed', error as Error);
     return res.status(500).json({ error: (error as Error).message });
