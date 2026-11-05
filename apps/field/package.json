@@ -7,10 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit",
-    "deploy": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_URMxWdQ7HXIjBpjWo1vTB4jCqh7z vercel deploy --prod --yes",
-    "deploy:preview": "cd ../.. && VERCEL_ORG_ID=team_xO1tybQ8vFTha22hn8eaHc9v VERCEL_PROJECT_ID=prj_URMxWdQ7HXIjBpjWo1vTB4jCqh7z vercel deploy --yes",
-    "deploy:fresh": "bash scripts/deploy-fresh.sh"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@aac/api-clients": "workspace:*",

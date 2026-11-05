@@ -45,10 +45,8 @@ Plain Vercel Serverless Functions (no framework) that run the
 
 ## Deploy
 
-```bash
-pnpm --filter @aac/worker run deploy          # prod
-pnpm --filter @aac/worker run deploy:preview  # preview
-```
+Git only: push to `main` deploys prod, a branch push gives a preview URL.
+Never `vercel deploy` (see the root CLAUDE.md Deploy Convention).
 
 Vercel project settings: `rootDirectory = apps/worker`,
 `sourceFilesOutsideRootDirectory = true`, deployment protection OFF

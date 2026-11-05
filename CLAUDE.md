@@ -85,40 +85,34 @@ pnpm turbo typecheck      # Type-check everything
 
 ## Deploy Convention (Vercel)
 
-Every app deploys via a script in its own `package.json` that sets
-`VERCEL_ORG_ID` + `VERCEL_PROJECT_ID` and runs `vercel deploy` from the repo
-root. This is uniform across all apps and works around pnpm-workspace
-monorepo issues (where Vercel can't auto-detect parent files when linked from
-a subdirectory).
+**Git is the only deploy path.** Every app is a Vercel project linked to the
+`mrjmd/aac` GitHub repo:
 
-```bash
-pnpm --filter @aac/field      run deploy            # prod
-pnpm --filter @aac/field      run deploy:preview    # preview URL, no prod impact
-pnpm --filter @aac/middleware run deploy            # prod
-pnpm --filter @aac/marketing  run deploy            # prod
-```
+- **Push to `main`** deploys every app whose code (or a workspace package it
+  depends on) changed, straight to production. Keep `main` deployable.
+- **Push any other branch** to get a preview URL per affected app, with no
+  prod impact.
+- Each project's Ignored Build Step is `npx turbo-ignore`, so an app whose
+  dependency graph didn't change skips the build.
 
-**Important:** use `run deploy` (not just `deploy`) — `pnpm deploy` is a
-built-in pnpm subcommand that does something else entirely.
+**Never deploy from the CLI.** No `vercel deploy`, no deploy scripts in any
+`package.json`. A CLI deploy puts code in production that isn't on origin.
+Pushing to `main` ships production (including the middleware), so ask before
+you push.
 
-There are **no `.vercel/` link directories committed anywhere** — they are
-git-ignored at the root. Each app's project ID lives in its `package.json`
-deploy script (project IDs are not secrets; the Vercel auth token in
-`~/Library/Application Support/com.vercel.cli/` is).
+There are **no `.vercel/` link directories committed anywhere** (git-ignored
+at the root). The Vercel CLI is fine for read-only work (`vercel env pull`,
+logs, inspecting deployments) with `VERCEL_ORG_ID` + `VERCEL_PROJECT_ID` set.
 
 For each Vercel project in the team, the project settings must be:
 - `rootDirectory = apps/{name}`
 - `sourceFilesOutsideRootDirectory = true`
+- Git repository `mrjmd/aac`, production branch `main`
+- Ignored Build Step `npx turbo-ignore`
 
-When adding a new app:
-1. Create the Vercel project in the dashboard (or via `vercel link`, then
-   delete the resulting `.vercel/` after extracting the project ID)
-2. Set `rootDirectory` and `sourceFilesOutsideRootDirectory` on the project
-   (via dashboard or PATCH to `https://api.vercel.com/v9/projects/{id}`)
-3. Add `deploy` + `deploy:preview` scripts to the app's `package.json` using
-   the new project ID
-
-See `apps/field/package.json` for the canonical script template.
+When adding a new app, create the Vercel project, then set the four settings
+above (dashboard, or PATCH `https://api.vercel.com/v9/projects/{id}` plus
+POST `/v9/projects/{id}/link` with `{"type":"github","repo":"mrjmd/aac"}`).
 
 ## Reference Documents
 
