@@ -48,14 +48,24 @@ export function addressesMatch(a: string | null | undefined, b: string | null | 
   return sameStreet(streetKey(a), streetKey(b));
 }
 
+/** Spelled-out street words → the one short form, so "Street" ≡ "St". */
+const STREET_ABBREVIATIONS: Record<string, string> = {
+  street: 'st', avenue: 'ave', av: 'ave', road: 'rd', drive: 'dr', lane: 'ln',
+  court: 'ct', place: 'pl', circle: 'cir', terrace: 'ter', terr: 'ter',
+  boulevard: 'blvd', parkway: 'pkwy', highway: 'hwy', square: 'sq',
+  north: 'n', south: 's', east: 'e', west: 'w',
+  apartment: 'apt', suite: 'ste',
+};
+
 /**
- * Street line of a location, normalized for exact equality: everything
- * before the first comma, lowercased, punctuation stripped, whitespace
- * collapsed. "17 Montague Ave, Lake Pleasant, MA 01347" → "17 montague ave".
+ * Street line of a location, for exact equality: everything before the
+ * first comma, lowercased, punctuation stripped, street words abbreviated.
+ * "188 King Street, Hanover, MA 02339" and "188 King St., Hanover MA" →
+ * "188 king st". Every word still has to agree, so "100 North Main St" ≠
+ * "100 South Main St" and "5 Elm St" ≠ "5 Elm Ave".
  * Returns '' when the location has no number other than a ZIP code, so two
  * town-only locations ("Quincy, MA", "Quincy, MA 02169") never count as the
- * same house. Multi-day chains use this exact form (spelling must agree:
- * "St" ≠ "Street").
+ * same house. Multi-day chains use this.
  */
 export function streetLine(location: string | null | undefined): string {
   const raw = location ?? '';
@@ -64,8 +74,10 @@ export function streetLine(location: string | null | undefined): string {
     .split(',')[0]
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => STREET_ABBREVIATIONS[w] ?? w)
+    .join(' ');
 }
 
 /**

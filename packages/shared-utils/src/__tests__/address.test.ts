@@ -40,7 +40,19 @@ describe('addressesMatch', () => {
 describe('streetLine', () => {
   it('keeps the street line before the first comma, normalized', () => {
     expect(streetLine('17 Montague Ave, Lake Pleasant, MA 01347, USA')).toBe('17 montague ave');
-    expect(streetLine('15 West St.')).toBe('15 west st');
+    expect(streetLine('15 West St.')).toBe('15 w st');
+  });
+  it('treats spelled-out and short street words alike', () => {
+    expect(streetLine('188 King Street, Hanover')).toBe(streetLine('188 King St., Hanover MA'));
+    expect(streetLine('122 Allen Avenue')).toBe(streetLine('122 Allen Ave'));
+    expect(streetLine('40 North Main Street')).toBe(streetLine('40 N Main St'));
+    expect(streetLine('123 Main St Apartment 4B')).toBe(streetLine('123 Main Street apt 4b'));
+  });
+  it('still tells different streets and houses apart', () => {
+    expect(streetLine('100 North Main St')).not.toBe(streetLine('100 South Main St'));
+    expect(streetLine('5 Elm St')).not.toBe(streetLine('5 Elm Ave'));
+    expect(streetLine('76A Brook St')).not.toBe(streetLine('76 Brook St'));
+    expect(streetLine('1 Old Colony Ave')).not.toBe(streetLine('1 Old Mill Rd'));
   });
   it('is empty for town-only locations (no number but a ZIP)', () => {
     expect(streetLine('Quincy, MA')).toBe('');
@@ -50,6 +62,7 @@ describe('streetLine', () => {
   it('keeps any location that carries a house or unit number', () => {
     expect(streetLine('Smith Residence, 123 Main St')).toBe('smith residence');
     expect(streetLine('Unit 4, 123 Main St')).toBe('unit 4');
+    expect(streetLine('17 Montague Ave, Lake Pleasant, MA 01347')).toBe('17 montague ave');
     expect(streetLine('Hobart Unit 39')).toBe('hobart unit 39');
   });
 });

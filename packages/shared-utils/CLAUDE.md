@@ -21,7 +21,7 @@ that ALL other packages, apps, and tools depend on.
 | Module | Purpose |
 |--------|---------|
 | `phone.ts` | Phone normalization (E.164), parsing, matching, Redis format |
-| `address.ts` | Street addresses: `streetKey`/`sameStreet`/`addressesMatch` (house + street + unit identity), `streetLine` (exact street line; multi-day chains), `houseNumberAndWordMatch` (loose; visit photos) |
+| `address.ts` | Street addresses: `streetKey`/`sameStreet`/`addressesMatch` (house + street + unit identity), `streetLine` (street line, "St" ≡ "Street"; multi-day chains), `houseNumberAndWordMatch` (loose; visit photos) |
 | `calendar.ts` | Calendar conventions: color IDs, HOLD/STUB prefixes, technician emails, busy rules (`isBusyEvent`, `selectBusyEvents`, `isTechOutOfOffice`) |
 | `eastern.ts` | Eastern business day: `easternDate`, `easternDayRange`, `easternOffset`, `easternWallTime`, `shiftDate`, `daysBetween`, `isCalendarDate` |
 | `redis.ts` | Key schema builders, TTL constants |

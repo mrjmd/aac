@@ -113,14 +113,14 @@ describe('findContinuation', () => {
     expect(findContinuation(day2, [sloppy])?.id).toBe('e');
   });
 
-  it('street matching is exact on the street line ("St" ≠ "Street", as before)', () => {
+  it('matches by street when the address is written differently and the title drifts', () => {
     const retyped = ev({
       id: 'e2',
       start: '2026-09-12T08:00:00-04:00',
       summary: 'Spooner day 2',
       location: '188 King St, Hanover MA',
     });
-    expect(findContinuation(day2, [retyped])).toBeNull();
+    expect(findContinuation(day2, [retyped])?.id).toBe('e2');
   });
 
   it('matches direction and Court-style streets ("15 West St")', () => {
