@@ -1,9 +1,5 @@
 /**
  * Date helpers for "today in Eastern time" — Mike's local time.
- *
- * NOTE: hardcodes -04:00 (EDT). Acceptable for now since AAC operates
- * in MA and EDT covers most of the year. TODO: handle DST transitions
- * via shortOffset detection when we cross into EST (early November).
  */
 
 export function getTodayEasternDate(): string {
@@ -14,10 +10,20 @@ export function getTodayEasternDate(): string {
   return `${y}-${m}-${d}`;
 }
 
+/** Eastern UTC offset ("-04:00" EDT / "-05:00" EST) in effect at noon on the date. */
+export function easternOffset(dateLabel: string): string {
+  const name = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'shortOffset' })
+    .formatToParts(new Date(`${dateLabel}T12:00:00Z`))
+    .find((p) => p.type === 'timeZoneName')?.value; // "GMT-5"
+  const hours = Number(name?.match(/GMT([+-]\d+)/)?.[1] ?? -5);
+  return `${hours < 0 ? '-' : '+'}${String(Math.abs(hours)).padStart(2, '0')}:00`;
+}
+
 export function getEasternRangeForDate(dateLabel: string): { timeMin: string; timeMax: string; dateLabel: string } {
+  const off = easternOffset(dateLabel);
   return {
-    timeMin: `${dateLabel}T00:00:00-04:00`,
-    timeMax: `${dateLabel}T23:59:59-04:00`,
+    timeMin: `${dateLabel}T00:00:00${off}`,
+    timeMax: `${dateLabel}T23:59:59${off}`,
     dateLabel,
   };
 }
