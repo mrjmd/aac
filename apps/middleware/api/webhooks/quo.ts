@@ -29,6 +29,7 @@ import {
   logHealthError,
   enqueueQuoteTrigger,
   scheduleIntakeDraft,
+  scheduleInboundSettle,
 } from '../../lib/redis.js';
 import { defer } from '../../lib/defer.js';
 import { getEnv } from '../../lib/env.js';
@@ -441,6 +442,8 @@ export async function POST(request: Request): Promise<Response> {
       (event.type === 'call.completed' && eventData.direction === 'incoming' && !(eventData.duration ?? 0) && !eventData.answeredAt)
     ) {
       await scheduleIntakeDraft(e164Phone, Date.now() + 10 * 60_000);
+      // Inbound router (shadow): read the burst once it goes quiet.
+      await scheduleInboundSettle(e164Phone, Date.now());
     }
 
     // ============================================

@@ -306,6 +306,31 @@ export const keys = {
   /** HASH: rule id → JSON StandingRule (owner policies, optionally time-bound). Seeded by tools/src/can-help/seed.ts, edited on /referrals; the one decline source for both drafters. No TTL. */
   canHelpRules: 'can-help:rules' as const,
 
+  // ── Inbound Router (docs/plans/inbound-router.md) ──────────────────
+
+  /**
+   * ZSET settle clock: member = customer phone, score = epoch ms when the
+   * burst counts as settled (last customer event + 2 min, capped at the
+   * first event + 10 min). ZADDed by the Quo webhook, drained by the
+   * worker's /api/inbound-tick.
+   */
+  inboundDue: 'inbound:due' as const,
+
+  /** HASH: phone → epoch ms of the first customer event in the open burst (the 10-min cap). HDEL'd when the burst is read. */
+  inboundFirst: 'inbound:first' as const,
+
+  /** One saved read of a customer's conversation (JSON InboundRead). TTL ttl.inboundRead. */
+  inboundRead: (phone: string) => `inbound:read:${phone}` as const,
+
+  /** Per-phone NX lock so overlapping ticks never read the same burst twice. */
+  inboundLock: (phone: string) => `inbound:lock:${phone}` as const,
+
+  /** Kill switch: 'off' | 'shadow'. Unset = shadow. */
+  inboundRouterMode: 'inbound-router:mode' as const,
+
+  /** Shadow decisions, newest first (LPUSH + LTRIM 500): what the router would do next to what the old paths had done. */
+  inboundShadowLog: 'inbound:shadow' as const,
+
   // ── Scheduling (SchedulingDirective Pipeline) ──────────────────────
 
   /** Individual SchedulingDirective JSON blob, written by middleware webhook/cron handlers in Crawl shadow mode. */
@@ -422,4 +447,5 @@ export const ttl = {
   fieldTravelLeg: 2_592_000, // 30d — driving patterns at the same hour-of-week don't change fast
   agentProposal: 86_400,     // 24h — Matt either responds same day or we move on
   schedulingProposalDecision: 2_592_000, // 30d — kept for command-center retro view
+  inboundRead: 2_592_000,   // 30d — a later burst reuses photo reads from the earlier one
 } as const;

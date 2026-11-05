@@ -25,6 +25,7 @@ that ALL other packages, apps, and tools depend on.
 | `calendar.ts` | Calendar conventions: color IDs, HOLD/STUB prefixes, technician emails, busy rules (`isBusyEvent`, `selectBusyEvents`, `isTechOutOfOffice`) |
 | `eastern.ts` | Eastern business day: `easternDate`, `easternDayRange`, `easternOffset`, `easternWallTime`, `shiftDate`, `daysBetween`, `isCalendarDate` |
 | `redis.ts` | Key schema builders, TTL constants |
+| `inbound-settle.ts` | Inbound router settle rule: `settleDueAt` (last + 2 min, capped at first + 10 min) |
 | `qbo-tokens.ts` | `qboTokenStore(redis)`: the shared QBO token slot + refresh lock, as QuickBooksClient callbacks |
 | `logger.ts` | Structured JSON logging |
 | `types.ts` | Shared TypeScript interfaces (Lead, Estimate, WebhookEvent, etc.) |

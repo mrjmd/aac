@@ -12,6 +12,7 @@
 import { Redis } from '@upstash/redis';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { createLogger } from '@aac/shared-utils/logger';
+import { settleDueAt } from '@aac/shared-utils/inbound-settle';
 import { getEnv } from './env.js';
 
 const log = createLogger('redis');
@@ -240,6 +241,25 @@ export async function scheduleIntakeDraft(phone: string, dueMs: number): Promise
     await redis.zadd(keys.messageDraftIntakeDue, { nx: true }, { score: dueMs, member: phone });
   } catch (err) {
     log.warn('intake-draft schedule failed', { error: (err as Error).message });
+  }
+}
+
+/**
+ * Inbound router settle clock (docs/plans/inbound-router.md, phase 3
+ * shadow): remember when this customer's burst started, then score the
+ * phone at `settleDueAt(first, now)` so the worker reads the burst once it
+ * goes quiet. Never throws; the router is best-effort and the old paths
+ * don't depend on it.
+ */
+export async function scheduleInboundSettle(phone: string, nowMs: number): Promise<void> {
+  try {
+    const redis = getRedis();
+    await redis.hsetnx(keys.inboundFirst, phone, nowMs);
+    const first = Number(await redis.hget<number | string>(keys.inboundFirst, phone));
+    const dueMs = settleDueAt(Number.isFinite(first) && first > 0 ? first : nowMs, nowMs);
+    await redis.zadd(keys.inboundDue, { score: dueMs, member: phone });
+  } catch (err) {
+    log.warn('inbound settle schedule failed', { error: (err as Error).message });
   }
 }
 

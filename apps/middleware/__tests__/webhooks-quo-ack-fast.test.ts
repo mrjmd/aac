@@ -19,6 +19,7 @@ const redisMocks = vi.hoisted(() => ({
   logHealthError: vi.fn().mockResolvedValue(undefined),
   enqueueQuoteTrigger: vi.fn().mockResolvedValue(undefined),
   scheduleIntakeDraft: vi.fn().mockResolvedValue(undefined),
+  scheduleInboundSettle: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/redis.js', () => redisMocks);
 
@@ -181,11 +182,22 @@ describe('first-touch intake scheduling', () => {
     expect(dueMs).toBeLessThan(Date.now() + 11 * 60_000);
   });
 
+  it('bumps the inbound router settle clock on the same events', async () => {
+    const before = Date.now();
+    await POST(req(makeMessageEvent()));
+    expect(redisMocks.scheduleInboundSettle).toHaveBeenCalledTimes(1);
+    const [phone, nowMs] = redisMocks.scheduleInboundSettle.mock.calls[0];
+    expect(phone).toBe('+19785550199');
+    expect(nowMs).toBeGreaterThanOrEqual(before);
+    expect(nowMs).toBeLessThanOrEqual(Date.now());
+  });
+
   it('does not arm the window for Matt\'s own outbound (message.delivered)', async () => {
     const evt = makeMessageEvent({ direction: 'outgoing', from: '+16176681677', to: '+19785550199' });
     (evt.object as { type: string }).type = 'message.delivered';
     await POST(req(evt));
     expect(redisMocks.scheduleIntakeDraft).not.toHaveBeenCalled();
+    expect(redisMocks.scheduleInboundSettle).not.toHaveBeenCalled();
   });
 
   it('arms the window for an unanswered incoming call (voicemail path)', async () => {
@@ -210,6 +222,7 @@ describe('first-touch intake scheduling', () => {
     };
     await POST(req(evt));
     expect(redisMocks.scheduleIntakeDraft).toHaveBeenCalledWith('+19785550198', expect.any(Number));
+    expect(redisMocks.scheduleInboundSettle).toHaveBeenCalledWith('+19785550198', expect.any(Number));
   });
 
   it('does not arm the window for an answered incoming call', async () => {
@@ -250,6 +263,7 @@ describe('internal numbers skip the customer pipeline', () => {
     expect(await res.json()).toMatchObject({ status: 'skipped', reason: 'internal_phone' });
     expect(redisMocks.getPipedriveIdFromPhone).not.toHaveBeenCalled();
     expect(redisMocks.scheduleIntakeDraft).not.toHaveBeenCalled();
+    expect(redisMocks.scheduleInboundSettle).not.toHaveBeenCalled();
     expect(dispatchMock).not.toHaveBeenCalled();
   });
 
