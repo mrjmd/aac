@@ -15,6 +15,7 @@ import path from 'node:path';
 import { put } from '@vercel/blob';
 import { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
+import { loadEnv, redisFromEnv, requireEnv } from '../lib/env';
 
 const ASSETS: Array<{ field: 'ruleset' | 'sectionV' | 'exemplars'; file: string; required: boolean }> = [
   { field: 'ruleset', file: 'analysis/data/quoting-spike/llm-ruleset.md', required: true },
@@ -22,35 +23,10 @@ const ASSETS: Array<{ field: 'ruleset' | 'sectionV' | 'exemplars'; file: string;
   { field: 'exemplars', file: 'analysis/data/photo-corpus/exemplar-library-v2.jsonl', required: false },
 ];
 
-function loadEnv(): void {
-  const envPath = path.resolve(process.cwd(), '.env.diagnostic');
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    if (!(key in process.env)) process.env[key] = value;
-  }
-}
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
-
 async function main(): Promise<void> {
   loadEnv();
   const token = requireEnv('BLOB_READ_WRITE_TOKEN');
-  const redis = new Redis({
-    url: requireEnv('UPSTASH_REDIS_REST_URL'),
-    token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
-  });
+  const redis = redisFromEnv();
 
   const manifest: Record<string, string> = { updatedAt: new Date().toISOString() };
   for (const asset of ASSETS) {

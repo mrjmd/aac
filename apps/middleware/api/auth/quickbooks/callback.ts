@@ -8,7 +8,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
 import { getEnv } from '../../../lib/env.js';
-import { storeQBTokens } from '../../../lib/redis.js';
+import { qboTokenStore } from '@aac/shared-utils/qbo-tokens';
+import { getRedis } from '../../../lib/redis.js';
 
 const log = createLogger('quickbooks-oauth-callback');
 
@@ -97,7 +98,7 @@ export default async function handler(
     // Store tokens in Redis
     // Note: QBOAuthTokens type expects accessToken, refreshToken, expiresAt, realmId.
     // We use the configured realmId rather than the callback's realmId to stay consistent.
-    await storeQBTokens({
+    await qboTokenStore(getRedis()).saveTokens({
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
       expiresAt,

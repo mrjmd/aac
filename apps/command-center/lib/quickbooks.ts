@@ -1,7 +1,6 @@
 import { QuickBooksClient } from "@aac/api-clients/quickbooks";
-import { keys, ttl } from "@aac/shared-utils/redis";
-import type { QBOAuthTokens } from "@aac/shared-utils/types";
 import { getRedis } from "./redis";
+import { qboTokenStore } from "@aac/shared-utils/qbo-tokens";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -21,16 +20,6 @@ export function getQuickBooks(): QuickBooksClient {
     clientSecret: requireEnv("QUICKBOOKS_CLIENT_SECRET"),
     realmId: requireEnv("QUICKBOOKS_REALM_ID"),
     redirectUri: requireEnv("QUICKBOOKS_REDIRECT_URI"),
-    getTokens: async () => (await redis.get<QBOAuthTokens>(keys.qbOAuthTokens)) ?? null,
-    saveTokens: async (tokens) => {
-      await redis.set(keys.qbOAuthTokens, tokens);
-    },
-    refreshLock: {
-      acquire: async () =>
-        (await redis.set(keys.qbRefreshLock, Date.now(), { nx: true, px: ttl.qbRefreshLock * 1000 })) === "OK",
-      release: async () => {
-        await redis.del(keys.qbRefreshLock);
-      },
-    },
+    ...qboTokenStore(redis),
   });
 }

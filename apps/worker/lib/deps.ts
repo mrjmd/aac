@@ -6,10 +6,9 @@ import { Redis } from '@upstash/redis';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { QuoClient } from '@aac/api-clients/quo';
 import { GeminiClient } from '@aac/api-clients/gemini';
-import { keys, ttl } from '@aac/shared-utils/redis';
-import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import { RedisDraftState, type DraftDeps } from '@aac/message-drafts';
 import { CanHelpStore } from '@aac/quoting';
+import { qboTokenStore } from '@aac/shared-utils/qbo-tokens';
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -30,17 +29,7 @@ export function getWorkerDeps(): { deps: DraftDeps; redis: Redis } {
     clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
     realmId: requireEnv('QUICKBOOKS_REALM_ID'),
     redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
-    getTokens: async () => (await redis.get<QBOAuthTokens>(keys.qbOAuthTokens)) ?? null,
-    saveTokens: async (tokens) => {
-      await redis.set(keys.qbOAuthTokens, tokens);
-    },
-    refreshLock: {
-      acquire: async () =>
-        (await redis.set(keys.qbRefreshLock, Date.now(), { nx: true, px: ttl.qbRefreshLock * 1000 })) === 'OK',
-      release: async () => {
-        await redis.del(keys.qbRefreshLock);
-      },
-    },
+    ...qboTokenStore(redis),
   });
   const quo = new QuoClient({
     apiKey: requireEnv('QUO_API_KEY'),

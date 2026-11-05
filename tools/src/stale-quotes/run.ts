@@ -40,19 +40,17 @@
  */
 
 import fs from 'node:fs';
-import path from 'node:path';
-import { Redis } from '@upstash/redis';
 import { QuickBooksClient, type QBEstimate, type QBInvoice, type QBCustomer } from '@aac/api-clients/quickbooks';
-import { QuoClient, type QuoMessage } from '@aac/api-clients/quo';
+import { type QuoMessage } from '@aac/api-clients/quo';
 import { GeminiClient } from '@aac/api-clients/gemini';
 import { GoogleCalendarClient, type CalendarEvent } from '@aac/api-clients/google-calendar';
 import { GmailClient, type GmailMessage } from '@aac/api-clients/gmail';
 import { nameCorroborated } from '@aac/customers';
 import { isBotDraft } from '@aac/quoting';
-import { keys, ttl } from '@aac/shared-utils/redis';
+import { keys } from '@aac/shared-utils/redis';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import { EVENT_CLASS_COLOR_IDS, isBusyEvent, technicianEmails } from '@aac/shared-utils/calendar';
-import type { QBOAuthTokens } from '@aac/shared-utils/types';
+import { geminiFromEnv, googleOAuthFromEnv, loadEnv, quickBooksFromEnv, quoFromEnv, redisFromEnv } from '../lib/env';
 
 // ── config ───────────────────────────────────────────────────────────
 
@@ -192,29 +190,6 @@ interface AwaitingHumanEntry {
 type ServiceClass = 'pool-deck' | 'exterior-resurf' | 'garage-interior' | 'injection';
 
 // ── env / small utils ────────────────────────────────────────────────
-
-function loadEnv(): void {
-  const envPath = path.resolve(process.cwd(), '.env.diagnostic');
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    if (!(key in process.env)) process.env[key] = value;
-  }
-}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const DAY = 86_400_000;
@@ -615,37 +590,11 @@ async function main(): Promise<void> {
   const now = Date.now();
   const today = isoDay(now);
 
-  const redis = new Redis({
-    url: requireEnv('UPSTASH_REDIS_REST_URL'),
-    token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
-  });
-  const qb = new QuickBooksClient({
-    clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),
-    clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
-    realmId: requireEnv('QUICKBOOKS_REALM_ID'),
-    redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
-    getTokens: async () => (await redis.get<QBOAuthTokens>(keys.qbOAuthTokens)) ?? null,
-    saveTokens: async (tokens) => {
-      await redis.set(keys.qbOAuthTokens, tokens);
-    },
-    refreshLock: {
-      acquire: async () =>
-        (await redis.set(keys.qbRefreshLock, Date.now(), { nx: true, px: ttl.qbRefreshLock * 1000 })) === 'OK',
-      release: async () => {
-        await redis.del(keys.qbRefreshLock);
-      },
-    },
-  });
-  const quo = new QuoClient({
-    apiKey: requireEnv('QUO_API_KEY'),
-    phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
-  });
-  const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY') });
-  const oauth = {
-    clientId: requireEnv('GOOGLE_CLIENT_ID'),
-    clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),
-    refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
-  };
+  const redis = redisFromEnv();
+  const qb = quickBooksFromEnv(redis);
+  const quo = quoFromEnv();
+  const gemini = geminiFromEnv();
+  const oauth = googleOAuthFromEnv();
   // Calendar + Gmail are HARD gates (plan §4.3 gates 2 & 5) — no degraded mode.
   const calendar = new GoogleCalendarClient({
     calendarId: process.env.GOOGLE_CALENDAR_ID || 'matt@attackacrack.com',

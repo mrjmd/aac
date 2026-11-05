@@ -6,28 +6,16 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { QuoClient, type QuoMessage } from '@aac/api-clients/quo';
+import { type QuoMessage } from '@aac/api-clients/quo';
+import { loadEnv, quoFromEnv } from '../lib/env';
 
-function loadEnv(): void {
-  const raw = fs.readFileSync(path.resolve(process.cwd(), '.env.diagnostic'), 'utf8');
-  for (const line of raw.split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    if (eq < 0) continue;
-    const k = t.slice(0, eq).trim();
-    let v = t.slice(eq + 1).trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-    if (!(k in process.env)) process.env[k] = v;
-  }
-}
 loadEnv();
 
 const MATT_LINE_ID = 'PNrYTA5wZL'; // +16176681677 Massachusetts
 const ED_LINE = '+13392175091';
 
 async function main() {
-  const quo = new QuoClient({ apiKey: process.env.QUO_API_KEY!, phoneNumber: process.env.QUO_PHONE_NUMBER! });
+  const quo = quoFromEnv();
   const all: QuoMessage[] = [];
   let pageToken: string | undefined;
   do {

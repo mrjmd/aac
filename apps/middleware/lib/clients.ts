@@ -19,12 +19,8 @@ import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import { GoogleMapsClient } from '@aac/api-clients/google-maps';
 import { getEnv } from './env.js';
-import {
-  acquireQBRefreshLock,
-  getQBTokens,
-  releaseQBRefreshLock,
-  storeQBTokens,
-} from './redis.js';
+import { qboTokenStore } from '@aac/shared-utils/qbo-tokens';
+import { getRedis } from './redis.js';
 
 let _pipedrive: PipedriveClient | null = null;
 let _quo: QuoClient | null = null;
@@ -72,12 +68,7 @@ export function getQuickBooks(): QuickBooksClient {
       clientSecret: env.quickbooks.clientSecret,
       realmId: env.quickbooks.realmId,
       redirectUri: env.quickbooks.redirectUri,
-      getTokens: getQBTokens,
-      saveTokens: storeQBTokens,
-      refreshLock: {
-        acquire: acquireQBRefreshLock,
-        release: releaseQBRefreshLock,
-      },
+      ...qboTokenStore(getRedis()),
     });
   }
   return _quickbooks;

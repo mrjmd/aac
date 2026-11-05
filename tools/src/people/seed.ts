@@ -7,15 +7,10 @@
  *   npx tsx tools/src/people/seed.ts [--dry-run]
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { Redis } from '@upstash/redis';
+import { loadEnv, redisFromEnv } from '../lib/env';
 import { addTopic, newPerson, PeopleStore, setFacts, type Person, type PersonEvent, type TopicStatus } from '@aac/items';
 
-for (const line of fs.existsSync(path.resolve('.env.diagnostic')) ? fs.readFileSync('.env.diagnostic', 'utf8').split('\n') : []) {
-  const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-  if (m && !(m[1]! in process.env)) process.env[m[1]!] = m[2]!.replace(/^["']|["']$/g, '');
-}
+loadEnv();
 
 interface Seed {
   name: string;
@@ -74,7 +69,7 @@ const SEEDS: Seed[] = [
 
 async function main(): Promise<void> {
   const dryRun = process.argv.includes('--dry-run');
-  const store = new PeopleStore(new Redis({ url: process.env.UPSTASH_REDIS_REST_URL!, token: process.env.UPSTASH_REDIS_REST_TOKEN! }));
+  const store = new PeopleStore(redisFromEnv());
   const existing = await store.list();
   const now = new Date();
   let order = (existing.at(-1)?.order ?? -1) + 1;

@@ -25,18 +25,16 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { Redis } from '@upstash/redis';
-import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { QuoClient, type QuoMessage } from '@aac/api-clients/quo';
 import { GmailClient } from '@aac/api-clients/gmail';
-import { keys, ttl } from '@aac/shared-utils/redis';
+import { keys } from '@aac/shared-utils/redis';
 import { normalizePhone } from '@aac/shared-utils/phone';
-import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import {
   attributePhoto,
   messagesWithinWindow,
   type CorpusEstimateRef,
 } from '@aac/quoting';
+import { gmailFromEnv, loadEnv, quickBooksFromEnv, quoFromEnv, redisFromEnv } from '../lib/env';
 
 // ── config ───────────────────────────────────────────────────────────
 
@@ -47,29 +45,6 @@ const MAX_QUO_PAGES = 12; // 1,200 messages — no 2yr thread is longer
 const MAX_PHOTOS_PER_CUSTOMER = 60; // runaway guard; truncation is LOGGED
 const MIN_EMAIL_IMAGE_BYTES = 30_000; // skip signature logos / tracking pixels
 const QUO_PACE_MS = 120;
-
-function loadEnv(): void {
-  const envPath = path.resolve(process.cwd(), '.env.diagnostic');
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    if (!(key in process.env)) process.env[key] = value;
-  }
-}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -335,27 +310,8 @@ async function main(): Promise<void> {
     emailById = JSON.parse(fs.readFileSync(emailCachePath, 'utf8'));
   } else {
     console.log('Pulling customer emails from QBO (one-time, cached)…');
-    const redis = new Redis({
-      url: requireEnv('UPSTASH_REDIS_REST_URL'),
-      token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
-    });
-    const qb = new QuickBooksClient({
-      clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),
-      clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
-      realmId: requireEnv('QUICKBOOKS_REALM_ID'),
-      redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
-      getTokens: async () => (await redis.get<QBOAuthTokens>(keys.qbOAuthTokens)) ?? null,
-      saveTokens: async (tokens) => {
-        await redis.set(keys.qbOAuthTokens, tokens);
-      },
-      refreshLock: {
-        acquire: async () =>
-          (await redis.set(keys.qbRefreshLock, Date.now(), { nx: true, px: ttl.qbRefreshLock * 1000 })) === 'OK',
-        release: async () => {
-          await redis.del(keys.qbRefreshLock);
-        },
-      },
-    });
+    const redis = redisFromEnv();
+    const qb = quickBooksFromEnv(redis);
     const customers = await qb.listAllCustomers();
     for (const c of customers) {
       const email = c.PrimaryEmailAddr?.Address?.trim();
@@ -400,19 +356,10 @@ async function main(): Promise<void> {
     `${estimates.length} estimates / ${groups.length} customers — ${done.size} done, processing ${pending.length}${mmsOnly ? ' [MMS ONLY]' : ''}\n`,
   );
 
-  const quo = new QuoClient({
-    apiKey: requireEnv('QUO_API_KEY'),
-    phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
-  });
+  const quo = quoFromEnv();
   const gmail = mmsOnly
     ? null
-    : new GmailClient({
-        oauth: {
-          clientId: requireEnv('GOOGLE_CLIENT_ID'),
-          clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),
-          refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
-        },
-      });
+    : gmailFromEnv();
 
   const manifestPath = path.join(OUT_DIR, 'manifest.jsonl');
   const orphansPath = path.join(OUT_DIR, 'orphans.jsonl');

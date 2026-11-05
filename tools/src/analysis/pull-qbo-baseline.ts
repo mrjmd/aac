@@ -16,75 +16,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
-import { keys } from '@aac/shared-utils/redis';
-import type { QBOAuthTokens } from '@aac/shared-utils/types';
-
-// ── env ──────────────────────────────────────────────────────────────
-
-function loadEnv(): void {
-  const envPath = path.resolve(process.cwd(), '.env.diagnostic');
-  if (!fs.existsSync(envPath)) return;
-  const raw = fs.readFileSync(envPath, 'utf8');
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    if (!(key in process.env)) process.env[key] = value;
-  }
-}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
-
-// ── Upstash via REST (mirrors @upstash/redis SDK serialization) ──────
-
-async function upstashGet<T>(url: string, token: string, key: string): Promise<T | null> {
-  const r = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!r.ok) throw new Error(`Upstash GET ${key} failed: ${r.status} ${await r.text()}`);
-  const body = (await r.json()) as { result: string | null };
-  if (body.result === null) return null;
-  return JSON.parse(body.result) as T;
-}
-
-async function upstashSet(url: string, token: string, key: string, value: unknown): Promise<void> {
-  const r = await fetch(`${url}/set/${encodeURIComponent(key)}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(value),
-  });
-  if (!r.ok) throw new Error(`Upstash SET ${key} failed: ${r.status} ${await r.text()}`);
-  // Also write a local backup of the token state in case the in-flight
-  // refresh races with a middleware QB call.
-  const backupDir = path.resolve(process.cwd(), 'analysis/data/qbo/.token-backups');
-  fs.mkdirSync(backupDir, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  fs.writeFileSync(path.join(backupDir, `${stamp}.json`), JSON.stringify(value, null, 2));
-}
+import { loadEnv, quickBooksFromEnv, requireEnv } from '../lib/env';
 
 // ── QB client wiring ────────────────────────────────────────────────
 
 function makeClient(): QuickBooksClient {
-  const upstashUrl = requireEnv('UPSTASH_REDIS_REST_URL');
-  const upstashToken = requireEnv('UPSTASH_REDIS_REST_TOKEN');
-  return new QuickBooksClient({
-    clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),
-    clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
-    realmId: requireEnv('QUICKBOOKS_REALM_ID'),
-    redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
-    getTokens: () => upstashGet<QBOAuthTokens>(upstashUrl, upstashToken, keys.qbOAuthTokens),
-    saveTokens: (tokens) => upstashSet(upstashUrl, upstashToken, keys.qbOAuthTokens, tokens),
-  });
+  return quickBooksFromEnv();
 }
 
 // ── Pull helpers ────────────────────────────────────────────────────

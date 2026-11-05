@@ -12,6 +12,7 @@
     "./calendar": "./dist/calendar.js",
     "./eastern": "./dist/eastern.js",
     "./redis": "./dist/redis.js",
+    "./qbo-tokens": "./dist/qbo-tokens.js",
     "./logger": "./dist/logger.js",
     "./types": "./dist/types.js",
     "./webhook-signature": "./dist/webhook-signature.js",

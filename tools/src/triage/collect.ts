@@ -18,38 +18,14 @@ import path from 'node:path';
 import { Redis } from '@upstash/redis';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { QuoClient, type QuoMessage, type QuoCall, type QuoConversation } from '@aac/api-clients/quo';
-import { GoogleCalendarClient, type CalendarEvent } from '@aac/api-clients/google-calendar';
-import { GmailClient, type GmailMessage } from '@aac/api-clients/gmail';
+import { type CalendarEvent } from '@aac/api-clients/google-calendar';
+import { type GmailMessage } from '@aac/api-clients/gmail';
 import { isInternalPhone, quickNormalizePhone } from '@aac/shared-utils/phone';
-import { keys, ttl } from '@aac/shared-utils/redis';
-import type { QBOAuthTokens } from '@aac/shared-utils/types';
+import { keys } from '@aac/shared-utils/redis';
 import { EVENT_CLASS_COLOR_IDS as COLORS } from '@aac/shared-utils/calendar';
+import { calendarFromEnv, gmailFromEnv, loadEnv, quickBooksFromEnv, quoFromEnv, redisFromEnv, requireEnv } from '../lib/env';
 
 // ── env ──────────────────────────────────────────────────────────────
-
-function loadEnv(): void {
-  const envPath = path.resolve(process.cwd(), '.env.diagnostic');
-  if (!fs.existsSync(envPath)) return;
-  const raw = fs.readFileSync(envPath, 'utf8');
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    if (!(key in process.env)) process.env[key] = value;
-  }
-}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
 
 // ── windows ──────────────────────────────────────────────────────────
 
@@ -249,53 +225,13 @@ async function main(): Promise<void> {
   const transcriptDir = path.join(outDir, 'transcripts');
   fs.mkdirSync(transcriptDir, { recursive: true });
 
-  const redis = new Redis({
-    url: requireEnv('UPSTASH_REDIS_REST_URL'),
-    token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
-  });
+  const redis = redisFromEnv();
 
-  const qb = new QuickBooksClient({
-    clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),
-    clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
-    realmId: requireEnv('QUICKBOOKS_REALM_ID'),
-    redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
-    getTokens: async () => (await redis.get<QBOAuthTokens>(keys.qbOAuthTokens)) ?? null,
-    saveTokens: async (tokens) => {
-      await redis.set(keys.qbOAuthTokens, tokens);
-      // Intuit invalidates the previous refresh_token on every refresh —
-      // keep a local backup in case a concurrent middleware call races us.
-      const backupDir = path.join(outDir, '.token-backups');
-      fs.mkdirSync(backupDir, { recursive: true });
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      fs.writeFileSync(path.join(backupDir, `${stamp}.json`), JSON.stringify(tokens, null, 2));
-    },
-    // P4-1: this runs daily at 08:15 alongside middleware crons — exactly the
-    // concurrent-refresh race the single-flight lock exists to prevent.
-    refreshLock: {
-      acquire: async () =>
-        (await redis.set(keys.qbRefreshLock, Date.now(), {
-          nx: true,
-          px: ttl.qbRefreshLock * 1000,
-        })) === 'OK',
-      release: async () => {
-        await redis.del(keys.qbRefreshLock);
-      },
-    },
-  });
+  const qb = quickBooksFromEnv(redis);
 
-  const quo = new QuoClient({
-    apiKey: requireEnv('QUO_API_KEY'),
-    phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
-  });
+  const quo = quoFromEnv();
 
-  const calendar = new GoogleCalendarClient({
-    calendarId: process.env.GOOGLE_CALENDAR_ID || 'matt@attackacrack.com',
-    oauth: {
-      clientId: requireEnv('GOOGLE_CLIENT_ID'),
-      clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),
-      refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
-    },
-  });
+  const calendar = calendarFromEnv();
 
   const stats: Record<string, number> = {};
 
@@ -611,13 +547,7 @@ async function main(): Promise<void> {
   let emails: EmailThreadSnapshot[] = [];
   let emailSweepError: string | undefined;
   try {
-    const gmail = new GmailClient({
-      oauth: {
-        clientId: requireEnv('GOOGLE_CLIENT_ID'),
-        clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),
-        refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
-      },
-    });
+    const gmail = gmailFromEnv();
     const messages = await gmail.listMessages({
       query: `newer_than:${EMAIL_ACTIVE_DAYS}d -in:spam -in:trash -in:chats -category:promotions -category:social -category:forums`,
       maxResults: EMAIL_MAX_MESSAGES,

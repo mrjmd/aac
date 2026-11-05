@@ -6,10 +6,9 @@
  * made in the command center are never overwritten, unless named in
  * --force=id1,id2 (an owner correction to a seeded record). --dry-run prints only.
  */
-import fs from 'node:fs';
-import path from 'node:path';
 import { Redis } from '@upstash/redis';
 import { CanHelpStore, type Referral, type StandingRule } from '@aac/quoting';
+import { loadEnv, redisFromEnv } from '../lib/env';
 
 const REFERRALS: Referral[] = [
   { id: 'best-bulkheads', name: 'Henry at Best Bulkheads', phone: '(781) 801-8188', sends: 'Bulkhead doors, hatches, frames, full bulkhead replacement, removal or dig-out.' },
@@ -44,21 +43,12 @@ const RULES: StandingRule[] = [
   { id: 'resurfacing-pause', kind: 'policy', short: 'Resurfacing pause', text: 'Not taking on large square-footage concrete resurfacing (full garages, pool decks, big patios or driveways). Stairs and small panels are fine. Offer to follow up then.', since: '2026-10-21', untilWhen: 'tech #2 starts, possibly spring', reviewBy: '2027-03-01' },
 ];
 
-function loadEnv(): void {
-  const envPath = path.resolve(process.cwd(), '.env.diagnostic');
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-    const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
-    if (m) process.env[m[1]!] ??= m[2]!.replace(/^["']|["']$/g, '');
-  }
-}
-
 async function main(): Promise<void> {
   loadEnv();
   const dryRun = process.argv.includes('--dry-run');
   const force = new Set(process.argv.find((a) => a.startsWith('--force='))?.slice('--force='.length).split(',') ?? []);
   const store = new CanHelpStore(
-    new Redis({ url: process.env.UPSTASH_REDIS_REST_URL!, token: process.env.UPSTASH_REDIS_REST_TOKEN! }),
+    redisFromEnv(),
   );
   const haveRefs = new Set((await store.referrals()).map((r) => r.id));
   const haveRules = new Set((await store.rules()).map((r) => r.id));

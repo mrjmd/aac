@@ -16,12 +16,10 @@
 
 import { randomUUID } from 'node:crypto';
 import { PipedriveClient, DEAL_PIPELINE_ID, DEAL_STAGE_IDS, DEAL_FIELD_HASHES } from '@aac/api-clients/pipedrive';
-import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { QuoClient } from '@aac/api-clients/quo';
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
-import { keys } from '@aac/shared-utils/redis';
-import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import { replayQbApprovals, type BacktestRow, type BacktestSummary } from '@aac/scheduling';
+import { googleOAuthFromEnv, quickBooksFromEnv, requireEnv } from './lib/env';
 
 // ── CLI args ──────────────────────────────────────────────────────
 
@@ -48,37 +46,9 @@ function parseArgs(): Args {
   };
 }
 
-// ── Env helpers ───────────────────────────────────────────────────
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`missing env: ${name}`);
-  return v;
-}
-
-async function upstashGet<T>(url: string, token: string, key: string): Promise<T | null> {
-  const r = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!r.ok) throw new Error(`Upstash GET ${key} failed: ${r.status}`);
-  const body = await r.json() as { result: string | null };
-  return body.result ? (JSON.parse(body.result) as T) : null;
-}
-
-async function upstashSet(url: string, token: string, key: string, value: unknown): Promise<void> {
-  const r = await fetch(`${url}/set/${encodeURIComponent(key)}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(value),
-  });
-  if (!r.ok) throw new Error(`Upstash SET ${key} failed: ${r.status}`);
-}
-
 // ── Client wiring ─────────────────────────────────────────────────
 
 function buildDeps() {
-  const upstashUrl = requireEnv('UPSTASH_REDIS_REST_URL');
-  const upstashToken = requireEnv('UPSTASH_REDIS_REST_TOKEN');
   const pd = new PipedriveClient({
     apiKey: requireEnv('PIPEDRIVE_API_KEY'),
     companyDomain: requireEnv('PIPEDRIVE_COMPANY_DOMAIN'),
@@ -89,14 +59,7 @@ function buildDeps() {
       fieldHashes: DEAL_FIELD_HASHES,
     },
   });
-  const qb = new QuickBooksClient({
-    clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),
-    clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
-    realmId: requireEnv('QUICKBOOKS_REALM_ID'),
-    redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
-    getTokens: () => upstashGet<QBOAuthTokens>(upstashUrl, upstashToken, keys.qbOAuthTokens),
-    saveTokens: (tokens) => upstashSet(upstashUrl, upstashToken, keys.qbOAuthTokens, tokens),
-  });
+  const qb = quickBooksFromEnv();
   const quo = new QuoClient({
     apiKey: requireEnv('QUO_API_KEY'),
     phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
@@ -104,11 +67,7 @@ function buildDeps() {
   });
   const cal = new GoogleCalendarClient({
     calendarId: requireEnv('GOOGLE_CALENDAR_ID'),
-    oauth: {
-      clientId: requireEnv('GOOGLE_CLIENT_ID'),
-      clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),
-      refreshToken: requireEnv('GOOGLE_REFRESH_TOKEN'),
-    },
+    oauth: googleOAuthFromEnv(),
   });
   return { pd, qb, quo, cal, newId: () => randomUUID(), now: () => new Date() };
 }

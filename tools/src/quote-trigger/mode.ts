@@ -2,31 +2,12 @@
 /** Set/inspect the quote-drafter mode override + queue state.
  *  Usage: npx tsx tools/src/scratch/quote-mode.ts [off|shadow|live|clear|status]
  */
-import fs from 'node:fs';
-import path from 'node:path';
-import { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
-
-function loadEnv(): void {
-  const envPath = path.resolve(process.cwd(), '.env.diagnostic');
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    if (eq < 0) continue;
-    const k = t.slice(0, eq).trim();
-    let v = t.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
-    if (!(k in process.env)) process.env[k] = v;
-  }
-}
+import { loadEnv, redisFromEnv } from '../lib/env';
 
 async function main(): Promise<void> {
   loadEnv();
-  const redis = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL!,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-  });
+  const redis = redisFromEnv();
   const cmd = process.argv[2] ?? 'status';
   if (cmd === 'off' || cmd === 'shadow' || cmd === 'live') {
     await redis.set(keys.quoteDrafterMode, cmd);

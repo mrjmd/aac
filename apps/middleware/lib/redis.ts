@@ -12,7 +12,6 @@
 import { Redis } from '@upstash/redis';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { createLogger } from '@aac/shared-utils/logger';
-import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import { getEnv } from './env.js';
 
 const log = createLogger('redis');
@@ -176,39 +175,6 @@ export async function tryAcquireContactCreateLock(
 }
 
 // ── QuickBooks OAuth Token Storage ───────────────────────────────────
-
-export async function storeQBTokens(tokens: QBOAuthTokens): Promise<void> {
-  const redis = getRedis();
-  // Pass object directly — Upstash auto-serializes/deserializes JSON
-  await redis.set(keys.qbOAuthTokens, tokens);
-  log.debug('Stored QB OAuth tokens');
-}
-
-export async function getQBTokens(): Promise<QBOAuthTokens | null> {
-  const redis = getRedis();
-  // Upstash auto-deserializes, so we get the object directly
-  const data = await redis.get<QBOAuthTokens>(keys.qbOAuthTokens);
-  return data || null;
-}
-
-/**
- * Single-flight lock around QB token refresh (P4-1). Intuit rotates the
- * refresh token on every grant; two processes refreshing concurrently can
- * strand all apps with a dead token. TTL guards against crashed holders.
- */
-export async function acquireQBRefreshLock(): Promise<boolean> {
-  const redis = getRedis();
-  const result = await redis.set(keys.qbRefreshLock, Date.now(), {
-    nx: true,
-    px: ttl.qbRefreshLock * 1000,
-  });
-  return result === 'OK';
-}
-
-export async function releaseQBRefreshLock(): Promise<void> {
-  const redis = getRedis();
-  await redis.del(keys.qbRefreshLock);
-}
 
 // ── Health & Observability ───────────────────────────────────────────
 

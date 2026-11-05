@@ -10,7 +10,6 @@
 import { Redis } from '@upstash/redis';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { createLogger } from '@aac/shared-utils/logger';
-import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import type { StoredProposal } from '@aac/scheduling';
 import { getEnv } from './env.js';
 import type { AgentRole } from './roles.js';
@@ -35,43 +34,6 @@ export function getRedis(): Redis {
 export async function writeHeartbeat(): Promise<void> {
   const redis = getRedis();
   await redis.set(keys.heartbeat('agent'), new Date().toISOString());
-}
-
-// ── QuickBooks OAuth tokens (shared with middleware) ────────────────
-//
-// Same `keys.qbOAuthTokens` slot middleware writes to. The QB client
-// reads/refreshes via these callbacks; both apps consume the same
-// rolling refresh-token, so whichever app refreshes last wins.
-
-export async function getQBTokens(): Promise<QBOAuthTokens | null> {
-  const redis = getRedis();
-  const data = await redis.get<QBOAuthTokens>(keys.qbOAuthTokens);
-  return data || null;
-}
-
-export async function storeQBTokens(tokens: QBOAuthTokens): Promise<void> {
-  const redis = getRedis();
-  await redis.set(keys.qbOAuthTokens, tokens);
-  log.debug('Stored QB OAuth tokens');
-}
-
-/**
- * Single-flight lock around QB token refresh (P4-1), shared across all apps.
- * Intuit rotates the refresh token on every grant; concurrent refreshes can
- * strand every app with a dead token. TTL guards against crashed holders.
- */
-export async function acquireQBRefreshLock(): Promise<boolean> {
-  const redis = getRedis();
-  const result = await redis.set(keys.qbRefreshLock, Date.now(), {
-    nx: true,
-    px: ttl.qbRefreshLock * 1000,
-  });
-  return result === 'OK';
-}
-
-export async function releaseQBRefreshLock(): Promise<void> {
-  const redis = getRedis();
-  await redis.del(keys.qbRefreshLock);
 }
 
 // ── Cron cursors ────────────────────────────────────────────────────

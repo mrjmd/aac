@@ -8,15 +8,13 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { Redis } from '@upstash/redis';
 import { PipedriveClient, DEAL_FIELD_HASHES } from '@aac/api-clients/pipedrive';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
-import { keys } from '@aac/shared-utils/redis';
-import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import {
   loadEnv, requireEnv, writeJson, REF_FIELD, QB_FIELD, SNAPSHOT_PATH, DATA_DIR,
   type SlimPerson, type SlimDeal, type Snapshot,
 } from './lib';
+import { pipedriveFromEnv, quickBooksFromEnv, redisFromEnv } from '../lib/env';
 
 async function fetchAllPages<T>(
   client: PipedriveClient,
@@ -89,33 +87,11 @@ async function main(): Promise<void> {
   loadEnv();
   fs.mkdirSync(path.resolve(process.cwd(), DATA_DIR), { recursive: true });
 
-  const pd = new PipedriveClient({
-    apiKey: requireEnv('PIPEDRIVE_API_KEY'),
-    companyDomain: requireEnv('PIPEDRIVE_COMPANY_DOMAIN'),
-    systemUserId: requireEnv('PIPEDRIVE_SYSTEM_USER_ID'),
-  });
+  const pd = pipedriveFromEnv();
 
-  const redis = new Redis({
-    url: requireEnv('UPSTASH_REDIS_REST_URL'),
-    token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
-  });
+  const redis = redisFromEnv();
 
-  const qb = new QuickBooksClient({
-    clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),
-    clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
-    realmId: requireEnv('QUICKBOOKS_REALM_ID'),
-    redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
-    getTokens: async () => (await redis.get<QBOAuthTokens>(keys.qbOAuthTokens)) ?? null,
-    saveTokens: async (tokens) => {
-      await redis.set(keys.qbOAuthTokens, tokens);
-      // Intuit invalidates the previous refresh_token on every refresh —
-      // keep a local backup in case a concurrent middleware call races us.
-      const backupDir = path.join(DATA_DIR, '.token-backups');
-      fs.mkdirSync(backupDir, { recursive: true });
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      fs.writeFileSync(path.join(backupDir, `${stamp}.json`), JSON.stringify(tokens, null, 2));
-    },
-  });
+  const qb = quickBooksFromEnv(redis);
 
   console.log('Pulling Pipedrive persons…');
   const persons = (await fetchAllPages<Record<string, any>>(pd, '/persons')).map(slimPerson);

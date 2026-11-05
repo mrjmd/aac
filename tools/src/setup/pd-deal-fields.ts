@@ -17,18 +17,9 @@
  * via the `[deal:N]` marker in the event description. See
  * `docs/projects/apps-agent.md` → "Deal model".
  */
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { loadEnv } from '../lib/env';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const envText = readFileSync(resolve(__dirname, '../../../.env.diagnostic'), 'utf8');
-for (const line of envText.split('\n')) {
-  const m = line.match(/^([A-Z0-9_]+)="?([^"]*)"?$/);
-  if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
-}
+loadEnv();
 
 const PD_KEY = process.env.PIPEDRIVE_API_KEY;
 if (!PD_KEY) {

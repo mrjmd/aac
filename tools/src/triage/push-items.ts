@@ -29,6 +29,7 @@ import {
 } from '@aac/items';
 import type { FindingsFile } from './analyze.ts';
 import { botDraftRows, loadAwaiting, loadDraftLabels, loadFollowupQueue } from './sections.ts';
+import { loadEnv } from '../lib/env';
 
 /** Every item a triage run implies. Later duplicates of a key win (newest bot-draft row). */
 export function triageCandidates(data: FindingsFile): ItemCandidate[] {
@@ -73,20 +74,6 @@ export async function pushItems(data: FindingsFile, opts: { dryRun?: boolean } =
   if (!url || !token) throw new Error('Missing env: UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN');
   await new ItemStore(new Redis({ url, token })).putCandidates({ at: data.generatedAt, source: 'triage-laptop', candidates });
   console.log('Published to keys.itemCandidates');
-}
-
-function loadEnv(): void {
-  const envPath = path.resolve(process.cwd(), '.env.diagnostic');
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const value = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
-    if (!(key in process.env)) process.env[key] = value;
-  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

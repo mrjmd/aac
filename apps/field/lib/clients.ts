@@ -12,9 +12,8 @@ import { GoogleMapsClient } from '@aac/api-clients/google-maps';
 import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import { QuoClient } from '@aac/api-clients/quo';
-import type { QBOAuthTokens } from '@aac/shared-utils/types';
 import { Redis } from '@upstash/redis';
-import { keys, ttl } from '@aac/shared-utils/redis';
+import { qboTokenStore } from '@aac/shared-utils/qbo-tokens';
 import { getEnv } from './env';
 
 let _calendar: GoogleCalendarClient | null = null;
@@ -86,40 +85,10 @@ export function getQuickBooks(): QuickBooksClient {
       realmId: env.quickbooks.realmId,
       // OAuth connect flow is owned by middleware; field never initiates it.
       redirectUri: '',
-      getTokens: getQBTokens,
-      saveTokens: storeQBTokens,
-      refreshLock: {
-        acquire: acquireQBRefreshLock,
-        release: releaseQBRefreshLock,
-      },
+      ...qboTokenStore(getRedis()),
     });
   }
   return _quickbooks;
-}
-
-// ── QuickBooks token storage (shared with middleware) ─────────────────
-
-async function getQBTokens(): Promise<QBOAuthTokens | null> {
-  return (await getRedis().get<QBOAuthTokens>(keys.qbOAuthTokens)) ?? null;
-}
-
-async function storeQBTokens(tokens: QBOAuthTokens): Promise<void> {
-  await getRedis().set(keys.qbOAuthTokens, tokens);
-}
-
-// Single-flight lock around token refresh — shared across all apps (P4-1).
-// Intuit rotates the refresh token on every grant; concurrent refreshes can
-// strand every app with a dead token.
-async function acquireQBRefreshLock(): Promise<boolean> {
-  const result = await getRedis().set(keys.qbRefreshLock, Date.now(), {
-    nx: true,
-    px: ttl.qbRefreshLock * 1000,
-  });
-  return result === 'OK';
-}
-
-async function releaseQBRefreshLock(): Promise<void> {
-  await getRedis().del(keys.qbRefreshLock);
 }
 
 export function getCalendar(): GoogleCalendarClient {

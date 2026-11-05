@@ -51,9 +51,10 @@
  *   - JSON dump at tools/src/scratch/spike-output/backfill-deal-spine-<date>.json
  *     with per-record actions for review
  */
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadEnv } from '../lib/env';
 import {
   PipedriveClient,
   DEAL_PIPELINE_ID,
@@ -77,11 +78,7 @@ import { EVENT_CLASS_COLOR_IDS as COLORS } from '@aac/shared-utils/calendar';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const envText = readFileSync(resolve(__dirname, '../../../.env.diagnostic'), 'utf8');
-for (const line of envText.split('\n')) {
-  const m = line.match(/^([A-Z0-9_]+)="?([^"]*)"?$/);
-  if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
-}
+loadEnv();
 
 // ── CLI args ─────────────────────────────────────────────────────
 

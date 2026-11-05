@@ -25,26 +25,7 @@ import { randomUUID } from 'node:crypto';
 import { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
 import { todoScore, type TodoItem } from '@aac/shared-utils/types';
-
-function loadEnv(): void {
-  const envPath = path.resolve(process.cwd(), '.env.diagnostic');
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const value = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
-    if (!(key in process.env)) process.env[key] = value;
-  }
-}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
+import { loadEnv, redisFromEnv } from '../lib/env';
 
 interface Flags {
   positional: string[];
@@ -133,10 +114,7 @@ function refreshTriage(items: TodoItem[]): void {
 
 async function main(): Promise<void> {
   loadEnv();
-  const redis = new Redis({
-    url: requireEnv('UPSTASH_REDIS_REST_URL'),
-    token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
-  });
+  const redis = redisFromEnv();
   const [cmd, ...rest] = process.argv.slice(2);
   const flags = parseArgs(rest);
   let items = await loadAll(redis);

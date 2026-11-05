@@ -18,6 +18,11 @@ an API client from `@aac/api-clients` and calls its methods.
   logger — all come from the shared package.
 - **Each script is standalone.** No script should import from another script.
   Shared logic goes in packages.
+- **Env + clients come from `src/lib/env.ts`.** `loadEnv()` (reads
+  `.env.diagnostic`; run from the repo root), `requireEnv`, and factories
+  (`redisFromEnv`, `quickBooksFromEnv`, `quoFromEnv`, `geminiFromEnv`,
+  `calendarFromEnv`, `gmailFromEnv`, ...). Never hand-wire QBO tokens: the
+  factory uses the shared token store and refresh lock.
 
 ## Directory Structure
 

@@ -15,14 +15,9 @@
  *        --probe-phone <E164> (dry-run the intake generator against one
  *        thread, ignoring thread-age / reply / done-state checks).
  */
-import fs from 'node:fs';
-import path from 'node:path';
 import { Redis } from '@upstash/redis';
-import { QuickBooksClient, type QBEstimate } from '@aac/api-clients/quickbooks';
-import { QuoClient } from '@aac/api-clients/quo';
-import { GeminiClient } from '@aac/api-clients/gemini';
-import { keys, ttl } from '@aac/shared-utils/redis';
-import type { QBOAuthTokens } from '@aac/shared-utils/types';
+import { type QBEstimate } from '@aac/api-clients/quickbooks';
+import { keys } from '@aac/shared-utils/redis';
 import {
   RedisDraftState,
   type DraftDeps,
@@ -46,30 +41,9 @@ import {
 } from '@aac/message-drafts';
 import { CanHelpStore } from '@aac/quoting';
 import { easternDate } from '@aac/shared-utils/eastern';
+import { geminiFromEnv, loadEnv, quickBooksFromEnv, quoFromEnv, redisFromEnv } from '../lib/env';
 
 const SWEEP_INTERVAL_MIN = 10;
-
-function loadEnv(): void {
-  const envPath = path.resolve(process.cwd(), '.env.diagnostic');
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    if (!(key in process.env)) process.env[key] = value;
-  }
-}
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
 
 async function main(): Promise<void> {
   loadEnv();
@@ -83,32 +57,10 @@ async function main(): Promise<void> {
   const now = Date.now();
   const seed = Math.floor(now / 600_000);
 
-  const redis = new Redis({
-    url: requireEnv('UPSTASH_REDIS_REST_URL'),
-    token: requireEnv('UPSTASH_REDIS_REST_TOKEN'),
-  });
-  const qb = new QuickBooksClient({
-    clientId: requireEnv('QUICKBOOKS_CLIENT_ID'),
-    clientSecret: requireEnv('QUICKBOOKS_CLIENT_SECRET'),
-    realmId: requireEnv('QUICKBOOKS_REALM_ID'),
-    redirectUri: requireEnv('QUICKBOOKS_REDIRECT_URI'),
-    getTokens: async () => (await redis.get<QBOAuthTokens>(keys.qbOAuthTokens)) ?? null,
-    saveTokens: async (tokens) => {
-      await redis.set(keys.qbOAuthTokens, tokens);
-    },
-    refreshLock: {
-      acquire: async () =>
-        (await redis.set(keys.qbRefreshLock, Date.now(), { nx: true, px: ttl.qbRefreshLock * 1000 })) === 'OK',
-      release: async () => {
-        await redis.del(keys.qbRefreshLock);
-      },
-    },
-  });
-  const quo = new QuoClient({
-    apiKey: requireEnv('QUO_API_KEY'),
-    phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
-  });
-  const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY') });
+  const redis = redisFromEnv();
+  const qb = quickBooksFromEnv(redis);
+  const quo = quoFromEnv();
+  const gemini = geminiFromEnv();
   const deps: DraftDeps = { qb, quo, gemini, state: new RedisDraftState(redis), canHelp: new CanHelpStore(redis), dryRun };
 
   // ── probe modes (manual generator testing, never posts) ────────
