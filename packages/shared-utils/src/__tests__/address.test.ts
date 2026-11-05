@@ -42,9 +42,15 @@ describe('streetLine', () => {
     expect(streetLine('17 Montague Ave, Lake Pleasant, MA 01347, USA')).toBe('17 montague ave');
     expect(streetLine('15 West St.')).toBe('15 west st');
   });
-  it('is empty without a leading house number (town-only locations)', () => {
+  it('is empty for town-only locations (no number but a ZIP)', () => {
     expect(streetLine('Quincy, MA')).toBe('');
+    expect(streetLine('Quincy, MA 02169')).toBe('');
     expect(streetLine(undefined)).toBe('');
+  });
+  it('keeps any location that carries a house or unit number', () => {
+    expect(streetLine('Smith Residence, 123 Main St')).toBe('smith residence');
+    expect(streetLine('Unit 4, 123 Main St')).toBe('unit 4');
+    expect(streetLine('Hobart Unit 39')).toBe('hobart unit 39');
   });
 });
 

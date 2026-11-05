@@ -52,18 +52,20 @@ export function addressesMatch(a: string | null | undefined, b: string | null | 
  * Street line of a location, normalized for exact equality: everything
  * before the first comma, lowercased, punctuation stripped, whitespace
  * collapsed. "17 Montague Ave, Lake Pleasant, MA 01347" → "17 montague ave".
- * Returns '' unless the line starts with a house number, so two town-only
- * locations ("Quincy, MA") never count as the same house. Multi-day chains
- * use this exact form (spelling must agree: "St" ≠ "Street").
+ * Returns '' when the location has no number other than a ZIP code, so two
+ * town-only locations ("Quincy, MA", "Quincy, MA 02169") never count as the
+ * same house. Multi-day chains use this exact form (spelling must agree:
+ * "St" ≠ "Street").
  */
 export function streetLine(location: string | null | undefined): string {
-  const line = (location ?? '')
+  const raw = location ?? '';
+  if (!/\d/.test(raw.replace(/\b\d{5}(?:-\d{4})?\b/g, ''))) return '';
+  return raw
     .split(',')[0]
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return /^\d/.test(line) ? line : '';
 }
 
 /**
