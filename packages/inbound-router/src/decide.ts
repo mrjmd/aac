@@ -9,6 +9,9 @@
  *   note, no quote draft.
  * - need info → intake asks the one deciding question (first touch only;
  *   once Matt is talking to them it's his call). No quote draft.
+ * - only thanks / sign-offs (every intent "other") → nothing.
+ * - first touch = Matt hasn't engaged, no intake yet, and the burst is a new
+ *   inquiry (new_lead or quote_request).
  * - can help → intake on first touch; quote drafter on photos (T1) or
  *   Matt's quote promise (T3); the scope-change gate (T4) instead when a
  *   quote is already open; scheduling on a scheduling reply.
@@ -20,7 +23,16 @@ export function decide(read: InboundRead, state: ThreadState): Route[] {
     return [{ route: 'none', why: `not a lead (${read.classification})` }];
   }
 
-  const firstTouch = !state.mattEngaged && !state.intakeDone;
+  // Thanks, sign-offs, reviews: nothing to answer, whatever the thread is about.
+  if (read.intents.every((i) => i === 'other')) {
+    return [{ route: 'none', why: 'nothing to act on (thanks / sign-off)' }];
+  }
+
+  // Intake greets a new inquiry; a past customer calling to cancel isn't one.
+  const firstTouch =
+    !state.mattEngaged &&
+    !state.intakeDone &&
+    (read.intents.includes('new_lead') || read.intents.includes('quote_request'));
 
   if (read.propertyState === 'CT') {
     return firstTouch

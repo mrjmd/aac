@@ -187,6 +187,17 @@ describe('decide', () => {
     ]);
   });
 
+  it('thanks or a sign-off → nothing, even on a declined or scheduling thread', () => {
+    expect(decide(read({ intents: ['other'] }, { verdict: 'cant-help' }), st({ mattEngaged: true }))).toEqual([
+      { route: 'none', why: 'nothing to act on (thanks / sign-off)' },
+    ]);
+    expect(names(decide(read({ intents: ['other'] }), st()))).toEqual(['none']);
+  });
+
+  it('a past customer canceling is not a first touch → scheduling, no intake', () => {
+    expect(names(decide(read({ intents: ['scheduling_reply'] }), st()))).toEqual(['scheduling']);
+  });
+
   it('CT goes to Luc even when the out-of-area rule fires', () => {
     expect(names(decide(read({ propertyState: 'CT' }, { verdict: 'cant-help', ruleIds: ['out-of-area'] }), st()))).toEqual(['ct-routing']);
   });
