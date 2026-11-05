@@ -40,7 +40,7 @@ import {
   selectVariant,
   type FollowUpVariant,
 } from '../../lib/followup.js';
-import { matchEventToPerson } from '../../lib/job-customer-match.js';
+import { matchEventToPerson } from '@aac/customers';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const log = createLogger('cron:job-followups');

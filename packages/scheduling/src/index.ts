@@ -26,7 +26,6 @@ export * from './field-photos.js';
 export * from './email-photos.js';
 export * from './normalize-quo-customer.js';
 export * from './resolve-callback-parent.js';
-export * from './name-match.js';
 export * from './replay.js';
 export * from './suggest-slot.js';
 // Duration prediction for directives — the Quo path resolves the estimate in

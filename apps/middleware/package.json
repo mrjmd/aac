@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@aac/api-clients": "workspace:*",
+    "@aac/customers": "workspace:*",
     "@aac/scheduling": "workspace:*",
     "@aac/shared-utils": "workspace:*",
     "@upstash/redis": "^1.28.0",

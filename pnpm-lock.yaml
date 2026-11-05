@@ -124,6 +124,9 @@ importers:
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../../packages/api-clients
+      '@aac/customers':
+        specifier: workspace:*
+        version: link:../../packages/customers
       '@aac/scheduling':
         specifier: workspace:*
         version: link:../../packages/scheduling
@@ -255,6 +258,9 @@ importers:
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../../packages/api-clients
+      '@aac/customers':
+        specifier: workspace:*
+        version: link:../../packages/customers
       '@aac/scheduling':
         specifier: workspace:*
         version: link:../../packages/scheduling
@@ -464,6 +470,9 @@ importers:
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../api-clients
+      '@aac/customers':
+        specifier: workspace:*
+        version: link:../customers
       '@aac/quoting':
         specifier: workspace:*
         version: link:../quoting
@@ -492,6 +501,9 @@ importers:
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../api-clients
+      '@aac/customers':
+        specifier: workspace:*
+        version: link:../customers
       '@aac/shared-utils':
         specifier: workspace:*
         version: link:../shared-utils

@@ -13,6 +13,8 @@
  * whatever event objects you have; only the listed fields are read.
  */
 
+import { sameStreet, streetKey } from './address.js';
+
 /** Minimal shape of a calendar event this module needs. */
 export interface MultidayEvent {
   id: string;
@@ -57,23 +59,9 @@ export function baseTitle(summary: string | undefined): string {
 }
 
 /**
- * Street line of a location, normalized for equality: everything before
- * the first comma, lowercased, punctuation stripped, whitespace collapsed.
- * "17 Montague Ave, Lake Pleasant, MA 01347, USA" → "17 montague ave".
- */
-export function normalizedStreet(location: string | undefined): string {
-  return (location ?? '')
-    .split(',')[0]
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
  * Find the next continuation of `event` among `candidates`: a green event
  * that starts later (and within CONTINUATION_WINDOW_DAYS) and matches on
- * base title or normalized street. Returns the earliest such event, or
+ * base title or street address (`sameStreet`). Returns the earliest such event, or
  * null when `event` is the final (or only) day of its chain.
  *
  * `candidates` may include `event` itself, past events, and non-job
@@ -88,7 +76,7 @@ export function findContinuation<T extends MultidayEvent>(
   if (Number.isNaN(startMs)) return null;
 
   const title = baseTitle(event.summary);
-  const street = normalizedStreet(event.location);
+  const street = streetKey(event.location ?? '');
 
   let best: T | null = null;
   let bestMs = Infinity;
@@ -101,7 +89,7 @@ export function findContinuation<T extends MultidayEvent>(
     if (cMs <= startMs || cMs - startMs > CONTINUATION_WINDOW_DAYS * DAY_MS) continue;
 
     const titleMatch = title !== '' && baseTitle(c.summary) === title;
-    const streetMatch = street !== '' && normalizedStreet(c.location) === street;
+    const streetMatch = sameStreet(street, streetKey(c.location ?? ''));
     if (!titleMatch && !streetMatch) continue;
 
     if (cMs < bestMs) {

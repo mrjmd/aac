@@ -10,7 +10,8 @@
  */
 import { keys } from '@aac/shared-utils/redis';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
-import { nameTokens, type DraftThreadMessage } from '@aac/quoting';
+import { lastFirstTokens } from '@aac/customers';
+import type { DraftThreadMessage } from '@aac/quoting';
 import { loadAssets } from './assets.js';
 import { draftOne, prepareRun, type RunContext } from './drafter.js';
 import { loadFieldChannel, type FieldChannel } from './field-context.js';
@@ -79,7 +80,7 @@ export function resolveVisitCustomers(
   for (const e of events) {
     const hay = e.summary.toLowerCase();
     for (const c of customers) {
-      const { last } = nameTokens(c.name);
+      const { last } = lastFirstTokens(c.name);
       if (!last.length || !c.phones.length) continue;
       if (!last.some((t) => hay.includes(t))) continue;
       const phone = c.phones[0];

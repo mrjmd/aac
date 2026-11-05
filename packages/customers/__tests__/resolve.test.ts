@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   matchEventToDealAndPerson,
-  expandNicknames,
   extractPhonesFromDescription,
-} from '../lib/job-customer-match.js';
+  type PipedriveLookup,
+} from '../src/resolve.js';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const mockGetDeal = vi.fn();
@@ -16,7 +16,7 @@ const pipedrive = {
   getPerson: mockGetPerson,
   searchPersonByName: mockSearchPersonByName,
   searchPersonByPhone: mockSearchPersonByPhone,
-};
+} as unknown as PipedriveLookup;
 
 function eventWith(description: string, summary = 'Some Customer'): CalendarEvent {
   return {
@@ -50,7 +50,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('Repair details [deal:42]'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.deal?.id).toBe(42);
@@ -68,7 +68,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('[deal:999]', 'Fallback'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.deal).toBeNull();
@@ -83,7 +83,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('[deal:7]', 'Orphan Deal'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.deal).toBeNull();
@@ -97,7 +97,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('[deal:1]', 'Throw Fallback'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.deal).toBeNull();
@@ -112,7 +112,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('Foundation crack repair', 'Plain Customer'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.deal).toBeNull();
@@ -125,7 +125,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('PipedriveID: 1337', 'Legacy Marker'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.deal).toBeNull();
@@ -140,7 +140,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('Pool deck resurfacing', 'Teddy Watler [cont]'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(mockSearchPersonByName).toHaveBeenCalledWith('Teddy Watler');
@@ -156,7 +156,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('Day two of pad repairs', 'Bob Doherty [cont]'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.person?.id).toBe(88);
@@ -168,7 +168,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('No deal marker', 'Nobody Match'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.deal).toBeNull();
@@ -185,7 +185,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('Front step crack repairs', 'Bob Doherty'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.person?.id).toBe(6152);
@@ -201,7 +201,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('desc', 'Bob & Sue Hendrickson'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.person?.id).toBe(7);
@@ -218,7 +218,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('Bobby Doherty (781) 724-6317 will meet you there.', 'Bobby Doherty'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.person?.id).toBe(6152);
@@ -231,7 +231,7 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('Call Jill (781) 291-9439 to be let in.', 'Bob Doherty'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.person).toBeNull();
@@ -243,28 +243,12 @@ describe('matchEventToDealAndPerson', () => {
 
       const result = await matchEventToDealAndPerson(
         eventWith('No numbers here', 'Nobody Match'),
-        pipedrive as any,
+        pipedrive,
       );
 
       expect(result.person).toBeNull();
       expect(mockSearchPersonByPhone).not.toHaveBeenCalled();
     });
-  });
-});
-
-describe('expandNicknames', () => {
-  it('expands a known nickname in both directions', () => {
-    expect(expandNicknames('Bob Doherty')).toContain('Robert Doherty');
-    expect(expandNicknames('Robert Doherty')).toContain('Bob Doherty');
-  });
-
-  it('returns [] for unknown first names and single words', () => {
-    expect(expandNicknames('Zelda Doherty')).toEqual([]);
-    expect(expandNicknames('Doherty')).toEqual([]);
-  });
-
-  it('preserves the rest of the name', () => {
-    expect(expandNicknames('Jim St. Pierre')).toContain('James St. Pierre');
   });
 });
 

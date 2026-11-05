@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { getCalendar, getPipedrive } from '@/lib/clients';
-import { matchEventToPerson } from '@/lib/customer-match';
+import { matchEventToPerson } from '@aac/customers';
 import { getEasternRangeForDate, getTodayEasternDate, formatEventTime } from '@/lib/dates';
 import { classifyEvent } from '@/lib/event-classification';
 import { getEnv } from '@/lib/env';

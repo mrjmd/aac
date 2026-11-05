@@ -29,11 +29,11 @@
  */
 
 import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
-import { streetKey } from '@aac/customers';
+import { streetKey } from '@aac/shared-utils/address';
 import { createLogger } from '@aac/shared-utils/logger';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { STUB_DEFAULT_HOURS } from './execute-stub.js';
-import { nameTokensForMatch, summaryMatchesCustomer } from './name-match.js';
+import { nameTokensForMatch, summaryMatchesCustomer } from '@aac/customers';
 import type { KnownSlot, SchedulingDirective } from './types.js';
 import { isManualSchedule } from './types.js';
 

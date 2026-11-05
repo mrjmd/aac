@@ -31,7 +31,7 @@ import {
   isoDateDaysAgo,
 } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
-import { matchEventToPerson, matchPersonToQBCustomer } from '../../lib/job-customer-match.js';
+import { matchEventToPerson, matchPersonToQBCustomer } from '@aac/customers';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const log = createLogger('cron:invoice-send');

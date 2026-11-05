@@ -29,7 +29,7 @@ import { getEnv } from '../../lib/env.js';
 import { verifyCronAuth, REMINDER_COLOR_IDS, extractFirstName, getDayRangeEastern } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
 import { renderTemplate } from '../../lib/templates.js';
-import { matchEventToPerson } from '../../lib/job-customer-match.js';
+import { matchEventToPerson } from '@aac/customers';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const log = createLogger('cron:job-reminders');

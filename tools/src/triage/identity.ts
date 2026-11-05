@@ -31,7 +31,8 @@
  * are never suppressed here.
  */
 
-import { nameTokens, tokensAlike, streetKey } from '@aac/customers';
+import { nameTokens, tokensAlike } from '@aac/customers';
+import { streetKey } from '@aac/shared-utils/address';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import type { CustomerSnapshot, EmailThreadSnapshot, ThreadSnapshot } from './collect.ts';
 

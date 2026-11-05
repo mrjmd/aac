@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  nameTokens,
   matchEventsToCustomer,
   inDebriefWindow,
   buildFieldExtractionPrompt,
@@ -9,15 +8,6 @@ import {
 } from '../src/field-context';
 
 const DAY = 86_400_000;
-
-describe('nameTokens', () => {
-  it('splits last vs first and drops short words', () => {
-    expect(nameTokens('Mark T Mitchell')).toEqual({ last: ['mitchell'], first: ['mark'] });
-  });
-  it('single usable word goes to last', () => {
-    expect(nameTokens('Paul')).toEqual({ last: ['paul'], first: [] });
-  });
-});
 
 describe('matchEventsToCustomer', () => {
   const events = [

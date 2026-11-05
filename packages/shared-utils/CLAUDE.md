@@ -21,6 +21,7 @@ that ALL other packages, apps, and tools depend on.
 | Module | Purpose |
 |--------|---------|
 | `phone.ts` | Phone normalization (E.164), parsing, matching, Redis format |
+| `address.ts` | Street-address identity (`streetKey`, `sameStreet`, `addressesMatch`) — the one address parser |
 | `redis.ts` | Key schema builders, TTL constants |
 | `logger.ts` | Structured JSON logging |
 | `types.ts` | Shared TypeScript interfaces (Lead, Estimate, WebhookEvent, etc.) |

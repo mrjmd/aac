@@ -26,6 +26,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { lastFirstTokens } from '@aac/customers';
 import { GeminiClient } from '@aac/api-clients/gemini';
 
 const OUT_DIR = 'analysis/data/photo-corpus';
@@ -66,14 +67,6 @@ function readJsonl(file: string): any[] {
   const p = path.join(OUT_DIR, file);
   if (!fs.existsSync(p)) return [];
   return fs.readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
-}
-
-/** Name tokens: last name weighted — a last-name hit is a match on its own;
- *  a first-name hit only counts alongside temporal proximity to a visit. */
-function nameTokens(customerName: string): { last: string[]; first: string[] } {
-  const words = String(customerName).toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= 4);
-  if (words.length <= 1) return { last: words, first: [] };
-  return { last: [words[words.length - 1]], first: words.slice(0, -1) };
 }
 
 const eventStartMs = (e: any): number => {
@@ -118,7 +111,7 @@ async function main(): Promise<void> {
       const x = new Date(at).getTime();
       return x >= lo && x <= hi;
     };
-    const { last, first } = nameTokens(est.customerName ?? '');
+    const { last, first } = lastFirstTokens(est.customerName ?? '');
     const hasLast = (s: string) => last.some((tok) => s.toLowerCase().includes(tok));
     const hasFirst = (s: string) => first.some((tok) => s.toLowerCase().includes(tok));
 

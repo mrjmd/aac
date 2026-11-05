@@ -47,6 +47,7 @@ import { QuoClient, type QuoMessage } from '@aac/api-clients/quo';
 import { GeminiClient } from '@aac/api-clients/gemini';
 import { GoogleCalendarClient, type CalendarEvent } from '@aac/api-clients/google-calendar';
 import { GmailClient, type GmailMessage } from '@aac/api-clients/gmail';
+import { nameCorroborated } from '@aac/customers';
 import { isBotDraft } from '@aac/quoting';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
@@ -230,23 +231,6 @@ function assignVariant(estimateId: string): { t1Days: number; t2Days: number } {
   return { t1Days: T1_VARIANTS[h & 1], t2Days: T2_VARIANTS[(h >> 1) & 1] };
 }
 
-/** Levenshtein ratio for fuzzy last-name matching (Eriksen vs Erikson). */
-function similarity(a: string, b: string): number {
-  if (a === b) return 1;
-  const m = a.length;
-  const n = b.length;
-  if (!m || !n) return 0;
-  let prev = Array.from({ length: n + 1 }, (_, j) => j);
-  for (let i = 1; i <= m; i++) {
-    const cur = [i];
-    for (let j = 1; j <= n; j++) {
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-    }
-    prev = cur;
-  }
-  return 1 - prev[n] / Math.max(m, n);
-}
-
 // ── service classification (plan §4.5 + Mike capacity policy) ────────
 
 // Resurfacing classification runs on ITEM NAMES ONLY — never descriptions.
@@ -361,39 +345,11 @@ function computeBookingHorizon(events: DayEvent[], nowMs: number): { firstOpen: 
   return { firstOpen: '', text: 'calendar full for the next 150 days' };
 }
 
-/** Common first-name ↔ nickname equivalences for event corroboration
- *  (the calendar says "Bob Doherty"; QBO says "Robert Doherty"). */
-const NICKNAMES: Record<string, string[]> = {
-  robert: ['bob', 'rob', 'bobby'], william: ['bill', 'will', 'billy'],
-  michael: ['mike'], james: ['jim', 'jimmy'], richard: ['rick', 'rich', 'dick'],
-  joseph: ['joe', 'joey'], thomas: ['tom', 'tommy'], christopher: ['chris'],
-  daniel: ['dan', 'danny'], matthew: ['matt'], anthony: ['tony'],
-  steven: ['steve'], stephen: ['steve'], edward: ['ed', 'eddie', 'ted'],
-  andrew: ['andy', 'drew'], david: ['dave'], kenneth: ['ken'],
-  ronald: ['ron'], donald: ['don'], gregory: ['greg'], timothy: ['tim'],
-  jonathan: ['jon'], nicholas: ['nick'], samuel: ['sam'], benjamin: ['ben'],
-  lawrence: ['larry'], raymond: ['ray'], gerald: ['jerry'], john: ['jack', 'johnny'],
-  elizabeth: ['liz', 'beth', 'betsy'], katherine: ['kate', 'katie', 'kathy'],
-  margaret: ['maggie', 'meg', 'peggy'], patricia: ['pat', 'patty'],
-  jennifer: ['jen', 'jenny'], susan: ['sue'], deborah: ['deb', 'debbie'],
-  rebecca: ['becky'], kimberly: ['kim'], pamela: ['pam'], sandra: ['sandy'],
-};
-
-function firstNameMatches(first: string, words: string[]): boolean {
-  if (words.includes(first)) return true;
-  const aliases = NICKNAMES[first] ?? [];
-  if (aliases.some((a) => words.includes(a))) return true;
-  // reverse direction: QBO has the nickname, calendar has the formal name
-  for (const [formal, nicks] of Object.entries(NICKNAMES)) {
-    if (nicks.includes(first) && words.includes(formal)) return true;
-  }
-  return false;
-}
-
 /**
- * Booked-on-calendar check: fuzzy last-name match against upcoming
- * job-colored events, corroborated by first name or street number. This is
- * what caught Eriksen/"Erikson" — exact matching is insufficient (§8).
+ * Booked-on-calendar check: a recent/future green job whose title or
+ * location names the customer, corroborated by first name or street
+ * number (`nameCorroborated`). Fuzzy surname is what caught
+ * Eriksen/"Erikson"; exact matching is insufficient (§8).
  */
 function findBookedEvent(
   events: DayEvent[],
@@ -401,24 +357,9 @@ function findBookedEvent(
   address: string,
   nowMs: number,
 ): DayEvent | null {
-  const tokens = customerName.toLowerCase().split(/[^a-z]+/).filter((t) => t.length >= 3);
-  if (!tokens.length) return null;
-  const last = tokens[tokens.length - 1];
-  const first = tokens[0];
-  const streetNum = (address.match(/\b(\d{1,5})\b/) ?? [])[1];
-
   for (const ev of events) {
     if (ev.colorId !== '10' || ev.startMs < nowMs - 7 * DAY) continue; // green jobs, recent/future
-    const hay = `${ev.summary} ${ev.location}`.toLowerCase();
-    const words = hay.split(/[^a-z0-9]+/).filter(Boolean);
-    const lastHit = words.some((w) => w.length >= 3 && (w === last || (last.length >= 5 && similarity(w, last) >= 0.78)));
-    if (!lastHit) continue;
-    // Corroboration is mandatory: last-name-only matched Melanie Doherty to
-    // Robert "Bob Doherty"'s job on the first dry run. First name or street
-    // number must also hit, or it's not a booking.
-    const firstHit = first !== last && firstNameMatches(first, words);
-    const addrHit = !!streetNum && hay.includes(streetNum);
-    if (firstHit || addrHit) return ev;
+    if (nameCorroborated(`${ev.summary} ${ev.location}`, customerName, address)) return ev;
   }
   return null;
 }

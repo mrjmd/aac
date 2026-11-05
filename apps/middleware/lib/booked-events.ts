@@ -4,7 +4,7 @@
  * scheduling directive or a "here are some slots" note.
  */
 
-import { summaryMatchesCustomer } from '@aac/scheduling';
+import { summaryMatchesCustomer } from '@aac/customers';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import { getCalendar } from './clients.js';
 

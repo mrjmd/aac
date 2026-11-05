@@ -13,6 +13,8 @@
  * Clients (Calendar, Quo, Drive, Gemini) are composed by the caller.
  */
 
+import { lastFirstTokens } from '@aac/customers';
+
 const DAY = 86_400_000;
 
 export interface FieldEventMatch {
@@ -35,16 +37,6 @@ export interface FieldExtraction {
   quotes: string[];
 }
 
-/** Last name is a match on its own; first names need corroboration. */
-export function nameTokens(customerName: string): { last: string[]; first: string[] } {
-  const words = String(customerName ?? '')
-    .toLowerCase()
-    .split(/[^a-z]+/)
-    .filter((w) => w.length >= 4);
-  if (words.length <= 1) return { last: words, first: [] };
-  return { last: [words[words.length - 1]], first: words.slice(0, -1) };
-}
-
 /**
  * Match calendar events to a customer by name. Last-name hit matches any
  * event; first-name-only hits count only on assessment-colored events
@@ -54,7 +46,7 @@ export function matchEventsToCustomer(
   events: Array<{ id: string; summary?: string; location?: string; description?: string; colorId?: string; startMs: number }>,
   customerName: string,
 ): FieldEventMatch[] {
-  const { last, first } = nameTokens(customerName);
+  const { last, first } = lastFirstTokens(customerName);
   if (!last.length) return [];
   return events
     .filter((e) => {

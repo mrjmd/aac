@@ -27,7 +27,7 @@ import type {
 import type { PipedrivePerson } from '@aac/api-clients/pipedrive';
 import { createLogger } from '@aac/shared-utils/logger';
 import { getPipedrive, getQuickBooks } from './clients';
-import { matchEventToPerson, matchPersonToQBCustomer } from './customer-match';
+import { matchEventToPerson, matchPersonToQBCustomer } from '@aac/customers';
 import type { PaymentStatus } from './completion';
 
 const log = createLogger('field:payment-branches');

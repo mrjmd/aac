@@ -25,7 +25,7 @@
 import { createLogger } from '@aac/shared-utils/logger';
 import { parseDealMarker } from '@aac/api-clients/pipedrive';
 import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
-import { nameTokensForMatch, summaryMatchesCustomer } from './name-match.js';
+import { nameTokensForMatch, summaryMatchesCustomer } from '@aac/customers';
 
 const log = createLogger('resolve-callback-parent');
 

@@ -26,7 +26,7 @@
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { createLogger } from '@aac/shared-utils/logger';
 import { holdBelongsTo, HOLD_RELEASE_LOOKAHEAD_MS, HOLD_TITLE_PREFIX } from './execute-hold.js';
-import { summaryMatchesCustomer } from './name-match.js';
+import { summaryMatchesCustomer } from '@aac/customers';
 import type { EventClass, KnownSlot, SchedulingDirective } from './types.js';
 import { isAppointmentConfirmed, isManualSchedule } from './types.js';
 

@@ -1,9 +1,10 @@
 /**
- * Shared helpers for matching a calendar event → Pipedrive person → QB customer.
+ * Resolve a calendar event → Pipedrive person (and deal) → QBO customer.
  *
- * Used by the invoice-create and invoice-send crons. Mirrors the matching
- * sequence used inline by job-reminders and job-followups (single source of
- * truth long-term — those crons are sacrosanct so they're not refactored here).
+ * Used by the middleware reminder, follow-up and invoice crons and by the
+ * field app. Moved here from apps/middleware/lib/job-customer-match.ts on
+ * 2026-11-05; apps/field had a drifted copy without the nickname, phone,
+ * [cont] and deal-marker fallbacks.
  */
 
 import { createLogger } from '@aac/shared-utils/logger';
@@ -17,103 +18,15 @@ import type { QuickBooksClient, QBCustomer } from '@aac/api-clients/quickbooks';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import { stripTitleMarker } from '@aac/shared-utils/multiday';
-import { expandCompoundName } from './followup.js';
+import { expandCompoundName, expandNicknames } from './match.js';
 
-const log = createLogger('job-customer-match');
+const log = createLogger('customers:resolve');
 
-// ── nickname expansion ───────────────────────────────────────────────
-
-/** Calendar titles use what Matt calls the customer; Pipedrive has the
- *  formal name (or vice versa) — "Bob Doherty" vs "Robert Doherty"
- *  (reminder miss, 2026-10-19). Each group is a set of interchangeable
- *  first names. */
-const NICKNAME_GROUPS: string[][] = [
-  ['robert', 'rob', 'bob', 'bobby'],
-  ['william', 'will', 'bill', 'billy'],
-  ['michael', 'mike'],
-  ['james', 'jim', 'jimmy'],
-  ['john', 'jack', 'johnny', 'jon', 'jonathan'],
-  ['richard', 'rich', 'rick', 'dick'],
-  ['thomas', 'tom', 'tommy'],
-  ['christopher', 'chris'],
-  ['daniel', 'dan', 'danny'],
-  ['david', 'dave'],
-  ['donald', 'don'],
-  ['edward', 'ed', 'eddie'],
-  ['theodore', 'ted', 'theo'],
-  ['joseph', 'joe', 'joey'],
-  ['anthony', 'tony'],
-  ['stephen', 'steven', 'steve'],
-  ['andrew', 'andy', 'drew'],
-  ['matthew', 'matt'],
-  ['kenneth', 'ken', 'kenny'],
-  ['ronald', 'ron'],
-  ['lawrence', 'larry'],
-  ['gerald', 'jerry'],
-  ['timothy', 'tim'],
-  ['gregory', 'greg'],
-  ['raymond', 'ray'],
-  ['samuel', 'sam'],
-  ['benjamin', 'ben'],
-  ['nicholas', 'nick'],
-  ['alexander', 'alex'],
-  ['charles', 'charlie', 'chuck'],
-  ['frederick', 'fred'],
-  ['peter', 'pete'],
-  ['philip', 'phil'],
-  ['vincent', 'vince', 'vinny'],
-  ['albert', 'al'],
-  ['eugene', 'gene'],
-  ['stanley', 'stan'],
-  ['walter', 'walt'],
-  ['jacob', 'jake'],
-  ['joshua', 'josh'],
-  ['zachary', 'zach'],
-  ['nathaniel', 'nathan', 'nate'],
-  ['patrick', 'pat'],
-  ['patricia', 'pat', 'patty', 'tricia'],
-  ['elizabeth', 'liz', 'beth', 'betsy'],
-  ['katherine', 'catherine', 'kate', 'katie', 'kathy'],
-  ['margaret', 'maggie', 'peggy', 'meg'],
-  ['jennifer', 'jen', 'jenny'],
-  ['susan', 'sue', 'suzie'],
-  ['deborah', 'deb', 'debbie'],
-  ['barbara', 'barb'],
-  ['christine', 'christina', 'chris'],
-  ['kimberly', 'kim'],
-  ['cynthia', 'cindy'],
-  ['sandra', 'sandy'],
-  ['rebecca', 'becky'],
-  ['victoria', 'vicky'],
-  ['judith', 'judy'],
-  ['dorothy', 'dot', 'dottie'],
-  ['abigail', 'abby'],
-  ['gabriel', 'gabe'],
-];
-
-const NICKNAME_MAP: Map<string, Set<string>> = (() => {
-  const map = new Map<string, Set<string>>();
-  for (const group of NICKNAME_GROUPS) {
-    for (const name of group) {
-      const set = map.get(name) ?? new Set<string>();
-      for (const other of group) if (other !== name) set.add(other);
-      map.set(name, set);
-    }
-  }
-  return map;
-})();
-
-/** "Bob Doherty" → ["Robert Doherty", "Rob Doherty", "Bobby Doherty"].
- *  Only the first token varies. Returns [] when the first name has no
- *  known variants or the name is a single word. */
-export function expandNicknames(name: string): string[] {
-  const words = name.trim().split(/\s+/);
-  if (words.length < 2) return [];
-  const variants = NICKNAME_MAP.get(words[0].toLowerCase());
-  if (!variants) return [];
-  const rest = words.slice(1).join(' ');
-  return [...variants].map((v) => `${v[0].toUpperCase()}${v.slice(1)} ${rest}`);
-}
+/** The Pipedrive reads the resolver needs. */
+export type PipedriveLookup = Pick<
+  PipedriveClient,
+  'getDeal' | 'getPerson' | 'searchPersonByName' | 'searchPersonByPhone'
+>;
 
 // ── phone-in-description fallback ────────────────────────────────────
 
@@ -161,7 +74,7 @@ export function extractPipedriveId(description: string | undefined | null): stri
  */
 export async function matchEventToPerson(
   event: CalendarEvent,
-  pipedrive: PipedriveClient
+  pipedrive: PipedriveLookup,
 ): Promise<PipedrivePerson | null> {
   const { person } = await matchEventToDealAndPerson(event, pipedrive);
   return person;
@@ -188,7 +101,7 @@ export async function matchEventToPerson(
  */
 export async function matchEventToDealAndPerson(
   event: CalendarEvent,
-  pipedrive: PipedriveClient
+  pipedrive: PipedriveLookup,
 ): Promise<{ deal: PipedriveDeal | null; person: PipedrivePerson | null }> {
   const dealId = parseDealMarker(event.description);
   if (dealId) {
@@ -269,7 +182,7 @@ export async function matchEventToDealAndPerson(
  */
 export async function matchPersonToQBCustomer(
   person: PipedrivePerson,
-  qb: QuickBooksClient
+  qb: Pick<QuickBooksClient, 'searchCustomerByEmail' | 'searchCustomerByName'>,
 ): Promise<QBCustomer | null> {
   const email = PipedriveClient.getPrimaryEmail(person);
   if (email) {

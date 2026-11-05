@@ -16,12 +16,12 @@
 
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import type { QBCustomer, QBEstimate, QuickBooksClient } from '@aac/api-clients/quickbooks';
-import { streetKey } from '@aac/customers';
+import { streetKey } from '@aac/shared-utils/address';
 import { isBotDraft } from '@aac/quoting';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { createLogger } from '@aac/shared-utils/logger';
 import { EVENT_CLASS_COLOR_IDS, STUB_TITLE_PREFIX } from './execute-stub.js';
-import { summaryMatchesCustomer } from './name-match.js';
+import { summaryMatchesCustomer } from '@aac/customers';
 
 const log = createLogger('scheduling:booking-sync');
 

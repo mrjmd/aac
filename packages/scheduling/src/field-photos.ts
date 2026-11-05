@@ -18,6 +18,8 @@
 import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import type { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import { createLogger } from '@aac/shared-utils/logger';
+import { addressesMatch } from '@aac/shared-utils/address';
+import { customerNameMatches } from '@aac/customers';
 import {
   uploadPhotoAttachments,
   type PhotoUploadItem,
@@ -81,46 +83,6 @@ async function downloadBlob(
   };
 }
 
-function nameTokens(raw: string): string[] {
-  return raw
-    .toLowerCase()
-    .replace(/^(stub|hold)\s+—\s+/, '')
-    .replace(/[^a-z\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean);
-}
-
-/**
- * Tolerant person-name match: same surname plus given names that share a
- * 4-char prefix ("rachel"/"rachael"); single-token names must be equal.
- */
-export function customerNameMatches(eventSummary: string, customerName: string): boolean {
-  const a = nameTokens(eventSummary);
-  const b = nameTokens(customerName);
-  if (a.length === 0 || b.length === 0) return false;
-  if (a.join(' ') === b.join(' ')) return true;
-  if (a.length < 2 || b.length < 2) return false;
-  if (a[a.length - 1] !== b[b.length - 1]) return false;
-  const [givenA, givenB] = [a[0], b[0]];
-  const prefix = Math.min(4, givenA.length, givenB.length);
-  return givenA.slice(0, prefix) === givenB.slice(0, prefix);
-}
-
-/**
- * Loose street-address match: same leading street number and same first
- * street-name word ("122 Allen Avenue, Falmouth" vs "122 Allen Ave, …").
- */
-export function addressMatches(a: string | null | undefined, b: string | null | undefined): boolean {
-  if (!a || !b) return false;
-  const parse = (s: string): { num: string; street: string } | null => {
-    const m = s.toLowerCase().match(/(\d+)\s+([a-z]+)/);
-    return m ? { num: m[1], street: m[2] } : null;
-  };
-  const pa = parse(a);
-  const pb = parse(b);
-  return Boolean(pa && pb && pa.num === pb.num && pa.street === pb.street);
-}
-
 export async function collectFieldPhotoAttachments(
   deps: CollectFieldPhotosDeps,
   input: CollectFieldPhotosInput,
@@ -141,7 +103,7 @@ export async function collectFieldPhotoAttachments(
       .filter(
         (e: CalendarEvent) =>
           customerNameMatches(e.summary ?? '', input.customerName) ||
-          addressMatches(e.location, input.customerAddress),
+          addressesMatch(e.location, input.customerAddress),
       )
       .sort((a: CalendarEvent, b: CalendarEvent) => b.start.localeCompare(a.start))
       .slice(0, MAX_VISITS);

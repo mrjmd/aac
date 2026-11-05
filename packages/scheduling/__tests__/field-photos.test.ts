@@ -2,9 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import type { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import {
-  addressMatches,
   collectFieldPhotoAttachments,
-  customerNameMatches,
   type CollectFieldPhotosDeps,
   type FieldCompletionRecord,
 } from '../src/field-photos.js';
@@ -65,41 +63,6 @@ const INPUT = {
   customerAddress: '122 Allen Ave, Falmouth, MA, USA',
   shareWithEmails: ['mike@attackacrack.com'],
 };
-
-describe('customerNameMatches', () => {
-  it('tolerates given-name spelling drift with the same surname', () => {
-    expect(customerNameMatches('Rachel McCarthy', 'Rachael McCarthy')).toBe(true);
-  });
-
-  it('strips STUB/HOLD prefixes before comparing', () => {
-    expect(customerNameMatches('STUB — Rachel McCarthy', 'Rachael McCarthy')).toBe(true);
-  });
-
-  it('rejects different surnames and unrelated events', () => {
-    expect(customerNameMatches('Rachel Smith', 'Rachael McCarthy')).toBe(false);
-    expect(customerNameMatches('Mike OOO', 'Rachael McCarthy')).toBe(false);
-    expect(customerNameMatches('BNI Meeting', 'Rachael McCarthy')).toBe(false);
-  });
-
-  it('requires exact match for single-token names', () => {
-    expect(customerNameMatches('McCarthy', 'McCarthy')).toBe(true);
-    expect(customerNameMatches('McCarthy', 'McCarthey')).toBe(false);
-  });
-});
-
-describe('addressMatches', () => {
-  it('matches on street number + first street word across formats', () => {
-    expect(
-      addressMatches('122 Allen Avenue, Falmouth, Massachusetts, 02540', '122 Allen Ave, Falmouth, MA, USA'),
-    ).toBe(true);
-  });
-
-  it('rejects different numbers or streets, and missing values', () => {
-    expect(addressMatches('124 Allen Ave', '122 Allen Ave')).toBe(false);
-    expect(addressMatches('122 Birch St', '122 Allen Ave')).toBe(false);
-    expect(addressMatches(null, '122 Allen Ave')).toBe(false);
-  });
-});
 
 describe('collectFieldPhotoAttachments', () => {
   it('finds the prior visit by fuzzy name and attaches its photos', async () => {

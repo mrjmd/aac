@@ -15,6 +15,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { lastFirstTokens } from '@aac/customers';
 
 const OUT_DIR = 'analysis/data/photo-corpus';
 const OUT_PATH = path.join(OUT_DIR, 'mike-photo-attribution.jsonl');
@@ -30,12 +31,6 @@ function readJsonl(file: string): any[] {
   const p = path.join(OUT_DIR, file);
   if (!fs.existsSync(p)) return [];
   return fs.readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
-}
-
-function nameTokens(customerName: string): { last: string[]; first: string[] } {
-  const words = String(customerName).toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= 4);
-  if (words.length <= 1) return { last: words, first: [] };
-  return { last: [words[words.length - 1]], first: words.slice(0, -1) };
 }
 
 function main(): void {
@@ -73,7 +68,7 @@ function main(): void {
     const t = new Date(est.txnDate + 'T12:00:00Z').getTime();
     const lo = t - 45 * DAY;
     const hi = t + 3 * DAY;
-    const { last, first } = nameTokens(est.customerName ?? '');
+    const { last, first } = lastFirstTokens(est.customerName ?? '');
     if (!last.length) continue;
 
     const visitWindows: Array<[number, number]> = (ctx?.events ?? []).map((e: any) => {

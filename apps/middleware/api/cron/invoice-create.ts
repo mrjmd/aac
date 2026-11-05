@@ -33,7 +33,7 @@ import {
   isoDateDaysAgo,
 } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
-import { matchEventToDealAndPerson, matchPersonToQBCustomer } from '../../lib/job-customer-match.js';
+import { matchEventToDealAndPerson, matchPersonToQBCustomer } from '@aac/customers';
 import type { QBEstimate } from '@aac/api-clients/quickbooks';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 

@@ -3,7 +3,8 @@ import type { GmailClient, GmailMessage } from '@aac/api-clients/gmail';
 import type { QBCustomer, QBEstimate, QBInvoice, QBPayment, QuickBooksClient } from '@aac/api-clients/quickbooks';
 import type { QuoCall, QuoClient, QuoMessage } from '@aac/api-clients/quo';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
-import { eventMatchesName, nameTokens, streetKey } from './match.js';
+import { sameStreet, streetKey } from '@aac/shared-utils/address';
+import { eventMatchesName, nameTokens } from './match.js';
 
 
 /** Who the customer is, as QBO knows them, plus the handles we join on. */
@@ -108,14 +109,6 @@ export function customerProfile(c: QBCustomer & { Id: string }): CustomerProfile
 }
 
 // ── calendar matching ────────────────────────────────────────────────
-
-/** Same house + street; units must agree only when both sides have one. */
-export function sameStreet(a: string | null, b: string | null): boolean {
-  if (!a || !b) return false;
-  const [an, as, au] = a.split('|');
-  const [bn, bs, bu] = b.split('|');
-  return an === bn && as === bs && (!au || !bu || au === bu);
-}
 
 const PHONE_RE = /(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g;
 

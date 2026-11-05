@@ -1,4 +1,24 @@
-export { eventMatchesName, nameTokens, streetKey, tokensAlike } from './match.js';
+export {
+  customerNameMatches,
+  eventMatchesName,
+  expandCompoundName,
+  expandNicknames,
+  firstNamesAlike,
+  lastFirstTokens,
+  nameCorroborated,
+  nameTokens,
+  nameTokensForMatch,
+  summaryMatchesCustomer,
+  tokensAlike,
+} from './match.js';
+export {
+  extractPhonesFromDescription,
+  extractPipedriveId,
+  matchEventToDealAndPerson,
+  matchEventToPerson,
+  matchPersonToQBCustomer,
+} from './resolve.js';
+export type { PipedriveLookup } from './resolve.js';
 export { searchCustomers, trimCustomer } from './search.js';
 export type { CustomerHit } from './search.js';
 export {
@@ -8,7 +28,6 @@ export {
   fetchEmailPart,
   fetchQboPart,
   fetchQuoPart,
-  sameStreet,
   trimEvent,
 } from './timeline.js';
 export type {

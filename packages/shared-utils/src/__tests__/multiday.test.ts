@@ -4,7 +4,6 @@ import {
   stripTitleMarker,
   isContinuationTitle,
   countContinuationDays,
-  normalizedStreet,
   findContinuation,
   hasContinuation,
   type MultidayEvent,
@@ -81,19 +80,6 @@ describe('baseTitle', () => {
   });
 });
 
-describe('normalizedStreet', () => {
-  it('keeps only the street line, lowercased, punctuation stripped', () => {
-    expect(normalizedStreet('17 Montague Ave, Lake Pleasant, MA 01347, USA')).toBe('17 montague ave');
-  });
-  it('collapses whitespace and handles leading spaces', () => {
-    expect(normalizedStreet(' 840  Willard Street Quincy')).toBe('840 willard street quincy');
-  });
-  it('handles undefined and empty', () => {
-    expect(normalizedStreet(undefined)).toBe('');
-    expect(normalizedStreet('')).toBe('');
-  });
-});
-
 describe('findContinuation', () => {
   const day1 = ev({ id: 'a', start: '2026-09-10T08:00:00-04:00' });
   const day2 = ev({ id: 'b', start: '2026-09-11T14:30:00-04:00' });
@@ -125,6 +111,16 @@ describe('findContinuation', () => {
       summary: 'Spooner day 2', // different title, no marker
     });
     expect(findContinuation(day2, [sloppy])?.id).toBe('e');
+  });
+
+  it('matches by street when the address is written differently and the title drifts', () => {
+    const retyped = ev({
+      id: 'e2',
+      start: '2026-09-12T08:00:00-04:00',
+      summary: 'Spooner day 2',
+      location: '188 King St, Hanover MA',
+    });
+    expect(findContinuation(day2, [retyped])?.id).toBe('e2');
   });
 
   it('ignores events outside the 10-day window', () => {

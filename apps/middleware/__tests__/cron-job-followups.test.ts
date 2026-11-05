@@ -44,7 +44,7 @@ vi.mock('../lib/followup.js', () => ({
   selectVariant: vi.fn().mockReturnValue({ variant: 'mike', prompt: 'Mention Mike!' }),
 }));
 
-vi.mock('../lib/job-customer-match.js', () => ({
+vi.mock('@aac/customers', () => ({
   matchEventToPerson: vi.fn().mockResolvedValue({
     id: 1,
     name: 'Ed Spooner',

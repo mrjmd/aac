@@ -8,6 +8,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./phone": "./dist/phone.js",
+    "./address": "./dist/address.js",
     "./redis": "./dist/redis.js",
     "./logger": "./dist/logger.js",
     "./types": "./dist/types.js",
