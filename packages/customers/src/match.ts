@@ -227,11 +227,11 @@ export function expandNicknames(name: string): string[] {
 
 // ── compound names ───────────────────────────────────────────────────
 
-const COMPOUND_SEPARATOR = /\s*&\s*|\s*\/\s*|\s+and\s+/i;
+const COMPOUND_SEPARATOR = /\s*&\s*|\s*\/\s*|\s+\+\s+|\s+and\s+/i;
 
 /**
  * Expand a compound calendar title into the individual person names a
- * search would match: split on &/and//, take the shared last name from
+ * search would match: split on &, /, " + " or "and", take the shared last name from
  * the first multi-word part, attach it to single-word parts.
  *
  *   "Lisa & John Hendrickson" → ["Lisa Hendrickson", "John Hendrickson"]

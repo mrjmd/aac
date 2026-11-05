@@ -98,6 +98,7 @@ describe('expandCompoundName', () => {
     expect(expandCompoundName('Bob/Alice Smith')).toEqual(['Bob Smith', 'Alice Smith']);
     expect(expandCompoundName('Lisa and John Hendrickson')).toEqual(['Lisa Hendrickson', 'John Hendrickson']);
     expect(expandCompoundName('Lisa&John Hendrickson')).toEqual(['Lisa Hendrickson', 'John Hendrickson']);
+    expect(expandCompoundName('Lisa + John Hendrickson')).toEqual(['Lisa Hendrickson', 'John Hendrickson']);
   });
   it('returns [] without a separator or a shared last name', () => {
     expect(expandCompoundName('John Smith')).toEqual([]);

@@ -124,6 +124,9 @@ importers:
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../../packages/api-clients
+      '@aac/customers':
+        specifier: workspace:*
+        version: link:../../packages/customers
       '@aac/scheduling':
         specifier: workspace:*
         version: link:../../packages/scheduling

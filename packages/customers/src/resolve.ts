@@ -1,11 +1,10 @@
 /**
  * Resolve a calendar event → Pipedrive person (and deal) → QBO customer.
  *
- * Used by the middleware reminder, follow-up and invoice crons. Moved here
- * from apps/middleware/lib/job-customer-match.ts on 2026-11-05. The field
- * app still runs its own older copy (apps/field/lib/customer-match.ts: no
- * nickname, phone, [cont] or deal-marker fallbacks, but splits on "+");
- * moving it onto this one is a behavior change for the owner to approve.
+ * Used by the middleware reminder, follow-up and invoice crons and by the
+ * field app (job page phone, day-list city, running-late text, payment).
+ * Moved here from apps/middleware/lib/job-customer-match.ts on 2026-11-05;
+ * the field app's own older copy was retired the same day (owner-approved).
  */
 
 import { createLogger } from '@aac/shared-utils/logger';
