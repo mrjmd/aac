@@ -1,4 +1,4 @@
-import { nyDate } from "@aac/items";
+import { easternDate } from "@aac/shared-utils/eastern";
 import { cards, loadSafe } from "@/lib/cards";
 import { bookedAhead, fieldDay, techOut, type FieldEvent } from "@/lib/field-events";
 import { Freshness } from "../components/freshness";
@@ -22,7 +22,7 @@ function openSlot(day: string, events: FieldEvent[], saturday: boolean): string 
 }
 
 export default async function WeekPage() {
-  const today = nyDate(new Date());
+  const today = easternDate(new Date());
   const dow = new Date(`${today}T12:00:00Z`).getUTCDay();
   const monday = addDays(today, dow === 0 ? 1 : 1 - dow);
   const days = Array.from({ length: 6 }, (_, n) => addDays(monday, n));

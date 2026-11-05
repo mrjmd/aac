@@ -1,4 +1,4 @@
-import { daysBetween, nyDate } from './dates.js';
+import { daysBetween, easternDate } from '@aac/shared-utils/eastern';
 import { groupByPerson } from './group.js';
 import { rankItem, shouldSuggest, SUGGEST_MAX } from './rank.js';
 import type { HiddenReason, Item, ItemCandidate, ItemState, MuteRule, ReconcileResult } from './types.js';
@@ -42,7 +42,7 @@ export function reconcile(
   options: { baseline?: boolean } = {},
 ): ReconcileResult {
   const nowIso = now.toISOString();
-  const today = nyDate(now);
+  const today = easternDate(now);
   const states: Record<string, ItemState> = { ...stored };
   const items: Item[] = [];
   const hidden: ReconcileResult['hidden'] = [];

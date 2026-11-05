@@ -1,4 +1,4 @@
-import { nyDate } from './dates.js';
+import { easternDate } from '@aac/shared-utils/eastern';
 import type { DismissReason, ItemCandidate, ItemState } from './types.js';
 
 export type Verb =
@@ -59,7 +59,7 @@ export function applyVerb(
       return next;
     }
     case 'pin': {
-      const date = verb.date ?? nyDate(now);
+      const date = verb.date ?? easternDate(now);
       const rank = todayRanks.length ? Math.max(...todayRanks) + 1 : 0;
       return { ...state, placedAt: state.placedAt ?? nowIso, pinnedFor: date, pinnedSince: state.pinnedSince ?? date, rank };
     }

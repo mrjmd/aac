@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { TodoItem } from '@aac/shared-utils/types';
-import { daysBetween } from './dates.js';
+import { daysBetween } from '@aac/shared-utils/eastern';
 import type { ItemCandidate, Severity } from './types.js';
 
 export const TODO_KEY_PREFIX = 'todo:';

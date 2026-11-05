@@ -16,7 +16,7 @@
  * directly for control flow — always go through bucketForEvent.
  */
 
-import { getTodayEasternDate } from './dates';
+import { easternDate } from '@aac/shared-utils/eastern';
 
 export type EventTimeBucket =
   | 'future'
@@ -30,23 +30,14 @@ interface CompletionSignal {
   cancelledAt?: string;
 }
 
-/** Extract YYYY-MM-DD (ET) from any ISO-8601 timestamp. */
-export function easternDateLabel(iso: string): string {
-  const d = new Date(iso);
-  const y = d.toLocaleString('en-CA', { year: 'numeric', timeZone: 'America/New_York' });
-  const m = d.toLocaleString('en-CA', { month: '2-digit', timeZone: 'America/New_York' });
-  const day = d.toLocaleString('en-CA', { day: '2-digit', timeZone: 'America/New_York' });
-  return `${y}-${m}-${day}`;
-}
-
 export function bucketForEvent(
   eventStartIso: string,
   completion: CompletionSignal | null | undefined,
 ): EventTimeBucket {
   if (completion?.cancelledAt) return 'cancelled';
 
-  const today = getTodayEasternDate();
-  const eventDate = easternDateLabel(eventStartIso);
+  const today = easternDate();
+  const eventDate = easternDate(eventStartIso);
 
   if (eventDate > today) return 'future';
   if (eventDate === today) return 'today';
@@ -71,8 +62,8 @@ export function bucketAllowsCancellation(bucket: EventTimeBucket): boolean {
 
 /** Compute days late = today − event date. Returns 0 for same-day or future. */
 export function daysLate(eventStartIso: string): number {
-  const today = getTodayEasternDate();
-  const eventDate = easternDateLabel(eventStartIso);
+  const today = easternDate();
+  const eventDate = easternDate(eventStartIso);
   if (eventDate >= today) return 0;
   const [ty, tm, td] = today.split('-').map(Number);
   const [ey, em, ed] = eventDate.split('-').map(Number);

@@ -3,7 +3,8 @@ import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { getCalendar, getPipedrive } from '@/lib/clients';
 import { matchEventToPerson } from '@aac/customers';
-import { getEasternRangeForDate, getTodayEasternDate, formatEventTime } from '@/lib/dates';
+import { formatEventTime } from '@/lib/dates';
+import { easternDate, easternDayRange } from '@aac/shared-utils/eastern';
 import { classifyEvent } from '@/lib/event-classification';
 import { getEnv } from '@/lib/env';
 import { getEscalationTarget } from '@/lib/escalation';
@@ -20,8 +21,8 @@ export default async function IssuePage() {
   // Today's tech-shaped events that haven't ended yet, each paired with the
   // PD-resolved customer phone. Customer match can be slow on cold cache —
   // do it in parallel.
-  const today = getTodayEasternDate();
-  const { timeMin, timeMax } = getEasternRangeForDate(today);
+  const today = easternDate();
+  const { timeMin, timeMax } = easternDayRange(today);
   const allEvents = await getCalendar()
     .listEvents({ timeMin, timeMax, attendeeEmails: env.technicianEmails })
     .catch((err) => {

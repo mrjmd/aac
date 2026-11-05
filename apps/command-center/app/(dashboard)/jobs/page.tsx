@@ -1,4 +1,4 @@
-import { nyDate } from "@aac/items";
+import { easternDate } from "@aac/shared-utils/eastern";
 import { cards, loadSafe } from "@/lib/cards";
 import { bookedAhead } from "@/lib/field-events";
 import { Freshness } from "../components/freshness";
@@ -13,7 +13,7 @@ function fmtWeek(d: string): string {
 const pct = (p: number | null | undefined) => (p == null ? "OOO" : `${Math.round(p * 100)}%`);
 
 export default async function JobsPage() {
-  const today = nyDate(new Date());
+  const today = easternDate(new Date());
   const card = cards.techWeeks();
   const { snap, error } = await loadSafe(card);
   const header = (

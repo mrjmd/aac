@@ -1,4 +1,5 @@
 import type { ItemCandidate, ItemState } from './types.js';
+import { EASTERN_TZ, easternDate } from '@aac/shared-utils/eastern';
 
 /**
  * The Today ranking (Matt, 2026-11-05): hard deadlines and promises first,
@@ -68,11 +69,10 @@ export function rankItem(c: ItemCandidate, now: Date): Rank {
 
 function dueLabel(iso: string, now: Date): string {
   const d = new Date(iso);
-  const fmt = (o: Intl.DateTimeFormatOptions) => d.toLocaleString('en-US', { timeZone: 'America/New_York', ...o });
-  const day = (x: Date) => x.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const fmt = (o: Intl.DateTimeFormatOptions) => d.toLocaleString('en-US', { timeZone: EASTERN_TZ, ...o });
   const time = fmt({ hour: 'numeric', minute: '2-digit' }).replace(':00', '');
-  if (day(d) === day(now)) return `${time} today`;
-  if (day(d) === day(new Date(now.getTime() + DAY))) return `${time} tomorrow`;
+  if (easternDate(d) === easternDate(now)) return `${time} today`;
+  if (easternDate(d) === easternDate(now.getTime() + DAY)) return `${time} tomorrow`;
   return fmt({ weekday: 'short', month: 'short', day: 'numeric' });
 }
 

@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { buildCustomerTimeline, type TimelineEntry } from "@aac/customers";
-import { nyDate } from "@aac/items";
+import { easternDate } from "@aac/shared-utils/eastern";
 import { cards, loadSafe } from "@/lib/cards";
 import { FIELD_LABEL, fieldClass } from "@/lib/field-events";
 import { Freshness } from "../../components/freshness";
@@ -110,7 +110,7 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
     calls: quo.snap?.data.calls ?? [],
     emails: email.snap?.data ?? [],
     events: cal.snap?.data ?? [],
-    today: nyDate(new Date()),
+    today: easternDate(new Date()),
     now: new Date(),
   });
   const sources = [

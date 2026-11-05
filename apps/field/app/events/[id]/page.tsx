@@ -13,20 +13,13 @@ import { bucketForEvent, daysLate } from '@/lib/event-time-bucket';
 import { findEventContinuation } from '@/lib/multiday';
 import { requireSession } from '@/lib/session';
 import CompletionChecklist from './completion-flow';
+import { easternDate } from '@aac/shared-utils/eastern';
 
 export const dynamic = 'force-dynamic';
 
 interface Props {
   params: Promise<{ id: string }>;
   searchParams: Promise<{ from?: string }>;
-}
-
-function dateLabelFromISO(iso: string): string {
-  const d = new Date(iso);
-  const y = d.toLocaleString('en-CA', { year: 'numeric', timeZone: 'America/New_York' });
-  const m = d.toLocaleString('en-CA', { month: '2-digit', timeZone: 'America/New_York' });
-  const day = d.toLocaleString('en-CA', { day: '2-digit', timeZone: 'America/New_York' });
-  return `${y}-${m}-${day}`;
 }
 
 export default async function EventDetailPage({ params, searchParams }: Props) {
@@ -69,7 +62,7 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
   }
 
   const type = classifyEvent(evt.colorId);
-  const eventDateLabel = dateLabelFromISO(evt.start);
+  const eventDateLabel = easternDate(evt.start);
   const completion = await getCompletion(id);
   const bucket = bucketForEvent(evt.start, completion);
   const lateDays = bucket === 'past_not_completed' ? daysLate(evt.start) : 0;
@@ -82,7 +75,7 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
     type === 'repair' && bucket !== 'cancelled' && completion?.phase !== 'completed'
       ? await findEventContinuation(evt)
       : null;
-  const continuesOn = continuation ? formatDateDisplay(dateLabelFromISO(continuation.start)) : null;
+  const continuesOn = continuation ? formatDateDisplay(easternDate(continuation.start)) : null;
 
   // Resolve the PD person so we can surface call/text actions on the
   // customer's name. Only attempt for job/inspection-shaped events; skip

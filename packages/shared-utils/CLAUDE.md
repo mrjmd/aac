@@ -23,6 +23,7 @@ that ALL other packages, apps, and tools depend on.
 | `phone.ts` | Phone normalization (E.164), parsing, matching, Redis format |
 | `address.ts` | Street-address identity (`streetKey`, `sameStreet`, `addressesMatch`) — the one address parser |
 | `calendar.ts` | Calendar conventions: color IDs, HOLD/STUB prefixes, technician emails, busy rules (`isBusyEvent`, `selectBusyEvents`, `isTechOutOfOffice`) |
+| `eastern.ts` | Eastern business day: `easternDate`, `easternDayRange`, `easternOffset`, `easternWallTime`, `shiftDate`, `daysBetween` |
 | `redis.ts` | Key schema builders, TTL constants |
 | `logger.ts` | Structured JSON logging |
 | `types.ts` | Shared TypeScript interfaces (Lead, Estimate, WebhookEvent, etc.) |

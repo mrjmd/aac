@@ -13,7 +13,8 @@ import {
   type TimelineEmail,
   type TimelineEvent,
 } from "@aac/customers";
-import { nyDate, type InvoiceNudge } from "@aac/items";
+import { type InvoiceNudge } from "@aac/items";
+import { easternDate } from "@aac/shared-utils/eastern";
 import { getCashPosition, getTechUtilization, type CashPosition, type TechWeek } from "@aac/metrics";
 import { getCalendar, technicianEmails } from "./calendar";
 import { getGmail, getQuo } from "./customers";
@@ -45,12 +46,12 @@ export const cards = {
   cash: (): Card<CashPosition> => ({
     name: "money:cash",
     maxAgeMs: 15 * MIN,
-    fetch: () => getCashPosition(getQuickBooks(), nyDate(new Date())),
+    fetch: () => getCashPosition(getQuickBooks(), easternDate(new Date())),
   }),
   techWeeks: (): Card<TechWeek[]> => ({
     name: "jobs:tech-weeks",
     maxAgeMs: 15 * MIN,
-    fetch: () => getTechUtilization(getCalendar(), technicianEmails(), nyDate(new Date())),
+    fetch: () => getTechUtilization(getCalendar(), technicianEmails(), easternDate(new Date())),
   }),
   customerIndex: (): Card<QBCustomer[]> => ({
     name: "customers:index",
@@ -106,7 +107,7 @@ export const cards = {
  * ladder. A customer whose QBO, Quo or Gmail part fails is laddered on what's left.
  */
 async function fetchNudges(): Promise<NudgeRow[]> {
-  const today = nyDate(new Date());
+  const today = easternDate(new Date());
   const overdue = (await getQuickBooks().listOpenInvoices()).filter((i) => i.DueDate && i.DueDate < today && (i.Balance ?? 0) > 0);
   const byCustomer = new Map<string, typeof overdue>();
   for (const inv of overdue) byCustomer.set(inv.CustomerRef.value, [...(byCustomer.get(inv.CustomerRef.value) ?? []), inv]);

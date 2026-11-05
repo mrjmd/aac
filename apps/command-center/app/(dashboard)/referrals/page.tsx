@@ -1,4 +1,4 @@
-import { nyDate } from "@aac/items";
+import { easternDate } from "@aac/shared-utils/eastern";
 import { getCanHelpStore } from "@/lib/can-help";
 import { ReferralsView } from "./referrals-view";
 
@@ -6,5 +6,5 @@ import { ReferralsView } from "./referrals-view";
 export default async function ReferralsPage() {
   const store = getCanHelpStore();
   const [referrals, rules] = await Promise.all([store.referrals(), store.rules()]);
-  return <ReferralsView initial={{ referrals, rules }} today={nyDate(new Date())} />;
+  return <ReferralsView initial={{ referrals, rules }} today={easternDate(new Date())} />;
 }

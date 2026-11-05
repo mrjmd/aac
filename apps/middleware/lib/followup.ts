@@ -19,6 +19,7 @@
 import { createLogger } from '@aac/shared-utils/logger';
 import type { GeminiClient } from '@aac/api-clients/gemini';
 import { getRedis } from './redis.js';
+import { daysBetween, EASTERN_TZ, easternDate, easternWallTime } from '@aac/shared-utils/eastern';
 
 const log = createLogger('followup');
 
@@ -66,17 +67,12 @@ export interface VariantSelection {
  *   jobDate=2026-04-15 → "a few weeks ago"
  */
 export function formatWhen(jobDateIso: string, now: Date = new Date()): string {
-  const job = new Date(jobDateIso.split('T')[0] + 'T12:00:00-04:00');
-  const ref = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  ref.setHours(12, 0, 0, 0);
-  job.setHours(12, 0, 0, 0);
-
-  const msPerDay = 24 * 60 * 60 * 1000;
-  const days = Math.round((ref.getTime() - job.getTime()) / msPerDay);
+  const jobDay = jobDateIso.slice(0, 10);
+  const days = daysBetween(jobDay, easternDate(now));
 
   if (days <= 1) return 'yesterday';
   if (days <= 6) {
-    const dayName = job.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
+    const dayName = easternWallTime(jobDay, 12).toLocaleDateString('en-US', { weekday: 'long', timeZone: EASTERN_TZ });
     return `on ${dayName}`;
   }
   if (days <= 13) return 'last week';

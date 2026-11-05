@@ -45,6 +45,7 @@ import {
   CT_ROUTING_EXEMPLARS,
 } from '@aac/message-drafts';
 import { CanHelpStore } from '@aac/quoting';
+import { easternDate } from '@aac/shared-utils/eastern';
 
 const SWEEP_INTERVAL_MIN = 10;
 
@@ -150,7 +151,7 @@ async function main(): Promise<void> {
       areaCode: probePhone.slice(2, 5),
       exemplars: pickExemplars(INTAKE_EXEMPLARS, 6, seed),
       imageParts: await loadIntakePhotos(quo, inbound),
-      canHelpBlock: await deps.canHelp?.block(new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })),
+      canHelpBlock: await deps.canHelp?.block(easternDate(now)),
     });
     console.log(`\n── probe intake ${probePhone} (classification: ${result?.classification}, state: ${result?.propertyState}, verdict: ${result?.verdict} — ${result?.verdictReason}, provided: ${JSON.stringify(result?.provided)}, extracted: ${JSON.stringify(result?.extracted)}) ──`);
     if (result?.classification === 'lead' && result.propertyState === 'CT') {

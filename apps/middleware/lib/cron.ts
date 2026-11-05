@@ -11,6 +11,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { EVENT_CLASS_COLOR_IDS } from '@aac/shared-utils/calendar';
+import { easternDate, easternDayRange, isDateLabel, shiftDate } from '@aac/shared-utils/eastern';
 import { createLogger } from '@aac/shared-utils/logger';
 import type { DealStage } from '@aac/api-clients/pipedrive';
 import { getEnv } from './env.js';
@@ -102,42 +103,8 @@ export function getDayRangeEastern(
   offsetDays: number,
   runDate?: string,
 ): { timeMin: string; timeMax: string; dateLabel: string } {
-  let base: Date;
-
-  if (runDate && /^\d{4}-\d{2}-\d{2}$/.test(runDate)) {
-    base = new Date(runDate + 'T12:00:00-04:00'); // Noon Eastern dodges DST edges
-  } else {
-    base = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  }
-
-  base.setDate(base.getDate() + offsetDays);
-  const year = base.getFullYear();
-  const month = String(base.getMonth() + 1).padStart(2, '0');
-  const day = String(base.getDate()).padStart(2, '0');
-
-  const dateLabel = `${year}-${month}-${day}`;
-  const offset = easternUtcOffset(dateLabel);
-  return {
-    timeMin: `${dateLabel}T00:00:00${offset}`,
-    timeMax: `${dateLabel}T23:59:59${offset}`,
-    dateLabel,
-  };
-}
-
-/**
- * UTC offset ("-04:00" or "-05:00") in effect in America/New_York on the
- * given date. Hardcoding -04:00 shifted the day window by an hour between
- * November and March (EST).
- */
-export function easternUtcOffset(dateLabel: string): string {
-  const probe = new Date(`${dateLabel}T12:00:00Z`);
-  const tzPart = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    timeZoneName: 'shortOffset',
-  })
-    .formatToParts(probe)
-    .find((p) => p.type === 'timeZoneName')?.value;
-  return tzPart === 'GMT-5' ? '-05:00' : '-04:00';
+  const base = runDate && isDateLabel(runDate) ? runDate : easternDate();
+  return easternDayRange(shiftDate(base, offsetDays));
 }
 
 /**

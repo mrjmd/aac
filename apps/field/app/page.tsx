@@ -3,14 +3,8 @@ import Link from 'next/link';
 import SwipeDayNavigator from './swipe-day-navigator';
 import { getCalendar } from '@/lib/clients';
 import { getEnv } from '@/lib/env';
-import {
-  getTodayEasternDate,
-  getEasternRangeForDate,
-  formatEventTimeRange,
-  formatDateDisplay,
-  shiftDate,
-  isValidDateLabel,
-} from '@/lib/dates';
+import { formatEventTimeRange, formatDateDisplay } from '@/lib/dates';
+import { easternDate, easternDayRange, isDateLabel, shiftDate } from '@aac/shared-utils/eastern';
 import { classifyEvent, labelForType, badgeColorClasses } from '@/lib/event-classification';
 import { buildDirectionsUrl } from '@/lib/location';
 import { resolveEventCity } from '@/lib/event-city';
@@ -29,9 +23,9 @@ export default async function DayPage({ searchParams }: PageProps) {
   // before rendering customer names/addresses for the day.
   await requireSession();
   const params = await searchParams;
-  const today = getTodayEasternDate();
+  const today = easternDate();
   const dateLabel =
-    params.date && isValidDateLabel(params.date) ? params.date : today;
+    params.date && isDateLabel(params.date) ? params.date : today;
 
   let events: Awaited<ReturnType<ReturnType<typeof getCalendar>['listEvents']>> = [];
   let loadError: string | null = null;
@@ -41,7 +35,7 @@ export default async function DayPage({ searchParams }: PageProps) {
     const env = getEnv();
     const session = await getCurrentSession();
     const userConfig = session ? await getUserConfig(session.email) : { homeAddress: null };
-    const { timeMin, timeMax } = getEasternRangeForDate(dateLabel);
+    const { timeMin, timeMax } = easternDayRange(dateLabel);
     events = await getCalendar().listEvents({
       timeMin,
       timeMax,

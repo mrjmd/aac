@@ -1,5 +1,4 @@
 export * from './types.js';
-export { nyDate, daysBetween } from './dates.js';
 export { reconcile, isMuted, staleStateKeys, recentlyDismissed } from './reconcile.js';
 export { rankItem, rankFeatures, shouldSuggest, SUGGEST_MIN_SCORE, SUGGEST_MAX, DEADLINE_WINDOW_H } from './rank.js';
 export type { Rank, RankFeatures } from './rank.js';

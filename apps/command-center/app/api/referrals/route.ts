@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canHelpId, endRule, type Referral, type StandingRule } from "@aac/quoting";
-import { nyDate } from "@aac/items";
+import { easternDate } from "@aac/shared-utils/eastern";
 import { parsePhone } from "@aac/shared-utils/phone";
 import { getCanHelpStore } from "@/lib/can-help";
 
@@ -26,7 +26,7 @@ type Op =
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as Op;
   const store = getCanHelpStore();
-  const today = nyDate(new Date());
+  const today = easternDate(new Date());
 
   switch (body.op) {
     case "putReferral": {

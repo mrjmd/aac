@@ -6,6 +6,7 @@ import {
   isBusyEvent,
   isTechOutOfOffice,
 } from '@aac/shared-utils/calendar';
+import { easternDate, easternMinuteOfDay } from '@aac/shared-utils/eastern';
 
 /** One Monday-to-Sunday week of a technician's calendar. */
 export interface TechWeek {
@@ -26,14 +27,6 @@ export const WORKDAY_HOURS = 8;
 /** One event never counts for more than a long field day. */
 const MAX_EVENT_HOURS = 10;
 
-const NY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
-const NY_TIME = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-const nyDay = (iso: string) => NY.format(new Date(iso));
-/** Minutes after local midnight in America/New_York. */
-function nyMinute(iso: string): number {
-  const [h, m] = NY_TIME.format(new Date(iso)).split(':').map(Number);
-  return h * 60 + m;
-}
 const isAllDay = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const weekday = (d: string) => new Date(`${d}T00:00:00Z`).getUTCDay(); // 0 Sun .. 6 Sat
@@ -57,9 +50,9 @@ function pieces(e: CalendarEvent): Array<[string, number, number]> {
     for (let d = e.start; d < e.end; d = addDays(d, 1)) if (weekday(d) % 6 !== 0) out.push([d, ...ALL_DAY_BLOCK]);
     return out;
   }
-  const start = nyMinute(e.start);
+  const start = easternMinuteOfDay(e.start);
   const lengthMin = Math.min(MAX_EVENT_HOURS * 60, Math.max(0, (Date.parse(e.end) - Date.parse(e.start)) / 60_000));
-  return [[nyDay(e.start), start, Math.min(24 * 60, start + lengthMin)]];
+  return [[easternDate(e.start), start, Math.min(24 * 60, start + lengthMin)]];
 }
 
 /** Minutes of [start, end) not already in `covered`; adds the span to `covered`. */

@@ -31,6 +31,7 @@ import {
   type SuppressedFinding,
   type Xref,
 } from './identity.ts';
+import { easternWallTime } from '@aac/shared-utils/eastern';
 
 // ── thresholds ───────────────────────────────────────────────────────
 
@@ -310,12 +311,7 @@ const gmailThreadLink = (threadId: string): string => `https://mail.google.com/m
 function dueFrom(v: LlmVerdict): { dueAt?: string } {
   const m = v.due_at?.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
   if (!m) return {};
-  const [y, mo, d, h, mi] = m.slice(1).map(Number);
-  // Eastern offset for that date: EDT (UTC-4) or EST (UTC-5).
-  const probe = new Date(Date.UTC(y, mo - 1, d, 12));
-  const tz = probe.toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' });
-  const offset = tz.includes('EDT') ? 4 : 5;
-  const at = new Date(Date.UTC(y, mo - 1, d, h + offset, mi));
+  const at = easternWallTime(`${m[1]}-${m[2]}-${m[3]}`, Number(m[4]), Number(m[5]));
   return Number.isNaN(at.getTime()) ? {} : { dueAt: at.toISOString() };
 }
 

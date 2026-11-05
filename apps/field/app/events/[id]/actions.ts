@@ -23,6 +23,7 @@ import { executePaymentBranch } from '@/lib/payment-branches';
 import { findEventContinuation } from '@/lib/multiday';
 import { getCurrentSession } from '@/lib/session';
 import { formatDateDisplay } from '@/lib/dates';
+import { easternDate } from '@aac/shared-utils/eastern';
 
 const log = createLogger('field:event-actions');
 
@@ -43,8 +44,7 @@ async function loadEvent(eventId: string) {
 
 /** "Wednesday, October 1" for an event-start ISO datetime. */
 function displayDate(iso: string): string {
-  const label = new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-  return formatDateDisplay(label);
+  return formatDateDisplay(easternDate(iso));
 }
 
 /** Step 1: Mike arrives — record the check-in. Works for any event type. */

@@ -4,7 +4,6 @@ import {
   addTopic,
   logConversation,
   newPerson,
-  nyDate,
   removeTopic,
   setFacts,
   setTopicStatus,
@@ -14,6 +13,7 @@ import {
   type TopicStatus,
 } from "@aac/items";
 import { getPeopleStore } from "@/lib/people";
+import { easternDate } from "@aac/shared-utils/eastern";
 
 /** GET /api/people — everyone, in display order. */
 export async function GET() {
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
       break;
     case "had":
       if (!KINDS.has(body.kind)) return bad("bad kind");
-      next = logConversation(p, { ...body, at: body.at ?? nyDate(now) });
+      next = logConversation(p, { ...body, at: body.at ?? easternDate(now) });
       break;
     case "facts":
       next = setFacts(p, body.facts ?? []);

@@ -1,4 +1,4 @@
-import { nyDate } from "@aac/items";
+import { easternDate } from "@aac/shared-utils/eastern";
 import { cards, loadSafe } from "@/lib/cards";
 import { bookedAhead, fieldDay, techOut } from "@/lib/field-events";
 import { usdK } from "../components/layout-parts";
@@ -7,7 +7,7 @@ import { TodayView } from "./today-view";
 export const dynamic = "force-dynamic";
 
 export default async function TodayPage() {
-  const today = nyDate(new Date());
+  const today = easternDate(new Date());
   const [cash, weeks, cal] = await Promise.all([
     loadSafe(cards.cash()),
     loadSafe(cards.techWeeks()),

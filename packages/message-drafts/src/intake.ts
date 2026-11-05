@@ -41,6 +41,7 @@ import {
 import { CT_ROUTING_EXEMPLARS, INTAKE_EXEMPLARS } from './data/exemplars.js';
 import { postDraftNote } from './note.js';
 import { isDone } from './state.js';
+import { easternDate } from '@aac/shared-utils/eastern';
 
 export type IntakeOutcome =
   | { kind: 'drafted'; record: DraftRecord }
@@ -167,7 +168,7 @@ export async function processIntakePhone(deps: DraftDeps, phone: string): Promis
   // looking at them, against the standing can't-help rules, so a leaking
   // block bulkhead gets a kind decline instead of the name/address ask.
   const imageParts = await loadIntakePhotos(quo, inbound);
-  const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const today = easternDate(now);
   const canHelpBlock = await deps.canHelp?.block(today).catch(() => undefined);
 
   const result = await draftIntake(gemini, {

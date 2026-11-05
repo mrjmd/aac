@@ -1,3 +1,4 @@
+import { daysBetween } from '@aac/shared-utils/eastern';
 import type { TimelineEntry } from './timeline.js';
 
 /**
@@ -45,10 +46,6 @@ export interface NudgeStatus {
   /** Reached rungs still uncovered after `next` (the ladder fell behind). */
   behind: number;
 }
-
-const DAY = 86_400_000;
-const daysBetween = (from: string, to: string) =>
-  Math.floor((Date.parse(`${to.slice(0, 10)}T12:00:00Z`) - Date.parse(`${from.slice(0, 10)}T12:00:00Z`)) / DAY);
 
 /** Which outbound timeline entries count as a nudge, and how strong. */
 export function nudgeTouch(e: TimelineEntry): NudgeTouch | null {

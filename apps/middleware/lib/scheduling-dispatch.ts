@@ -69,6 +69,7 @@ import {
   trackSchedulingClassification,
   writePendingDirective,
 } from './redis.js';
+import { EASTERN_TZ } from '@aac/shared-utils/eastern';
 
 const log = createLogger('scheduling-dispatch');
 
@@ -86,7 +87,7 @@ const MIN_CLASSIFIER_TEXT_LENGTH = 10;
 const SHORT_AFFIRMATION_RE =
   /\b(yes|yep|yeah|yup|ok|okay|sure|perfect|great|deal|works|confirmed?)\b|👍|👌|✅/i;
 
-const DEFAULT_TIMEZONE = 'America/New_York';
+const DEFAULT_TIMEZONE = EASTERN_TZ;
 
 export type SchedulingEventType =
   | 'message.received'

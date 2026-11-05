@@ -7,6 +7,7 @@ import {
   isTechOutOfOffice,
 } from "@aac/shared-utils/calendar";
 import type { TechWeek } from "@aac/metrics";
+import { EASTERN_TZ, easternDate } from "@aac/shared-utils/eastern";
 
 /** The mockup's calendar dot classes. */
 export type FieldClass = "job" | "assess" | "cb" | "stub" | "hold";
@@ -35,11 +36,10 @@ export function fieldClass(ev: Pick<TimelineEvent, "summary" | "colorId">): Fiel
   }
 }
 
-const NY_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
-const NY_TIME = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
+const NY_TIME = new Intl.DateTimeFormat("en-US", { timeZone: EASTERN_TZ, hour: "numeric", minute: "2-digit" });
 
 /** YYYY-MM-DD in New York; all-day events carry a bare date. */
-export const eventDay = (start: string) => (start.length === 10 ? start : NY_DAY.format(new Date(start)));
+export const eventDay = (start: string) => (start.length === 10 ? start : easternDate(start));
 
 export interface FieldEvent {
   id: string;

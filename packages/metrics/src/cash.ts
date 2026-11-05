@@ -1,4 +1,5 @@
 import type { QBAccount, QBInvoice, QuickBooksClient } from '@aac/api-clients/quickbooks';
+import { daysBetween } from '@aac/shared-utils/eastern';
 
 export interface CashAccount {
   id: string;
@@ -38,10 +39,6 @@ function bankOf(name: string): CashAccount['bank'] {
   if (RELAY_PREFIX.test(name)) return 'Relay';
   if (/^Business Checking \(1082\)/i.test(name)) return 'Beacon';
   return 'Other';
-}
-
-function daysBetween(a: string, b: string): number {
-  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;

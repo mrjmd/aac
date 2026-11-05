@@ -3,7 +3,6 @@ import {
   fromRuleReview,
   fromTodo,
   ItemStore,
-  nyDate,
   reconcile,
   recentlyDismissed,
   staleStateKeys,
@@ -18,6 +17,7 @@ import { getCanHelpStore } from "./can-help";
 import { getRedis } from "./redis";
 import { readSnapshot } from "./snapshots";
 import { loadTodos } from "./todos";
+import { easternDate } from "@aac/shared-utils/eastern";
 
 export function getItemStore(): ItemStore {
   return new ItemStore(getRedis());
@@ -41,7 +41,7 @@ export async function loadCandidates(now = new Date()): Promise<{
       .rules()
       .catch(() => []),
   ]);
-  const today = nyDate(now);
+  const today = easternDate(now);
   // The saved nudge ladder replaces triage's plain overdue items (same d3:
   // keys, so Matt's state carries over). Saved only: never fetched here.
   const laddered = new Set(nudges?.data.map((n) => `d3:${n.invoiceId}`) ?? []);
@@ -104,7 +104,7 @@ export async function loadItemsView(now = new Date()): Promise<ItemsView> {
 
 /** Ranks currently on Today (for appending a newly pinned item at the end). */
 export function todayRanks(states: Record<string, ItemState>, now = new Date()): number[] {
-  const today = nyDate(now);
+  const today = easternDate(now);
   return Object.values(states)
     .filter((s) => s.status === "open" && s.pinnedFor && s.pinnedFor <= today && s.rank !== undefined)
     .map((s) => s.rank as number);
