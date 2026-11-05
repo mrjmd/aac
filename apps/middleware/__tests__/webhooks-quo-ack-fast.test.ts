@@ -1,7 +1,8 @@
 /**
  * Ack-fast + intake-scheduling behavior of the Quo webhook (P1,
- * 2026-10-21): the response must go out BEFORE the scheduling dispatch
- * finishes, and a first inbound must arm the 10-min intake window.
+ * 2026-10-21; customer sync deferred 2026-11-05): the response must go out
+ * BEFORE the Pipedrive sync, AI extraction and scheduling dispatch finish,
+ * and a first inbound must arm the 10-min intake window.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -40,12 +41,17 @@ vi.mock('../lib/scheduling-dispatch.js', () => ({
 }));
 vi.mock('../lib/suggestion-note.js', () => ({ maybePostSuggestionNote: vi.fn() }));
 vi.mock('../lib/inbound-deal.js', () => ({ ensureInboundLeadDeal: vi.fn() }));
+const pdMock = vi.hoisted(() => ({
+  logActivity: vi.fn(),
+  updatePersonIncremental: vi.fn(),
+}));
+const extractEntitiesMock = vi.hoisted(() => vi.fn());
 vi.mock('../lib/clients.js', () => ({
-  getPipedrive: vi.fn(() => ({ logActivity: vi.fn().mockResolvedValue(undefined) })),
+  getPipedrive: vi.fn(() => pdMock),
   getCalendar: vi.fn(),
   getDrive: vi.fn(),
   getGmail: vi.fn(),
-  getGemini: vi.fn(() => ({ extractEntities: vi.fn().mockResolvedValue(null) })),
+  getGemini: vi.fn(() => ({ extractEntities: extractEntitiesMock })),
   getQuickBooks: vi.fn(),
   getQuo: vi.fn(),
 }));
@@ -86,7 +92,13 @@ function req(payload: unknown): Request {
 beforeEach(() => {
   vi.clearAllMocks();
   dispatchMock.mockResolvedValue({ outcome: 'none' });
+  pdMock.logActivity.mockResolvedValue(undefined);
+  pdMock.updatePersonIncremental.mockResolvedValue({ updated: false, fields: [] });
+  extractEntitiesMock.mockResolvedValue(null);
 });
+
+/** A call that never settles: the webhook must respond without it. */
+const never = (): Promise<never> => new Promise<never>(() => {});
 
 describe('quo webhook ack-fast', () => {
   it('returns 200 before the scheduling dispatch resolves (10/19 incident hardening)', async () => {
@@ -98,9 +110,57 @@ describe('quo webhook ack-fast', () => {
     );
     const res = await POST(req(makeMessageEvent()));
     expect(res.status).toBe(200);
-    expect(dispatchMock).toHaveBeenCalledTimes(1); // started…
+    await vi.waitFor(() => expect(dispatchMock).toHaveBeenCalledTimes(1)); // started…
     resolveDispatch(); // …but the response never waited on it
     expect(dispatchStarted).toBeDefined();
+  });
+
+  it('returns 200 before the Pipedrive activity log resolves', async () => {
+    pdMock.logActivity.mockReturnValue(never());
+    const res = await POST(req(makeMessageEvent()));
+    expect(await res.json()).toMatchObject({ status: 'accepted', eventType: 'message.received' });
+    await vi.waitFor(() => expect(pdMock.logActivity).toHaveBeenCalledTimes(1));
+    expect(dispatchMock).not.toHaveBeenCalled(); // still waiting on Pipedrive, in order
+  });
+
+  it('returns 200 before AI entity extraction resolves', async () => {
+    extractEntitiesMock.mockReturnValue(never());
+    const res = await POST(req(makeMessageEvent()));
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(extractEntitiesMock).toHaveBeenCalledTimes(1));
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  it('extracted entities still update the Pipedrive person, then dispatch runs', async () => {
+    extractEntitiesMock.mockResolvedValue({
+      fullName: 'Dana Whitfield',
+      email: 'dana@example.com',
+      streetAddress: '12 Elm St',
+      city: 'Quincy',
+      state: 'MA',
+      zipCode: '02169',
+      confidence: 0.9,
+    });
+    await POST(req(makeMessageEvent({ body: 'Hi this is Dana Whitfield, 12 Elm St Quincy MA 02169' })));
+    await vi.waitFor(() => expect(dispatchMock).toHaveBeenCalledTimes(1));
+    expect(pdMock.updatePersonIncremental).toHaveBeenCalledWith(777, expect.objectContaining({
+      name: 'Dana Whitfield',
+      phone: '+19785550199',
+      email: 'dana@example.com',
+      city: 'Quincy',
+    }));
+    expect(redisMocks.trackWebhookProcessed).toHaveBeenCalledWith('quo');
+  });
+
+  it('a Pipedrive failure after the ack is surfaced to health and skips dispatch, as before', async () => {
+    pdMock.logActivity.mockRejectedValue(new Error('pipedrive 503'));
+    const res = await POST(req(makeMessageEvent()));
+    expect(res.status).toBe(200);
+    await vi.waitFor(() =>
+      expect(redisMocks.logHealthError).toHaveBeenCalledWith('quo', 'pipedrive 503', { eventId: 'evt-quo-1' }),
+    );
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(redisMocks.trackWebhookProcessed).not.toHaveBeenCalled();
   });
 
   it('dispatch failures after the ack are surfaced to health, not the caller', async () => {
@@ -195,6 +255,6 @@ describe('internal numbers skip the customer pipeline', () => {
 
   it('a customer message still reaches scheduling dispatch', async () => {
     await POST(req(makeMessageEvent()));
-    expect(dispatchMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(dispatchMock).toHaveBeenCalledTimes(1));
   });
 });

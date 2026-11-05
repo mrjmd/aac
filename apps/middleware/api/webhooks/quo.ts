@@ -444,6 +444,41 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     // ============================================
+    // CUSTOMER SYNC (deferred — ack-fast)
+    // Pipedrive person/activity sync, AI entity extraction and scheduling
+    // dispatch all wait on Pipedrive/Gemini/Calendar. A slow one is how the
+    // 2026-10-19 timeout → webhook auto-disable incident happened, so they
+    // run after the response, in the same order and with the same error
+    // handling as before.
+    // ============================================
+    defer(syncCustomer(event, eventData, e164Phone));
+
+    return json({ status: 'accepted', eventType: event.type });
+  } catch (error) {
+    log.error('Webhook processing failed', error as Error, { eventId: event.id });
+
+    await logHealthError('quo', (error as Error).message, { eventId: event.id });
+
+    return json({
+      status: 'error',
+      message: 'Processing failed, logged for investigation',
+    });
+  }
+}
+
+/**
+ * Pipedrive person + activity sync, AI entity extraction, and scheduling
+ * dispatch for one customer event. Runs after the webhook has responded.
+ * Failures are logged + surfaced to /api/health, never propagate.
+ */
+async function syncCustomer(
+  event: QuoWebhookPayload['object'],
+  eventData: QuoWebhookPayload['object']['data']['object'],
+  e164Phone: string,
+): Promise<void> {
+  const env = getEnv();
+  try {
+    // ============================================
     // FIND OR CREATE PIPEDRIVE PERSON
     // ============================================
     const pd = getPipedrive();
@@ -713,20 +748,8 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     await trackWebhookProcessed('quo');
-
-    return json({
-      status: 'processed',
-      pipedrivePersonId,
-      eventType: event.type,
-    });
   } catch (error) {
     log.error('Webhook processing failed', error as Error, { eventId: event.id });
-
     await logHealthError('quo', (error as Error).message, { eventId: event.id });
-
-    return json({
-      status: 'error',
-      message: 'Processing failed, logged for investigation',
-    });
   }
 }
