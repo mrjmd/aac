@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Operational scripts \u2014 thin wrappers over @aac/api-clients",
   "dependencies": {
+    "@aac/ads-conversions": "workspace:*",
     "@aac/api-clients": "workspace:*",
     "@aac/customers": "workspace:*",
     "@aac/items": "workspace:*",

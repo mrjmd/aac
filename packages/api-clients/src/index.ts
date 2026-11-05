@@ -43,7 +43,13 @@ export { GmailClient } from './gmail.js';
 export type { GmailConfig, GmailMessage, ListMessagesOptions } from './gmail.js';
 
 export { GoogleAdsClient } from './google-ads.js';
-export type { GoogleAdsConfig } from './google-ads.js';
+export type {
+  GoogleAdsConfig,
+  ClickConversion,
+  ClickConversionResult,
+  ConversionActionRow,
+  UploadClickConversionsResponse,
+} from './google-ads.js';
 
 export { GoogleDriveClient } from './google-drive.js';
 export type { GoogleDriveConfig, DriveFileInfo } from './google-drive.js';

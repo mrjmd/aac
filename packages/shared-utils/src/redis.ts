@@ -289,6 +289,15 @@ export const keys = {
   /** HASH: watchdog condition id → JSON {since, alertedAt} for open conditions (dedup + recovery notices). */
   watchdogState: 'watchdog:state' as const,
 
+  // ── Google Ads offline conversions (@aac/ads-conversions) ────────────
+
+  /** HASH: 10-digit phone → JSON AdClick {gclid, tapAt, matchedBy, ...}. First match wins; pruned after 90 days. */
+  adsClicks: 'ads-conversions:clicks' as const,
+  /** SET: orderIds already accepted by Google ("lead:6175551234", "quote:...", "won:..."). Never re-sent. */
+  adsConversionsSent: 'ads-conversions:sent' as const,
+  /** STRING: JSON summary of the last run (counts, mode, errors). Read by health checks. */
+  adsConversionsLastSummary: 'ads-conversions:last-summary' as const,
+
   /** HASH: person id → JSON Person (agenda topics, past conversations, tagged items, facts). No TTL. */
   ccPeople: 'cc:people' as const,
 

@@ -73,6 +73,14 @@ Spec: `projects/triage-dashboard.md`.
 1. **Quoting flywheel: observe, don't build.** Watch the trigger log + edit
    labels; fold owner corrections into the next Section V re-distill; make the
    auto-send call when the simple-injection gate shows sustained precision.
+1b. **Google Ads offline conversions: build soon (Matt, 2026-11-05).** Ads
+   cut to \$100/day for the slow season (back to \$200 around Feb 15). Google
+   is bidding toward website taps (366 May to Oct) when only 61 were real
+   leads and 8 were jobs. Match ad clicks (gclid already in GA4) to Quo
+   leads, upload real lead / quote / won job to Google, backfill 90 days,
+   then flip the bidding goal in January before the spring ramp. Plan:
+   `plans/google-ads-offline-conversions.md`. Evidence:
+   `analysis/google-ads-slow-season-2026-11-05.md`.
 2. **Edward attribution readout — before the spring 2027 decision.** The
    keep/cut decision moved from end of November to spring 2027 (Matt,
    2026-11-02); build the forensic readout (channel-attributed revenue vs

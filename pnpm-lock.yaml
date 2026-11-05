@@ -292,6 +292,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@aac/ads-conversions':
+        specifier: workspace:*
+        version: link:../../packages/ads-conversions
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../../packages/api-clients
@@ -323,6 +326,28 @@ importers:
       '@aac/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
+      '@types/node':
+        specifier: ^22
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8
+        version: 5.9.3
+      vitest:
+        specifier: ^3
+        version: 3.2.4(@edge-runtime/vm@3.2.0)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)
+
+  packages/ads-conversions:
+    dependencies:
+      '@aac/api-clients':
+        specifier: workspace:*
+        version: link:../api-clients
+      '@aac/shared-utils':
+        specifier: workspace:*
+        version: link:../shared-utils
+    devDependencies:
+      '@aac/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
       '@types/node':
         specifier: ^22
         version: 22.19.15
@@ -619,6 +644,9 @@ importers:
 
   tools:
     dependencies:
+      '@aac/ads-conversions':
+        specifier: workspace:*
+        version: link:../packages/ads-conversions
       '@aac/api-clients':
         specifier: workspace:*
         version: link:../packages/api-clients

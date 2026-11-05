@@ -10,6 +10,8 @@ import path from 'node:path';
 import { Redis } from '@upstash/redis';
 import { GeminiClient } from '@aac/api-clients/gemini';
 import { GmailClient } from '@aac/api-clients/gmail';
+import { GoogleAdsClient } from '@aac/api-clients/google-ads';
+import { GoogleAnalyticsClient } from '@aac/api-clients/google-analytics';
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { GoogleDriveClient } from '@aac/api-clients/google-drive';
 import { PipedriveClient } from '@aac/api-clients/pipedrive';
@@ -96,4 +98,26 @@ export function gmailFromEnv(): GmailClient {
 
 export function driveFromEnv(): GoogleDriveClient {
   return new GoogleDriveClient({ oauth: googleOAuthFromEnv() });
+}
+
+/** Google Ads + GA4 share the aac-astro OAuth client (scopes adwords + analytics.readonly). */
+function adsOAuthFromEnv(): { clientId: string; clientSecret: string; refreshToken: string } {
+  return {
+    clientId: requireEnv('GOOGLE_ADS_CLIENT_ID'),
+    clientSecret: requireEnv('GOOGLE_ADS_CLIENT_SECRET'),
+    refreshToken: requireEnv('GOOGLE_ADS_REFRESH_TOKEN'),
+  };
+}
+
+export function googleAdsFromEnv(): GoogleAdsClient {
+  return new GoogleAdsClient({
+    ...adsOAuthFromEnv(),
+    developerToken: requireEnv('GOOGLE_ADS_DEVELOPER_TOKEN'),
+    customerId: requireEnv('GOOGLE_ADS_CUSTOMER_ID'),
+    loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID,
+  });
+}
+
+export function analyticsFromEnv(): GoogleAnalyticsClient {
+  return new GoogleAnalyticsClient({ propertyId: requireEnv('GA4_PROPERTY_ID'), oauth: adsOAuthFromEnv() });
 }

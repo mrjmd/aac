@@ -11,6 +11,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@aac/ads-conversions": "workspace:*",
     "@aac/api-clients": "workspace:*",
     "@aac/message-drafts": "workspace:*",
     "@aac/quote-drafter": "workspace:*",
