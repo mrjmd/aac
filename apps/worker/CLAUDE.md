@@ -36,7 +36,7 @@ Plain Vercel Serverless Functions (no framework) that run the
   uploads Real lead / Quote sent / Won job. Gated by `ADS_CONVERSIONS_MODE`
   (off | dry | live, default off); needs `GOOGLE_ADS_CLIENT_ID`,
   `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN` (adwords +
-  analytics.readonly), `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CUSTOMER_ID`,
+  datamanager + analytics.readonly; mint with tools/src/ads-conversions/reauth.ts), `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CUSTOMER_ID`,
   `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GA4_PROPERTY_ID`. `?days=N` (≤90) backfills.
 - `api/health.ts` — liveness.
 

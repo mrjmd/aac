@@ -1,6 +1,6 @@
 # Google Ads offline conversions ("Stream B"): tell Google which clicks became jobs
 
-**Status:** BUILT 2026-11-05 (`@aac/ads-conversions`, worker `/api/ads-conversions` daily, default off). Ref-code prefill live on the website (aac-astro 9c60daf). Next: create the 3 actions (owner OK), worker env, 90-day backfill, mode live.
+**Status:** LIVE 2026-11-05. Actions created (secondary): AAC Real lead 7891297857, AAC Quote sent 7891297860, AAC Won job 7891297863. 90-day backfill uploaded 54 conversions (35 leads, 16 quotes, 3 wins) via the **Data Manager API**: Ads' UploadClickConversions is closed to accounts that weren't uploading before 2026-06-15 (CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE). Daily worker run: `/api/ads-conversions`, `ADS_CONVERSIONS_MODE`.
 **Why:** Google bids toward website call/text *taps*. May to Oct 2026 it counted 366 of them; only about 93 were a new person actually calling or texting, 61 were real in-scope leads, and 8 became jobs. Text taps are the worst offender: about 80% never turn into a text. Feeding real outcomes back lets Smart Bidding buy the clicks that become jobs. Evidence: `analysis/google-ads-slow-season-2026-11-05.md`.
 
 ## What already exists
@@ -9,7 +9,7 @@
 - Working Google Ads API code (auth, GAQL, mutate) lives in `aac-astro/scripts/lib/google-ads-client.js`. The `@aac/api-clients` GoogleAdsClient is a stub.
 
 ## Build
-1. **GoogleAdsClient in `@aac/api-clients`:** OAuth refresh, developer token, login-customer (MCC), `search` (GAQL), `uploadClickConversions` (ConversionUploadService, partial failure on). Port from the aac-astro lib, with tests per package rules.
+1. **GoogleAdsClient in `@aac/api-clients`:** OAuth refresh, developer token, login-customer (MCC), `search` (GAQL), conversion upload (built on ConversionUploadService, moved to the Data Manager API `events:ingest` because of the allowlist). Port from the aac-astro lib, with tests per package rules.
 2. **Conversion actions** (type UPLOAD_CLICKS) created in the MA account: `AAC Real lead`, `AAC Quote sent` (value = quote total), `AAC Won job` (value = invoice). Start them as **secondary** (reported, not bid on), so nothing changes in bidding until we flip.
 3. **Matcher + uploader job in the worker (daily):**
    - Pull GA4 taps with `ad_click_id` for the last 3 days.

@@ -15,6 +15,7 @@
     "./google-calendar": "./dist/google-calendar.js",
     "./gmail": "./dist/gmail.js",
     "./google-ads": "./dist/google-ads.js",
+    "./data-manager": "./dist/data-manager.js",
     "./google-drive": "./dist/google-drive.js",
     "./google-analytics": "./dist/google-analytics.js",
     "./google-search-console": "./dist/google-search-console.js",

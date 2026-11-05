@@ -1,16 +1,13 @@
 /**
- * Google Ads REST client: GAQL search, generic mutate, and offline click
- * conversion uploads.
+ * Google Ads REST client: GAQL search and generic mutate. Offline
+ * conversions go through DataManagerClient (data-manager.ts): Ads'
+ * UploadClickConversions is allowlist-only since 2026-06-15.
  *
  * Ported from aac-astro/scripts/lib/google-ads-client.js. The googleapis
  * package has no google.ads surface, so this talks to the REST API with an
  * OAuth access token minted from a refresh token (scope
  * https://www.googleapis.com/auth/adwords) plus the developer token.
  */
-
-import { createLogger } from '@aac/shared-utils/logger';
-
-const log = createLogger('google-ads');
 
 const DEFAULT_API_VERSION = 'v23';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -28,36 +25,6 @@ export interface GoogleAdsConfig {
   loginCustomerId?: string;
   /** REST API version, e.g. 'v23'. */
   apiVersion?: string;
-}
-
-/** One offline click conversion (ConversionUploadService ClickConversion). */
-export interface ClickConversion {
-  gclid: string;
-  /** Resource name, e.g. 'customers/123/conversionActions/456'. */
-  conversionAction: string;
-  /** 'yyyy-mm-dd hh:mm:ss+|-hh:mm' — see formatConversionDateTime. */
-  conversionDateTime: string;
-  conversionValue?: number;
-  currencyCode?: string;
-  /** Stable per conversion; Google drops repeats with the same orderId. */
-  orderId?: string;
-}
-
-export interface ClickConversionResult {
-  gclid?: string;
-  conversionAction?: string;
-  conversionDateTime?: string;
-}
-
-export interface UploadClickConversionsResponse {
-  /** One entry per input, in order. Failed rows come back as empty objects. */
-  results: ClickConversionResult[];
-  /** Present when one or more rows failed (partialFailure mode). */
-  partialFailureError?: {
-    code?: number;
-    message?: string;
-    details?: unknown[];
-  };
 }
 
 export interface ConversionActionRow {
@@ -174,76 +141,5 @@ export class GoogleAdsClient {
         "FROM conversion_action WHERE conversion_action.status != 'REMOVED'",
     );
     return rows.map((r) => ({ ...r.conversionAction }));
-  }
-
-  /**
-   * Upload offline click conversions with partial failure on, so one bad
-   * gclid (too old, wrong account) doesn't sink the batch. Callers read
-   * per-row success from `results` (an empty object = that row failed).
-   */
-  async uploadClickConversions(
-    conversions: ClickConversion[],
-    opts: { validateOnly?: boolean } = {},
-  ): Promise<UploadClickConversionsResponse> {
-    if (conversions.length === 0) return { results: [] };
-    const res = await this.post<UploadClickConversionsResponse>(':uploadClickConversions', {
-      conversions,
-      partialFailure: true,
-      ...(opts.validateOnly ? { validateOnly: true } : {}),
-    });
-    log.info('Uploaded click conversions', {
-      sent: conversions.length,
-      failed: res.partialFailureError ? 'some' : 0,
-      validateOnly: !!opts.validateOnly,
-    });
-    return { results: res.results ?? [], partialFailureError: res.partialFailureError };
-  }
-
-  // ── Static utilities ───────────────────────────────────────────────
-
-  /**
-   * Format an instant as Google's conversion timestamp in a given IANA
-   * zone: '2026-11-05 14:03:00-05:00'.
-   */
-  static formatConversionDateTime(at: Date, timeZone = 'America/New_York'): string {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hourCycle: 'h23',
-      timeZoneName: 'longOffset',
-    }).formatToParts(at);
-    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
-    // longOffset renders 'GMT-05:00' (or bare 'GMT' at UTC).
-    const offset = get('timeZoneName').replace('GMT', '') || '+00:00';
-    return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}${offset}`;
-  }
-
-  /**
-   * Row indexes that failed in a partial-failure response. Google reports
-   * them in details[].errors[].location.fieldPathElements[0].index.
-   */
-  static failedIndexes(res: UploadClickConversionsResponse): Map<number, string> {
-    const out = new Map<number, string>();
-    for (const detail of res.partialFailureError?.details ?? []) {
-      const errors = (detail as { errors?: unknown[] }).errors ?? [];
-      for (const e of errors) {
-        const err = e as {
-          message?: string;
-          errorCode?: Record<string, string>;
-          location?: { fieldPathElements?: Array<{ fieldName?: string; index?: number }> };
-        };
-        const idx = err.location?.fieldPathElements?.find((f) => f.fieldName === 'conversions')?.index;
-        if (typeof idx === 'number') {
-          const code = err.errorCode ? Object.values(err.errorCode)[0] : undefined;
-          out.set(idx, code ?? err.message ?? 'unknown');
-        }
-      }
-    }
-    return out;
   }
 }

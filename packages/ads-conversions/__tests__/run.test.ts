@@ -45,7 +45,7 @@ function makeDeps(redis = fakeRedis()) {
     '+16175550001': [],
     '+16175550002': [{ id: 'c1', from: '+16175550002', to: '', phoneNumberId: 'PN', direction: 'incoming', status: 'completed', duration: 240, createdAt: '2026-11-05T16:31:10Z' }],
   };
-  const upload = vi.fn(async (c: unknown[]) => ({ results: c.map(() => ({ gclid: 'x' })) }));
+  const upload = vi.fn(async (_d: unknown[], _e: unknown[], _o?: { validateOnly?: boolean }) => ({ requestId: 'req-1' }));
   const deps: AdsConversionsDeps = {
     ga: { runReport: async () => report },
     quo: {
@@ -66,8 +66,9 @@ function makeDeps(redis = fakeRedis()) {
         { resourceName: 'ca/2', id: '2', name: 'AAC Quote sent', type: 'UPLOAD_CLICKS', status: 'ENABLED' },
         { resourceName: 'ca/3', id: '3', name: 'AAC Won job', type: 'UPLOAD_CLICKS', status: 'ENABLED' },
       ],
-      uploadClickConversions: upload,
     },
+    dataManager: { ingestEvents: upload },
+    adsAccount: { customerId: '4683607368', loginCustomerId: '9448392141' },
     redis,
     ownLine: '+16176681677',
     now: () => NOW.getTime(),
@@ -93,13 +94,23 @@ describe('runAdsConversions', () => {
     const s = await runAdsConversions(deps, { mode: 'live' });
     expect(s).toMatchObject({ taps: 3, newMatches: 2, matchedByRef: 1, matchedByTiming: 1, uploaded: 3 });
     expect(s.pending).toEqual({ lead: 2, quote: 1, won: 0 });
-    const sent = upload.mock.calls[0][0] as Array<{ orderId: string; gclid: string; conversionAction: string; conversionValue?: number }>;
-    expect(sent.map((c) => [c.orderId, c.gclid, c.conversionAction, c.conversionValue]).sort()).toEqual([
-      ['lead:6175550001', 'gRef', 'ca/1', undefined],
-      ['lead:6175550002', 'gCall', 'ca/1', undefined],
-      ['quote:6175550002', 'gCall', 'ca/2', 1175],
+    const [dests, events, o] = upload.mock.calls[0] as [
+      Array<{ reference: string; conversionActionId: string; operatingAccountId: string }>,
+      Array<{ transactionId: string; gclid: string; destinationReferences: string[]; conversionValue?: number }>,
+      { validateOnly: boolean },
+    ];
+    expect(dests.map((d) => [d.reference, d.conversionActionId, d.operatingAccountId])).toEqual([
+      ['lead', '1', '4683607368'],
+      ['quote', '2', '4683607368'],
+      ['won', '3', '4683607368'],
     ]);
-    expect(upload.mock.calls[0][1]).toEqual({ validateOnly: false });
+    expect(events.map((c) => [c.transactionId, c.gclid, c.destinationReferences[0], c.conversionValue]).sort()).toEqual([
+      ['lead:6175550001', 'gRef', 'lead', undefined],
+      ['lead:6175550002', 'gCall', 'lead', undefined],
+      ['quote:6175550002', 'gCall', 'quote', 1175],
+    ]);
+    expect(o).toEqual({ validateOnly: false });
+    expect(s.requestId).toBe('req-1');
     expect(redis.data.get(keys.cronLastRun('ads-conversions'))).toBe(NOW.toISOString());
 
     const again = await runAdsConversions(deps, { mode: 'live' });
@@ -110,7 +121,7 @@ describe('runAdsConversions', () => {
   it('dry: validateOnly, nothing marked sent', async () => {
     const { deps, redis, upload } = makeDeps();
     const s = await runAdsConversions(deps, { mode: 'dry' });
-    expect(upload.mock.calls[0][1]).toEqual({ validateOnly: true });
+    expect(upload.mock.calls[0][2]).toEqual({ validateOnly: true });
     expect(s.uploaded).toBe(0);
     expect(redis.data.get(keys.adsConversionsSent)).toBeUndefined();
     expect(redis.data.get(keys.adsClicks)).toBeUndefined();
@@ -125,19 +136,24 @@ describe('runAdsConversions', () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
-  it('records per-row failures and does not mark them sent', async () => {
+  it('drops events the API names as invalid and retries the rest once', async () => {
     const { deps, redis, upload } = makeDeps();
-    upload.mockImplementationOnce(async (c: unknown[]) => ({
-      results: c.map((_, i) => (i === 0 ? {} : { gclid: 'x' })),
-      partialFailureError: {
-        message: 'bad',
-        details: [{ errors: [{ errorCode: { conversionUploadError: 'EXPIRED_CLICK' }, location: { fieldPathElements: [{ fieldName: 'conversions', index: 0 }] } }] }],
-      },
-    }));
+    upload.mockRejectedValueOnce(new Error('Data Manager ingest error 400: field events.events[0].adIdentifiers.gclid invalid'));
     const s = await runAdsConversions(deps, { mode: 'live' });
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect((upload.mock.calls[1][1] as unknown[]).length).toBe(2);
     expect(s.failed).toHaveLength(1);
     expect(s.uploaded).toBe(2);
     expect((redis.data.get(keys.adsConversionsSent) as Set<string>).size).toBe(2);
+  });
+
+  it('marks nothing sent when the whole request fails', async () => {
+    const { deps, redis, upload } = makeDeps();
+    upload.mockRejectedValueOnce(new Error('Data Manager ingest error 403: API not enabled'));
+    const s = await runAdsConversions(deps, { mode: 'live' });
+    expect(s.failed[0].orderId).toBe('*');
+    expect(s.uploaded).toBe(0);
+    expect(redis.data.get(keys.adsConversionsSent)).toBeUndefined();
   });
 
   it('off does nothing', async () => {

@@ -43,13 +43,10 @@ export { GmailClient } from './gmail.js';
 export type { GmailConfig, GmailMessage, ListMessagesOptions } from './gmail.js';
 
 export { GoogleAdsClient } from './google-ads.js';
-export type {
-  GoogleAdsConfig,
-  ClickConversion,
-  ClickConversionResult,
-  ConversionActionRow,
-  UploadClickConversionsResponse,
-} from './google-ads.js';
+export type { GoogleAdsConfig, ConversionActionRow } from './google-ads.js';
+
+export { DataManagerClient } from './data-manager.js';
+export type { DataManagerConfig, DataManagerEvent, GoogleAdsDestination, IngestResponse } from './data-manager.js';
 
 export { GoogleDriveClient } from './google-drive.js';
 export type { GoogleDriveConfig, DriveFileInfo } from './google-drive.js';

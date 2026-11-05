@@ -10,6 +10,7 @@ import path from 'node:path';
 import { Redis } from '@upstash/redis';
 import { GeminiClient } from '@aac/api-clients/gemini';
 import { GmailClient } from '@aac/api-clients/gmail';
+import { DataManagerClient } from '@aac/api-clients/data-manager';
 import { GoogleAdsClient } from '@aac/api-clients/google-ads';
 import { GoogleAnalyticsClient } from '@aac/api-clients/google-analytics';
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
@@ -100,7 +101,7 @@ export function driveFromEnv(): GoogleDriveClient {
   return new GoogleDriveClient({ oauth: googleOAuthFromEnv() });
 }
 
-/** Google Ads + GA4 share the aac-astro OAuth client (scopes adwords + analytics.readonly). */
+/** Google Ads, Data Manager and GA4 share the aac-astro OAuth client (adwords + datamanager + analytics.readonly). */
 function adsOAuthFromEnv(): { clientId: string; clientSecret: string; refreshToken: string } {
   return {
     clientId: requireEnv('GOOGLE_ADS_CLIENT_ID'),
@@ -120,4 +121,8 @@ export function googleAdsFromEnv(): GoogleAdsClient {
 
 export function analyticsFromEnv(): GoogleAnalyticsClient {
   return new GoogleAnalyticsClient({ propertyId: requireEnv('GA4_PROPERTY_ID'), oauth: adsOAuthFromEnv() });
+}
+
+export function dataManagerFromEnv(): DataManagerClient {
+  return new DataManagerClient(adsOAuthFromEnv());
 }

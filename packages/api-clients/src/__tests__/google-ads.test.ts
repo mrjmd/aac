@@ -57,30 +57,6 @@ describe('GoogleAdsClient', () => {
     await expect(makeClient().search('nope')).rejects.toThrow(/400.*bad gaql/);
   });
 
-  it('uploads click conversions with partialFailure on', async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
-      .mockResolvedValueOnce(jsonResponse({ results: [{ gclid: 'g1' }] }));
-    const res = await makeClient().uploadClickConversions([
-      {
-        gclid: 'g1',
-        conversionAction: 'customers/4683607368/conversionActions/1',
-        conversionDateTime: '2026-11-05 14:03:00-05:00',
-        orderId: 'lead:6175551234',
-      },
-    ]);
-    expect(res.results).toEqual([{ gclid: 'g1' }]);
-    const [url, init] = fetchMock.mock.calls[1];
-    expect(url).toBe('https://googleads.googleapis.com/v23/customers/4683607368:uploadClickConversions');
-    expect(JSON.parse(init.body)).toMatchObject({ partialFailure: true });
-    expect(JSON.parse(init.body).validateOnly).toBeUndefined();
-  });
-
-  it('skips the network for an empty upload', async () => {
-    expect(await makeClient().uploadClickConversions([])).toEqual({ results: [] });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it('maps conversion action rows', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
@@ -113,42 +89,5 @@ describe('GoogleAdsClient', () => {
         primaryForGoal: false,
       },
     ]);
-  });
-
-  describe('formatConversionDateTime', () => {
-    it('uses the Eastern offset (EST and EDT)', () => {
-      expect(GoogleAdsClient.formatConversionDateTime(new Date('2026-11-05T19:03:07Z'))).toBe(
-        '2026-11-05 14:03:07-05:00',
-      );
-      expect(GoogleAdsClient.formatConversionDateTime(new Date('2026-08-10T04:30:00Z'))).toBe(
-        '2026-08-10 00:30:00-04:00',
-      );
-    });
-
-    it('renders UTC as +00:00', () => {
-      expect(GoogleAdsClient.formatConversionDateTime(new Date('2026-08-10T04:30:00Z'), 'UTC')).toBe(
-        '2026-08-10 04:30:00+00:00',
-      );
-    });
-  });
-
-  it('reads failed row indexes from a partial failure', () => {
-    const failed = GoogleAdsClient.failedIndexes({
-      results: [{}, { gclid: 'g2' }],
-      partialFailureError: {
-        message: 'x',
-        details: [
-          {
-            errors: [
-              {
-                errorCode: { conversionUploadError: 'EXPIRED_CLICK' },
-                location: { fieldPathElements: [{ fieldName: 'conversions', index: 0 }, { fieldName: 'gclid' }] },
-              },
-            ],
-          },
-        ],
-      },
-    });
-    expect([...failed]).toEqual([[0, 'EXPIRED_CLICK']]);
   });
 });

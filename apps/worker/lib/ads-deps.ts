@@ -1,9 +1,10 @@
 /**
- * Wiring for the Google Ads offline-conversion run. GA4 and Ads share one
- * OAuth client whose refresh token carries adwords + analytics.readonly
- * (the worker's GOOGLE_REFRESH_TOKEN has neither). Returns null when the
+ * Wiring for the Google Ads offline-conversion run. GA4, Ads and Data
+ * Manager share one OAuth client whose refresh token carries adwords +
+ * datamanager + analytics.readonly (the worker's GOOGLE_REFRESH_TOKEN has none). Returns null when the
  * Ads env isn't set, so the endpoint degrades to a logged skip.
  */
+import { DataManagerClient } from '@aac/api-clients/data-manager';
 import { GoogleAdsClient } from '@aac/api-clients/google-ads';
 import { GoogleAnalyticsClient } from '@aac/api-clients/google-analytics';
 import type { AdsConversionsDeps, AdsConversionsMode } from '@aac/ads-conversions';
@@ -52,6 +53,11 @@ export function getAdsDeps(): AdsConversionsDeps | null {
       customerId: env.GOOGLE_ADS_CUSTOMER_ID as string,
       loginCustomerId: env.GOOGLE_ADS_LOGIN_CUSTOMER_ID,
     }),
+    dataManager: new DataManagerClient(oauth),
+    adsAccount: {
+      customerId: env.GOOGLE_ADS_CUSTOMER_ID as string,
+      loginCustomerId: env.GOOGLE_ADS_LOGIN_CUSTOMER_ID,
+    },
     quo: deps.quo,
     qb: deps.qb,
     redis,

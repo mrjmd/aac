@@ -7,7 +7,7 @@
  *   npx tsx tools/src/ads-conversions/run.ts --days 90 --live
  */
 import { runAdsConversions } from '@aac/ads-conversions';
-import { analyticsFromEnv, googleAdsFromEnv, loadEnv, quickBooksFromEnv, quoFromEnv, redisFromEnv, requireEnv } from '../lib/env.js';
+import { analyticsFromEnv, dataManagerFromEnv, googleAdsFromEnv, loadEnv, quickBooksFromEnv, quoFromEnv, redisFromEnv, requireEnv } from '../lib/env.js';
 
 loadEnv();
 const args = process.argv.slice(2);
@@ -19,6 +19,11 @@ const summary = await runAdsConversions(
     quo: quoFromEnv(),
     qb: quickBooksFromEnv(redis),
     ads: googleAdsFromEnv(),
+    dataManager: dataManagerFromEnv(),
+    adsAccount: {
+      customerId: requireEnv('GOOGLE_ADS_CUSTOMER_ID'),
+      loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID,
+    },
     redis,
     ownLine: requireEnv('QUO_PHONE_NUMBER'),
     now: () => Date.now(),

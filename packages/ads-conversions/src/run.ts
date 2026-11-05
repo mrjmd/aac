@@ -7,8 +7,8 @@
  * summary); 'live' stores clicks and uploads for real.
  */
 import type { GA4ReportRequest, GA4ReportResponse } from '@aac/api-clients/google-analytics';
-import type { ClickConversion, ConversionActionRow, UploadClickConversionsResponse } from '@aac/api-clients/google-ads';
-import { GoogleAdsClient } from '@aac/api-clients/google-ads';
+import type { DataManagerEvent, GoogleAdsDestination, IngestResponse } from '@aac/api-clients/data-manager';
+import type { ConversionActionRow } from '@aac/api-clients/google-ads';
 import type { QBCustomer, QBEstimate, QBInvoice } from '@aac/api-clients/quickbooks';
 import type { QuoCall, QuoConversation, QuoMessage, QuoPaginated } from '@aac/api-clients/quo';
 import { easternWallTime } from '@aac/shared-utils/eastern';
@@ -53,10 +53,13 @@ export interface AdsConversionsDeps {
     getEstimatesByCustomer(customerId: string): Promise<QBEstimate[]>;
     getInvoicesByCustomer(customerId: string): Promise<QBInvoice[]>;
   };
-  ads: {
-    listConversionActions(): Promise<ConversionActionRow[]>;
-    uploadClickConversions(c: ClickConversion[], opts?: { validateOnly?: boolean }): Promise<UploadClickConversionsResponse>;
+  ads: { listConversionActions(): Promise<ConversionActionRow[]> };
+  /** Data Manager API: the upload path (Ads' own upload is allowlist-only since 2026-06-15). */
+  dataManager: {
+    ingestEvents(d: GoogleAdsDestination[], e: DataManagerEvent[], opts?: { validateOnly?: boolean }): Promise<IngestResponse>;
   };
+  /** The MA Ads account (digits) and the MCC it's reached through. */
+  adsAccount: { customerId: string; loginCustomerId?: string };
   redis: AdsRedis;
   /** The business line (QUO_PHONE_NUMBER); its own number is never a lead. */
   ownLine: string;
@@ -81,6 +84,8 @@ export interface AdsRunSummary {
   uploaded: number;
   failed: Array<{ orderId: string; error: string }>;
   skipped?: string;
+  /** Data Manager request ID of the accepted upload (look up diagnostics with it). */
+  requestId?: string;
   /** Dry runs only: every conversion that would be sent, for review. */
   preview?: Array<{ orderId: string; matchedBy: AdClick['matchedBy']; tapAt: string; at: string; value?: number }>;
 }
@@ -345,34 +350,48 @@ export async function runAdsConversions(
 
   // 4. Upload.
   if (!pending.length) return finish(deps, summary);
-  const actions = new Map((await deps.ads.listConversionActions()).map((a) => [a.name, a.resourceName]));
+  const actions = new Map((await deps.ads.listConversionActions()).map((a) => [a.name, a.id]));
   const missing = (Object.values(ACTION_NAMES) as string[]).filter((n) => !actions.has(n));
   if (missing.length) {
     return finish(deps, { ...summary, skipped: `conversion actions missing: ${missing.join(', ')}` });
   }
-  const conversions: ClickConversion[] = pending.map(({ click, hit }) => ({
-    gclid: click.gclid,
-    conversionAction: actions.get(ACTION_NAMES[hit.stage]) as string,
-    conversionDateTime: GoogleAdsClient.formatConversionDateTime(hit.at),
-    ...(hit.value !== undefined ? { conversionValue: hit.value, currencyCode: 'USD' } : {}),
-    orderId: hit.orderId,
+  const destinations: GoogleAdsDestination[] = (Object.keys(ACTION_NAMES) as Stage[]).map((stage) => ({
+    reference: stage,
+    operatingAccountId: deps.adsAccount.customerId,
+    loginAccountId: deps.adsAccount.loginCustomerId,
+    conversionActionId: actions.get(ACTION_NAMES[stage]) as string,
   }));
-  const res = await deps.ads.uploadClickConversions(conversions, { validateOnly: opts.mode !== 'live' });
-  const failedAt = GoogleAdsClient.failedIndexes(res);
-  const ok: string[] = [];
-  conversions.forEach((c, i) => {
-    const err = failedAt.get(i);
-    if (err) summary.failed.push({ orderId: c.orderId as string, error: err });
-    else ok.push(c.orderId as string);
-  });
-  if (res.partialFailureError && failedAt.size === 0) {
-    // A failure we couldn't pin to rows: mark nothing sent, retry next run.
-    summary.failed.push({ orderId: '*', error: res.partialFailureError.message ?? 'unknown' });
-    return finish(deps, summary);
-  }
-  if (opts.mode === 'live' && ok.length) {
-    await deps.redis.sadd(keys.adsConversionsSent, ok[0], ...ok.slice(1));
-    summary.uploaded = ok.length;
+  let batch: DataManagerEvent[] = pending.map(({ click, hit }) => ({
+    destinationReferences: [hit.stage],
+    gclid: click.gclid,
+    eventTimestamp: hit.at.toISOString(),
+    transactionId: hit.orderId,
+    ...(hit.value !== undefined ? { conversionValue: hit.value, currency: 'USD' } : {}),
+  }));
+  // Validation is fast-fail: a rejected request names the bad events by
+  // index. Drop those and retry once, so one bad gclid can't block the rest.
+  for (let attempt = 0; attempt < 2 && batch.length; attempt++) {
+    try {
+      const res = await deps.dataManager.ingestEvents(destinations, batch, { validateOnly: opts.mode !== 'live' });
+      summary.requestId = res.requestId;
+      if (opts.mode === 'live') {
+        const ids = batch.map((e) => e.transactionId);
+        await deps.redis.sadd(keys.adsConversionsSent, ids[0], ...ids.slice(1));
+        summary.uploaded = ids.length;
+      }
+      break;
+    } catch (err) {
+      const msg = (err as Error).message;
+      const bad = new Set([...msg.matchAll(/events\[(\d+)\]/g)].map((m) => Number(m[1])));
+      if (attempt === 1 || bad.size === 0) {
+        summary.failed.push({ orderId: '*', error: msg.slice(0, 500) });
+        break;
+      }
+      batch.forEach((e, i) => {
+        if (bad.has(i)) summary.failed.push({ orderId: e.transactionId, error: msg.slice(0, 300) });
+      });
+      batch = batch.filter((_, i) => !bad.has(i));
+    }
   }
   return finish(deps, summary);
 }
