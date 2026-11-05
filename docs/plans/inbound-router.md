@@ -1,6 +1,7 @@
-# Inbound Router (design, not built)
+# Inbound Router
 
 Status: APPROVED 2026-11-05 (decisions at the bottom). Cleanup step 2.
+Phases 1-2 live 2026-11-05; phase 3 (shadow) built in `packages/inbound-router`.
 
 ## Problem
 
@@ -128,6 +129,13 @@ Each phase is its own commit set and its own push, with your approval.
 3. **Router in shadow.** Webhook records events and the settle timer; the
    worker reads and decides, and logs what it *would* do next to what the old
    paths did. Old paths unchanged. Run a week; compare in the command center.
+   Built: settle clock armed on the same events as intake (inbound texts,
+   missed calls); a burst with no customer words waits for the voicemail
+   (15-min grace) or is skipped; CT goes to Luc even when the out-of-area rule
+   fires; can't-help stands down when Matt has already answered. Known gap
+   until phase 4: Matt's own quote promise only counts when it lands inside a
+   customer burst (outbound texts don't arm the clock); a failed read is
+   logged, not retried.
 4. **Cut over intake, quote drafter and referrals** to the router, behind
    flags (`INBOUND_ROUTER_INTAKE`, `..._QUOTE`, `..._REFERRAL`), one at a time.
    Remove the intake sweep and `quote-trigger:*` keys once each is live.
