@@ -70,8 +70,8 @@ class MiniRedis {
     const z = this.zsets.get(key) ?? new Map<string, number>();
     return [...z.entries()].filter(([, s]) => s >= min && s <= max).sort((a, b) => a[1] - b[1]).map(([m]) => m) as T;
   }
-  async zrem(key: string, member: string): Promise<number> {
-    return this.zsets.get(key)?.delete(member) ? 1 : 0;
+  async zrem(key: string, ...members: string[]): Promise<number> {
+    return members.filter((m) => this.zsets.get(key)?.delete(m)).length;
   }
   async zscore(key: string, member: string): Promise<number | null> {
     return this.zsets.get(key)?.get(member) ?? null;
@@ -115,6 +115,7 @@ function makeDeps(opts: {
   geminiThrows?: boolean;
 }) {
   const redis = new MiniRedis();
+  redis.strings.set(keys.inboundRouterMode, 'shadow');
   const prompts: Array<{ prompt: string; images: number }> = [];
   const downloads: string[] = [];
   const deps: RouterDeps = {
@@ -401,12 +402,20 @@ describe('runInboundTick', () => {
     expect(await redis.zscore(keys.inboundDue, PHONE)).toBe(NOW - 1000);
   });
 
-  it('off mode does nothing', async () => {
+  it('off (the default) reads nothing and clears settled bursts', async () => {
     const { deps, redis, prompts } = makeDeps({ messages, answer: ANSWER });
-    await redis.set(keys.inboundRouterMode, 'off');
+    redis.strings.delete(keys.inboundRouterMode);
     await redis.zadd(keys.inboundDue, { score: NOW - 1000, member: PHONE });
-    expect(await runInboundTick(deps)).toEqual({ mode: 'off', due: 0, entries: [] });
+    await redis.hset(keys.inboundFirst, { [PHONE]: NOW - 4 * 60_000 });
+    await redis.zadd(keys.inboundDue, { score: NOW + 60_000, member: '+15085559999' }); // still settling
+    await redis.hset(keys.inboundFirst, { '+15085559999': NOW - 60_000 });
+
+    expect(await runInboundTick(deps)).toEqual({ mode: 'off', due: 1, entries: [] });
     expect(prompts).toHaveLength(0);
+    expect(await redis.zscore(keys.inboundDue, PHONE)).toBeNull();
+    expect(await redis.hget(keys.inboundFirst, PHONE)).toBeNull();
+    expect(await redis.zscore(keys.inboundDue, '+15085559999')).not.toBeNull();
+    expect(redis.lists.get(keys.inboundShadowLog)).toBeUndefined();
   });
 });
 

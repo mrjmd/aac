@@ -325,7 +325,7 @@ export const keys = {
   /** Per-phone NX lock so overlapping ticks never read the same burst twice. */
   inboundLock: (phone: string) => `inbound:lock:${phone}` as const,
 
-  /** Kill switch: 'off' | 'shadow'. Unset = shadow. */
+  /** 'off' | 'shadow'. Unset = off (settled bursts cleared unread). */
   inboundRouterMode: 'inbound-router:mode' as const,
 
   /** Shadow decisions, newest first (LPUSH + LTRIM 500): what the router would do next to what the old paths had done. */

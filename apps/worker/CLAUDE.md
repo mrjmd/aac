@@ -38,11 +38,11 @@ Plain Vercel Serverless Functions (no framework) that run the
   `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN` (adwords +
   datamanager + analytics.readonly; mint with tools/src/ads-conversions/reauth.ts), `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CUSTOMER_ID`,
   `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GA4_PROPERTY_ID`. `?days=N` (≤90) backfills.
-- `api/inbound-tick.ts` — per-minute cron: inbound router, SHADOW ONLY
-  (`@aac/inbound-router`, docs/plans/inbound-router.md phase 3). Reads each
-  settled customer burst once (`inbound:due`, armed by the Quo webhook) and
-  logs the routes it would take to `inbound:shadow`. Posts nothing. Redis
-  `inbound-router:mode` = `off` stops it.
+- `api/inbound-tick.ts` — per-minute cron: inbound router
+  (`@aac/inbound-router`, docs/plans/inbound-router.md). Off by default: clears
+  settled bursts (`inbound:due`, armed by the Quo webhook) unread. Redis
+  `inbound-router:mode` = `shadow` reads each one once and logs the routes it
+  would take to `inbound:shadow`. Posts nothing.
 - `api/health.ts` — liveness.
 
 ## Rules

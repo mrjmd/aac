@@ -1,7 +1,9 @@
 /**
- * Per-minute router pass (worker /api/inbound-tick). SHADOW ONLY (phase 3):
- * for each settled burst it reads the thread once, decides the routes, and
- * logs them to `inbound:shadow` next to what the old paths had done. It
+ * Per-minute router pass (worker /api/inbound-tick). Off by default: it only
+ * clears settled bursts so the settle clock never carries a stale burst start
+ * into phase 4. Redis `inbound-router:mode` = 'shadow' turns on the shadow
+ * pass: for each settled burst it reads the thread once, decides the routes,
+ * and logs them to `inbound:shadow` next to what the old paths had done. It
  * posts no notes and touches no drafter state; the old paths run unchanged.
  */
 import { keys } from '@aac/shared-utils/redis';
@@ -21,7 +23,7 @@ const SHADOW_LOG_MAX = 500;
 export type RouterMode = 'off' | 'shadow';
 
 export async function resolveRouterMode(deps: RouterDeps): Promise<RouterMode> {
-  return (await deps.redis.get<string>(keys.inboundRouterMode)) === 'off' ? 'off' : 'shadow';
+  return (await deps.redis.get<string>(keys.inboundRouterMode)) === 'shadow' ? 'shadow' : 'off';
 }
 
 /** What the thread says has already happened. `burstFromMs` bounds "this burst". */
@@ -130,9 +132,16 @@ export interface RouterTickSummary {
  */
 export async function runInboundTick(deps: RouterDeps): Promise<RouterTickSummary> {
   const mode = await resolveRouterMode(deps);
-  if (mode === 'off') return { mode, due: 0, entries: [] };
   const now = deps.now?.() ?? Date.now();
   const due = await deps.redis.zrange<string[]>(keys.inboundDue, 0, now, { byScore: true });
+  if (mode === 'off') {
+    // Clear settled bursts unread, so each one starts fresh.
+    if (due.length) {
+      await deps.redis.zrem(keys.inboundDue, ...due);
+      await deps.redis.hdel(keys.inboundFirst, ...due);
+    }
+    return { mode, due: due.length, entries: [] };
+  }
   const entries: ShadowEntry[] = [];
   for (const phone of due.slice(0, MAX_READS_PER_TICK)) {
     const locked = await deps.redis.set(keys.inboundLock(phone), String(now), { nx: true, ex: LOCK_TTL_S });

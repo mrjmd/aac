@@ -1,7 +1,7 @@
 # Inbound Router
 
 Status: APPROVED 2026-11-05 (decisions at the bottom). Cleanup step 2.
-Phases 1-2 live 2026-11-05; phase 3 (shadow) built in `packages/inbound-router`.
+Phases 1-2 live 2026-11-05; phase 3 built in `packages/inbound-router`, shipping off (tuned by replay).
 
 ## Problem
 
@@ -136,6 +136,11 @@ Each phase is its own commit set and its own push, with your approval.
    until phase 4: Matt's own quote promise only counts when it lands inside a
    customer burst (outbound texts don't arm the clock); a failed read is
    logged, not retried.
+   Decision 11/05: no week of shadow in production (it would add a Gemini call
+   per burst on top of the old paths). The tick ships OFF (it only clears
+   settled bursts so the clock stays fresh); the router is tuned by replaying
+   ~100 past leads at burst time and fixing what's wrong, then phase 4.
+   `inbound-router:mode` = `shadow` remains for a spot check.
 4. **Cut over intake, quote drafter and referrals** to the router, behind
    flags (`INBOUND_ROUTER_INTAKE`, `..._QUOTE`, `..._REFERRAL`), one at a time.
    Remove the intake sweep and `quote-trigger:*` keys once each is live.

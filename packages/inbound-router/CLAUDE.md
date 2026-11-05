@@ -1,6 +1,6 @@
 # @aac/inbound-router — one read per settled customer burst
 
-Design and rollout: `docs/plans/inbound-router.md`. **Phase 3: shadow only.**
+Design and rollout: `docs/plans/inbound-router.md`. **Off by default; shadow on demand.**
 Nothing here posts a note, writes drafter state, or texts anyone.
 
 - The Quo webhook arms `inbound:due` (settle rule in
@@ -13,5 +13,7 @@ Nothing here posts a note, writes drafter state, or texts anyone.
   ids) and new photos. Saved at `inbound:read:{phone}`; an unchanged fingerprint
   is a no-op; photo descriptions are cached by `{messageId}:{index}`.
 - `decide.ts`: pure route choice. Every rule has a test.
-- Kill switch: Redis `inbound-router:mode` = `off`.
+- Mode: Redis `inbound-router:mode`. Unset/`off` clears settled bursts unread
+  (no Gemini); `shadow` reads and logs. Tuning is done by replaying past leads
+  (`tools/src/scratch`), not by running shadow in production.
 - No `process.env` here; the worker builds the clients.

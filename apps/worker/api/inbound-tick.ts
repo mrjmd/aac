@@ -1,11 +1,11 @@
 /**
  * Per-minute inbound router pass (route: /api/inbound-tick, Vercel cron).
  *
- * SHADOW ONLY (docs/plans/inbound-router.md phase 3): reads each settled
- * customer burst once and logs which drafters it would run to
- * `inbound:shadow`, next to what the old paths did. Posts nothing.
- * Cheap when idle: one GET (kill switch) + one ZRANGEBYSCORE.
- * Redis `inbound-router:mode` = 'off' stops it without a redeploy.
+ * Off by default (docs/plans/inbound-router.md): clears settled bursts
+ * unread. Redis `inbound-router:mode` = 'shadow' (no redeploy) reads each
+ * settled customer burst once and logs which drafters it would run to
+ * `inbound:shadow`, next to what the old paths did. Posts nothing either way.
+ * Cheap when idle: one GET (mode) + one ZRANGEBYSCORE.
  */
 import { createLogger } from '@aac/shared-utils/logger';
 import { runInboundTick } from '@aac/inbound-router';
