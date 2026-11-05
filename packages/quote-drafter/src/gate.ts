@@ -12,6 +12,7 @@ import type { OpenQuoteEntry } from '@aac/shared-utils/types';
 import type { DraftThreadMessage } from '@aac/quoting';
 import { generateWithRetry } from './gemini.js';
 import type { DrafterDeps } from './types.js';
+import { parseJsonText } from '@aac/api-clients/gemini';
 
 export interface GateVerdict {
   scopeRelevant: boolean;
@@ -47,12 +48,8 @@ export function buildScopeGatePrompt(args: {
 }
 
 export function parseGateVerdict(raw: string): GateVerdict | null {
-  const cleaned = raw.replace(/```json|```/g, '').trim();
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start < 0 || end <= start) return null;
   try {
-    const parsed = JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
+    const parsed = parseJsonText<Record<string, unknown>>(raw);
     if (typeof parsed.scopeRelevant !== 'boolean') return null;
     return {
       scopeRelevant: parsed.scopeRelevant,

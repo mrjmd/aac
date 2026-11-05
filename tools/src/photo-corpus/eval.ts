@@ -86,27 +86,15 @@ async function callWithRetry(
   prompt: string,
   opts: { systemPrompt?: string; imageParts?: Array<{ mimeType: string; base64: string }> },
 ): Promise<string> {
-  let lastErr: Error | null = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      return await gemini.generateContent(prompt, {
-        systemPrompt: opts.systemPrompt,
-        temperature: 0,
-        maxOutputTokens: 8192,
-        thinkingBudget: 4096,
-        timeoutMs: 180_000,
-        imageParts: opts.imageParts?.length ? opts.imageParts : undefined,
-      });
-    } catch (err) {
-      lastErr = err as Error;
-      if (attempt < 2 && /429|500|503|timeout|aborted/i.test(lastErr.message)) {
-        await sleep(lastErr.message.includes('429') ? 65_000 : 5_000 * (attempt + 1));
-        continue;
-      }
-      throw lastErr;
-    }
-  }
-  throw lastErr ?? new Error('unreachable');
+  return gemini.generateContent(prompt, {
+    systemPrompt: opts.systemPrompt,
+    temperature: 0,
+    maxOutputTokens: 8192,
+    thinkingBudget: 4096,
+    timeoutMs: 180_000,
+    imageParts: opts.imageParts?.length ? opts.imageParts : undefined,
+    retries: 2,
+  });
 }
 
 async function main(): Promise<void> {

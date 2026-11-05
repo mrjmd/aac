@@ -25,10 +25,8 @@ let cached: DrafterDeps | null = null;
 export function getQuoteDeps(): DrafterDeps {
   if (cached) return cached;
   const { deps, redis } = getWorkerDeps();
-  const gemini = new GeminiClient({
-    apiKey: requireEnv('GEMINI_API_KEY'),
-    textModel: 'gemini-3.6-flash',
-  });
+  // Client default model (the -latest alias): pinned names get retired.
+  const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY') });
   let calendar: GoogleCalendarClient | null = null;
   let drive: GoogleDriveClient | null = null;
   if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN) {

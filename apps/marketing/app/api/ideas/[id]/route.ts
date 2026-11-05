@@ -6,6 +6,7 @@ import { contentIdeas } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getGeminiClient } from "@/lib/gemini";
 import { buildIdeaRevisionSystemPrompt } from "@/lib/prompts";
+import { parseJsonText } from "@aac/api-clients/gemini";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -99,9 +100,7 @@ Return the revised idea as a JSON object with: title, description, pillar, sugge
 
       let revised: Record<string, unknown>;
       try {
-        revised = JSON.parse(
-          raw.replace(/```json\n?|\n?```/g, "").trim(),
-        ) as Record<string, unknown>;
+        revised = parseJsonText<Record<string, unknown>>(raw);
       } catch {
         return NextResponse.json(
           { error: "Failed to parse revision response", raw },

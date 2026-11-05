@@ -19,7 +19,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { GeminiClient } from '@aac/api-clients/gemini';
+import { GeminiClient, parseJsonText } from '@aac/api-clients/gemini';
 
 const OUT_DIR = 'analysis/data/photo-corpus';
 const WORK_PATH = path.join(OUT_DIR, 'exemplars-field-work.jsonl');
@@ -73,35 +73,18 @@ function threadText(row: any): string {
 }
 
 function parseJson(text: string): unknown {
-  const cleaned = text.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim();
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start < 0 || end < 0) throw new Error(`no JSON object in response: ${cleaned.slice(0, 120)}`);
-  return JSON.parse(cleaned.slice(start, end + 1));
+  return parseJsonText<unknown>(text);
 }
 
 async function callWithRetry(gemini: GeminiClient, prompt: string, imageParts: Array<{ mimeType: string; base64: string }>): Promise<string> {
-  let lastErr: Error | null = null;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      return await gemini.generateContent(prompt, {
-        temperature: 0,
-        maxOutputTokens: 8192,
-        thinkingBudget: 4096,
-        timeoutMs: 120_000,
-        imageParts,
-      });
-    } catch (err) {
-      lastErr = err as Error;
-      const msg = lastErr.message;
-      if (attempt < MAX_RETRIES && /429|RESOURCE_EXHAUSTED|timeout|503/.test(msg)) {
-        await sleep(/429/.test(msg) ? 65_000 : 5_000 * attempt);
-        continue;
-      }
-      throw lastErr;
-    }
-  }
-  throw lastErr ?? new Error('unreachable');
+  return gemini.generateContent(prompt, {
+    temperature: 0,
+    maxOutputTokens: 8192,
+    thinkingBudget: 4096,
+    timeoutMs: 120_000,
+    imageParts,
+    retries: MAX_RETRIES - 1,
+  });
 }
 
 function enrichedJoinPrompt(row: any, blindJson: string, custPhotoCount: number, mikePhotos: any[], ctx: any): string {

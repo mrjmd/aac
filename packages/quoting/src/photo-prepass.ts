@@ -13,6 +13,7 @@
 
 import type { DraftThreadMessage } from './draft-quote.js';
 import type { Scored } from './retrieval.js';
+import { parseJsonText } from '@aac/api-clients/gemini';
 
 export interface PhotoRead {
   photo: number;
@@ -89,16 +90,12 @@ Respond with ONLY a JSON object:
 }
 
 export function parseAreaAnalysis(raw: string): AreaAnalysis | null {
-  const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim();
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start < 0 || end < 0) return null;
   try {
-    const obj = JSON.parse(cleaned.slice(start, end + 1)) as {
+    const obj = parseJsonText<{
       photo_reads?: PhotoRead[];
       areas?: PhotoArea[];
       customer_asks?: string[];
-    };
+    }>(raw);
     if (!Array.isArray(obj.areas) || obj.areas.length === 0) return null;
     return {
       photoReads: obj.photo_reads ?? [],

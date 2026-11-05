@@ -12,7 +12,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { GeminiClient } from '@aac/api-clients/gemini';
+import { GeminiClient, parseJsonText } from '@aac/api-clients/gemini';
 import {
   EVENT_CLASS_COLOR_IDS as COLORS,
   HOLD_TITLE_PREFIX,
@@ -316,12 +316,8 @@ function dueFrom(v: LlmVerdict): { dueAt?: string } {
 }
 
 function parseVerdict(raw: string): LlmVerdict | null {
-  const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim();
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start < 0 || end <= start) return null;
   try {
-    const v = JSON.parse(cleaned.slice(start, end + 1)) as LlmVerdict;
+    const v = parseJsonText<LlmVerdict>(raw);
     if (typeof v.needs_action !== 'boolean' || !v.category) return null;
     return v;
   } catch {
@@ -1055,12 +1051,8 @@ async function main(): Promise<void> {
   }
 
   // ── L1: Gemini pass ───────────────────────────────────────────────
-  // 2026-08-27: Google retired gemini-2.5-flash (the client default) for
-  // this key — 404s with "update to gemini-3.6-flash".
-  const gemini = new GeminiClient({
-    apiKey: process.env.GEMINI_API_KEY ?? '',
-    textModel: 'gemini-3.6-flash',
-  });
+  // Client default model (the -latest alias): pinned names get retired.
+  const gemini = new GeminiClient({ apiKey: process.env.GEMINI_API_KEY ?? '' });
   const calendarContext = events
     .filter((ev) => new Date(ev.end).getTime() > now - 14 * DAY)
     .map((ev) => {
@@ -1116,34 +1108,26 @@ due_at: only when the thread pins the open action to a specific time: Matt promi
 
   let llmErrors = 0;
   const askVerdict = async (label: string, userPrompt: string): Promise<LlmVerdict | null> => {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const raw = await gemini.generateContent(userPrompt, {
-          systemPrompt,
-          temperature: 0,
-          // 3.6-flash counts internal reasoning against this budget —
-          // 1024 truncated ~20% of responses mid-JSON.
-          maxOutputTokens: 8192,
-        });
-        const v = parseVerdict(raw);
-        if (!v) {
-          llmErrors++;
-          console.log(`  ! parse failure ${label}: ${raw.slice(0, 160).replace(/\n/g, ' ')}`);
-        }
-        return v;
-      } catch (err) {
-        const msg = (err as Error).message;
-        // Rate limits / transient 5xx: back off and retry.
-        if (attempt < 2 && /429|500|503|timeout|aborted/i.test(msg)) {
-          await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
-          continue;
-        }
+    try {
+      const raw = await gemini.generateContent(userPrompt, {
+        systemPrompt,
+        temperature: 0,
+        // 3.6-flash counts internal reasoning against this budget —
+        // 1024 truncated ~20% of responses mid-JSON.
+        maxOutputTokens: 8192,
+        retries: 2,
+      });
+      const v = parseVerdict(raw);
+      if (!v) {
         llmErrors++;
-        console.log(`  ! LLM error ${label}: ${msg.slice(0, 200).replace(/\n/g, ' ')}`);
-        return null;
+        console.log(`  ! parse failure ${label}: ${raw.slice(0, 160).replace(/\n/g, ' ')}`);
       }
+      return v;
+    } catch (err) {
+      llmErrors++;
+      console.log(`  ! LLM error ${label}: ${(err as Error).message.slice(0, 200).replace(/\n/g, ' ')}`);
+      return null;
     }
-    return null;
   };
 
   const candidates = snapshot.threads.filter((t) => t.messages.length > 0 || t.calls.length > 0);

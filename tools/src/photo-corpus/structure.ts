@@ -25,7 +25,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { GeminiClient } from '@aac/api-clients/gemini';
+import { GeminiClient, parseJsonText } from '@aac/api-clients/gemini';
 
 const OUT_DIR = 'analysis/data/photo-corpus';
 const MANIFEST_PATH = path.join(OUT_DIR, 'manifest.jsonl');
@@ -35,7 +35,6 @@ const MAX_PHOTOS_PER_CALL = 12;
 const MODEL = 'gemini-3.6-flash';
 const PACE_MS = 400;
 const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 65_000;
 
 // Items that say nothing about scope reading.
 const NON_SCOPE_ITEMS = /guarantee|discount|deposit|warranty/i;
@@ -152,36 +151,18 @@ Respond with ONLY a JSON object:
 }
 
 function parseJson(text: string): unknown {
-  const cleaned = text.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim();
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start < 0 || end < 0) throw new Error(`no JSON object in response: ${cleaned.slice(0, 120)}`);
-  return JSON.parse(cleaned.slice(start, end + 1));
+  return parseJsonText<unknown>(text);
 }
 
 async function callWithRetry(gemini: GeminiClient, prompt: string, imageParts: Array<{ mimeType: string; base64: string }>): Promise<string> {
-  let lastErr: Error | null = null;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      return await gemini.generateContent(prompt, {
-        temperature: 0,
-        maxOutputTokens: 8192,
-        thinkingBudget: 4096,
-        timeoutMs: 120_000,
-        imageParts,
-      });
-    } catch (err) {
-      lastErr = err as Error;
-      const msg = lastErr.message;
-      if (attempt < MAX_RETRIES && (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('timeout') || msg.includes('503'))) {
-        console.log(`    retry ${attempt}/${MAX_RETRIES} after error: ${msg.slice(0, 80)}`);
-        await sleep(RETRY_DELAY_MS);
-        continue;
-      }
-      throw lastErr;
-    }
-  }
-  throw lastErr ?? new Error('unreachable');
+  return gemini.generateContent(prompt, {
+    temperature: 0,
+    maxOutputTokens: 8192,
+    thinkingBudget: 4096,
+    timeoutMs: 120_000,
+    imageParts,
+    retries: MAX_RETRIES - 1,
+  });
 }
 
 function normalizeItem(name: string): string {

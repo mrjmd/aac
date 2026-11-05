@@ -162,7 +162,7 @@ async function main(): Promise<void> {
     apiKey: requireEnv('QUO_API_KEY'),
     phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
   });
-  const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY'), textModel: 'gemini-3.6-flash' });
+  const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY') });
   let calendar: GoogleCalendarClient | null = null;
   let drive: GoogleDriveClient | null = null;
   if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN) {

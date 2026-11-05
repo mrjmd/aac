@@ -123,6 +123,35 @@ export interface GenerateContentOptions {
    * data-URI prefix.
    */
   imageParts?: Array<{ mimeType: string; base64: string }>;
+  /**
+   * Extra attempts on a transient failure (429, 5xx, timeout). Default 0:
+   * webhook-path callers must answer fast. Batch callers (drafters, triage,
+   * tools) pass 2. Waits 65s after a 429 (per-minute quota), else 5s, 10s.
+   */
+  retries?: number;
+}
+
+/** Transient Gemini failures worth another attempt. */
+export function isTransientGeminiError(err: unknown): boolean {
+  const msg = err instanceof Error ? `${err.name} ${err.message}` : String(err);
+  return /\((429|5\d\d)\)|RESOURCE_EXHAUSTED|timeout|aborted/i.test(msg);
+}
+
+/**
+ * Parse a model's JSON answer: strips a ```json fence and any prose around
+ * the outermost object or array. Throws when nothing parses.
+ */
+export function parseJsonText<T>(raw: string): T {
+  const cleaned = raw.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch {
+    const starts = [cleaned.indexOf('{'), cleaned.indexOf('[')].filter((i) => i >= 0);
+    const start = starts.length ? Math.min(...starts) : -1;
+    const end = Math.max(cleaned.lastIndexOf('}'), cleaned.lastIndexOf(']'));
+    if (start < 0 || end <= start) throw new Error(`No JSON in Gemini response: ${cleaned.slice(0, 120)}`);
+    return JSON.parse(cleaned.slice(start, end + 1)) as T;
+  }
 }
 
 export type ImageAspectRatio = '1:1' | '3:4' | '4:3' | '16:9' | '9:16';
@@ -180,6 +209,8 @@ const DEFAULT_EMBEDDING_MODEL = 'gemini-embedding-001';
 const IMAGE_TIMEOUT_MS = 45_000;
 const TEXT_TIMEOUT_MS = 30_000;
 const IMAGE_MIN_DELAY_MS = 8_000;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const EXTRACTION_PROMPT = `You are an entity extraction assistant. Extract contact information about THE SPEAKER ONLY from the following conversation text.
 
@@ -427,13 +458,12 @@ export class GeminiClient {
     });
 
     // Parse JSON response (handle potential markdown code blocks)
-    const jsonText = rawText.replace(/```json\n?|\n?```/g, '').trim();
     let entities: ExtractedEntities;
     try {
-      entities = JSON.parse(jsonText) as ExtractedEntities;
+      entities = parseJsonText<ExtractedEntities>(rawText);
     } catch {
       throw new ExtractionError(
-        `JSON parse failed: ${jsonText.substring(0, 100)}`,
+        `JSON parse failed: ${rawText.substring(0, 100)}`,
         'parse_error'
       );
     }
@@ -486,8 +516,7 @@ export class GeminiClient {
       logContext: 'intent classification',
     });
 
-    const jsonText = rawText.replace(/```json\n?|\n?```/g, '').trim();
-    const parsed = parseClassifierResponse(jsonText, opts.speakerRole);
+    const parsed = parseClassifierResponse(rawText, opts.speakerRole);
 
     log.info('Classified scheduling intent', {
       intent: parsed.intent,
@@ -501,8 +530,10 @@ export class GeminiClient {
   // ── Content Generation ──────────────────────────────────────────────
 
   /**
-   * Generate text content using Gemini.
-   * Returns the raw text response. The caller is responsible for parsing.
+   * Generate text content using Gemini. Returns the raw text; use
+   * generateJson for structured answers. `retries` opts into backoff on
+   * transient failures; a model that rejects thinkingConfig is retried
+   * once without it.
    */
   async generateContent(
     prompt: string,
@@ -511,6 +542,31 @@ export class GeminiClient {
     if (!this.config.apiKey) {
       throw new Error('Gemini API key not configured');
     }
+    const retries = options?.retries ?? 0;
+    let opts = options;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.generateOnce(prompt, opts);
+      } catch (err) {
+        if (opts?.thinkingBudget !== undefined && /\(400\).*thinking/is.test((err as Error).message)) {
+          log.warn('Gemini rejected thinkingConfig, retrying without it');
+          opts = { ...opts, thinkingBudget: undefined };
+          continue;
+        }
+        if (attempt >= retries || !isTransientGeminiError(err)) throw err;
+        const delayMs = /\(429\)|RESOURCE_EXHAUSTED/.test((err as Error).message) ? 65_000 : 5_000 * (attempt + 1);
+        log.warn('Gemini transient error, will retry', { attempt, delayMs, error: (err as Error).message.slice(0, 120) });
+        await sleep(delayMs);
+      }
+    }
+  }
+
+  /** generateContent + parseJsonText. Throws when the answer isn't JSON. */
+  async generateJson<T>(prompt: string, options?: GenerateContentOptions): Promise<T> {
+    return parseJsonText<T>(await this.generateContent(prompt, options));
+  }
+
+  private async generateOnce(prompt: string, options?: GenerateContentOptions): Promise<string> {
 
     const model = this.config.textModel ?? DEFAULT_TEXT_MODEL;
     const contents: Array<Record<string, unknown>> = [];
@@ -783,7 +839,7 @@ function parseClassifierResponse(
 ): ClassifiedSchedulingIntent {
   let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(jsonText) as Record<string, unknown>;
+    raw = parseJsonText<Record<string, unknown>>(jsonText);
   } catch {
     throw new ExtractionError(
       `Intent JSON parse failed: ${jsonText.substring(0, 100)}`,

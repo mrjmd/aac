@@ -5,7 +5,7 @@
  * exemplars) + deterministic gates; a gate failure falls back to the
  * canonical skeleton rather than showing raw AI output.
  */
-import type { GeminiClient } from '@aac/api-clients/gemini';
+import { parseJsonText, type GeminiClient } from '@aac/api-clients/gemini';
 import { LUC_LINE, EMAIL_RE } from './types.js';
 
 export function pickExemplars<T>(all: T[], n: number, seed: number): T[] {
@@ -14,10 +14,6 @@ export function pickExemplars<T>(all: T[], n: number, seed: number): T[] {
   if (!all.length) return out;
   for (let i = 0; i < Math.min(n, all.length); i++) out.push(all[(seed + i * 7) % all.length]);
   return out;
-}
-
-export function stripFences(text: string): string {
-  return text.replace(/^```(json)?\s*/i, '').replace(/```\s*$/, '').trim();
 }
 
 const VOICE_RULES = `You are drafting a text message AS Matt, owner of Attack A Crack (foundation crack repair, Massachusetts). Write EXACTLY as Matt writes — study the real examples provided. Hard rules:
@@ -132,7 +128,7 @@ Return ONLY JSON: {"classification": "...", "propertyState": "...", "provided": 
       imageParts: args.imageParts,
       ...(args.imageParts?.length ? { timeoutMs: 120_000 } : {}),
     });
-    const parsed = JSON.parse(stripFences(out)) as IntakeResult;
+    const parsed = parseJsonText<IntakeResult>(out);
     if (!parsed || typeof parsed.draft !== 'string') return null;
     parsed.propertyState ??= 'unknown';
     parsed.extracted ??= { name: null, address: null, email: null };

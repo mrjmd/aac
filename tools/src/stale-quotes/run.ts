@@ -550,26 +550,14 @@ ${draft}`;
 }
 
 async function generateWithRetry(gemini: GeminiClient, prompt: string, systemPrompt?: string): Promise<string> {
-  let lastErr: Error | null = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      return await gemini.generateContent(prompt, {
-        systemPrompt,
-        temperature: 0,
-        maxOutputTokens: 4096,
-        thinkingBudget: 4096,
-        timeoutMs: 120_000,
-      });
-    } catch (err) {
-      lastErr = err as Error;
-      if (attempt < 2 && /429|500|503|timeout|aborted/i.test(lastErr.message)) {
-        await sleep(lastErr.message.includes('429') ? 65_000 : 5_000 * (attempt + 1));
-        continue;
-      }
-      throw lastErr;
-    }
-  }
-  throw lastErr ?? new Error('Gemini returned nothing');
+  return gemini.generateContent(prompt, {
+    systemPrompt,
+    temperature: 0,
+    maxOutputTokens: 4096,
+    thinkingBudget: 4096,
+    timeoutMs: 120_000,
+    retries: 2,
+  });
 }
 
 // ── few-shot corpus ──────────────────────────────────────────────────
@@ -652,10 +640,7 @@ async function main(): Promise<void> {
     apiKey: requireEnv('QUO_API_KEY'),
     phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
   });
-  const gemini = new GeminiClient({
-    apiKey: requireEnv('GEMINI_API_KEY'),
-    textModel: 'gemini-3.6-flash',
-  });
+  const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY') });
   const oauth = {
     clientId: requireEnv('GOOGLE_CLIENT_ID'),
     clientSecret: requireEnv('GOOGLE_CLIENT_SECRET'),

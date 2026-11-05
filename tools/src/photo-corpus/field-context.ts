@@ -87,7 +87,7 @@ async function main(): Promise<void> {
   const outArg = process.argv.indexOf('--out');
   const outPath = outArg >= 0 ? path.join(OUT_DIR, process.argv[outArg + 1]) : OUT_PATH;
 
-  const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY') });
+  const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY'), textModel: MODEL });
   const manifest = readJsonl('manifest.jsonl');
   const mikeTexts = readJsonl('mike-thread.jsonl');
   const transcripts = readJsonl('mike-call-transcripts.jsonl').filter((t) => t.hasTranscript);
@@ -195,20 +195,12 @@ EVIDENCE:
 ${evidence.join('\n\n')}`;
 
     let parsed: any = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const text = await gemini.generateContent(prompt, {
-          model: MODEL, temperature: 0, maxOutputTokens: 8192,
-          thinkingBudget: 4096, timeoutMs: 120_000,
-        });
-        const m = text.match(/\{[\s\S]*\}/);
-        parsed = m ? JSON.parse(m[0]) : null;
-        break;
-      } catch (err) {
-        const msg = String(err);
-        if (attempt === 3) { console.error(`  #${est.docNumber}: extraction failed: ${msg.slice(0, 120)}`); break; }
-        await sleep(/429/.test(msg) ? 65_000 : 5_000 * attempt);
-      }
+    try {
+      parsed = await gemini.generateJson(prompt, {
+        temperature: 0, maxOutputTokens: 8192, thinkingBudget: 4096, timeoutMs: 120_000, retries: 2,
+      });
+    } catch (err) {
+      console.error(`  #${est.docNumber}: extraction failed: ${String(err).slice(0, 120)}`);
     }
 
     out.write(JSON.stringify({

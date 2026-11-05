@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GeminiClient, ExtractionError } from '../gemini.js';
+import { GeminiClient, ExtractionError, parseJsonText } from '../gemini.js';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -328,6 +328,61 @@ describe('GeminiClient', () => {
       }));
 
       await expect(client.generateContent('Test')).rejects.toThrow('No text in Gemini response');
+    });
+
+    const errorResponse = (status: number, body: string) =>
+      Promise.resolve({ ok: false, status, text: () => Promise.resolve(body) });
+
+    it('retries a transient failure when asked, after backing off', async () => {
+      vi.useFakeTimers();
+      try {
+        const client = makeClient();
+        mockFetch
+          .mockReturnValueOnce(errorResponse(503, 'overloaded'))
+          .mockReturnValueOnce(mockContentResponse('ok'));
+        const p = client.generateContent('Test', { retries: 2 });
+        await vi.advanceTimersByTimeAsync(5_000);
+        await expect(p).resolves.toBe('ok');
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not retry by default or on a non-transient error', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(errorResponse(503, 'overloaded'));
+      await expect(client.generateContent('Test')).rejects.toThrow('(503)');
+      mockFetch.mockReturnValueOnce(errorResponse(404, 'model not found'));
+      await expect(client.generateContent('Test', { retries: 2 })).rejects.toThrow('(404)');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('drops thinkingConfig when the model rejects it', async () => {
+      const client = makeClient();
+      mockFetch
+        .mockReturnValueOnce(errorResponse(400, 'thinking_budget is not supported'))
+        .mockReturnValueOnce(mockContentResponse('ok'));
+      await expect(client.generateContent('Test', { thinkingBudget: 0 })).resolves.toBe('ok');
+      const second = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(second.generationConfig.thinkingConfig).toBeUndefined();
+    });
+
+    it('generateJson parses a fenced answer', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockContentResponse('```json\n{"a": 1}\n```'));
+      await expect(client.generateJson<{ a: number }>('Test')).resolves.toEqual({ a: 1 });
+    });
+  });
+
+  describe('parseJsonText', () => {
+    it('handles fences, surrounding prose and arrays', () => {
+      expect(parseJsonText('```json\n{"a":1}\n```')).toEqual({ a: 1 });
+      expect(parseJsonText('Here you go: {"a":1} hope that helps')).toEqual({ a: 1 });
+      expect(parseJsonText('[1,2]')).toEqual([1, 2]);
+    });
+    it('throws when there is no JSON', () => {
+      expect(() => parseJsonText('no json here')).toThrow('No JSON');
     });
   });
 

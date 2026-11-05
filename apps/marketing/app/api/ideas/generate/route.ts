@@ -7,6 +7,7 @@ import {
   buildIdeaGenerationSystemPrompt,
   buildIdeaGenerationPrompt,
 } from "@/lib/prompts";
+import { parseJsonText } from "@aac/api-clients/gemini";
 
 interface GeneratedIdea {
   title: string;
@@ -49,8 +50,7 @@ export async function POST(request: NextRequest) {
 
     let ideas: GeneratedIdea[];
     try {
-      const cleaned = raw.replace(/```json\n?|\n?```/g, "").trim();
-      ideas = JSON.parse(cleaned) as GeneratedIdea[];
+      ideas = parseJsonText<GeneratedIdea[]>(raw);
     } catch {
       return NextResponse.json(
         { error: "Failed to parse Gemini response", raw },
