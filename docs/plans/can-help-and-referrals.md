@@ -1,6 +1,6 @@
 # Can-help gate, standing rules, referrals
 
-**Status:** planned 2026-11-04 (owner request). Steps 1-3 shipped the same day (worker deployed); 4-5 next. Step 3 does not yet save the read for the quote drafter to reuse.
+**Status:** planned 2026-11-04 (owner request). Steps 1-3 shipped the same day (worker deployed); step 5 built 2026-11-05 (CC deploy pending); step 4 next. Step 3 does not yet save the read for the quote drafter to reuse.
 **Evidence:** `analysis/02-strategy/decline-patterns-2026-11.md` (~150 declines mined
 from Matt's texts), `analysis/02-strategy/short-crack-pricing-2026-11.md`.
 
@@ -20,6 +20,9 @@ step; when they show work we can't do, kindly decline fast and get out of the lo
   crack-only job \$875 minimum. (Section 0 rule 6.)
 - Resurfacing pause: large square-footage only (stairs and small panels are fine);
   ends when tech #2 starts, possibly spring. Time-bound.
+- (2026-11-05) Bowing or displacement over 1 inch goes to a structural engineer first
+  (was 1.5"). Referrals get the company's public number, not the owner's cell
+  (Air Guardian main line, not Tanner).
 
 ## Build steps
 
@@ -40,6 +43,9 @@ step; when they show work we can't do, kindly decline fast and get out of the lo
 4. **Referral listener.** Any inbound (not just first touch) that the read or the
    T4-style gate marks as out of scope drafts a referral message to a Quo note,
    using the Referrals list. Never sends.
-5. **Command center: Referrals page** (mockup first). Who we send what, with
-   descriptions and contact; edit in place. Standing rules shown on the planned
-   Rules page next to mute rules, with expiry/review dates surfaced as items.
+5. **Command center: Referrals page (BUILT 11/05, mockup Pst2iVyZze9Y9TsawzrhRm
+   approved).** `/referrals`: who we send what (edit in place, private note),
+   time-bound policies (edit, end now), decline rules (edit, pause, + rule) on the
+   same page since each rule points at its referrals. A policy whose `reviewBy`
+   arrives becomes an admin item (`fromRuleReview`). Rail count = referrals
+   missing a phone. The "Referral drafts" section is an empty state until step 4.

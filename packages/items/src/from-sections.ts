@@ -193,3 +193,34 @@ export function fromInvoiceNudge(n: InvoiceNudge): ItemCandidate {
     sensitive: 'money',
   };
 }
+
+export interface RuleReview {
+  id: string;
+  /** Short label, e.g. "Resurfacing pause". */
+  label: string;
+  text: string;
+  reviewBy: string; // YYYY-MM-DD
+  untilWhen?: string;
+}
+
+/**
+ * A time-bound owner policy (can-help store) whose review date has arrived:
+ * ask Matt whether it still holds. Null before the date. Moving the review
+ * date or changing the rule reopens it.
+ */
+export function fromRuleReview(r: RuleReview, today: string): ItemCandidate | null {
+  if (r.reviewBy > today) return null;
+  return {
+    key: `rule:${r.id}`,
+    detector: 'RULE',
+    area: 'admin',
+    lane: 'needs-you',
+    severity: 'yellow',
+    title: `Does "${r.label}" still hold? Review date ${r.reviewBy}`,
+    detail: r.text,
+    ...(r.untilWhen ? { evidence: `Set to end when ${r.untilWhen}` } : {}),
+    action: 'Keep it (move the review date), edit it, or end it on Referrals',
+    link: '/referrals#policies',
+    fingerprint: fp(r.reviewBy, r.text),
+  };
+}

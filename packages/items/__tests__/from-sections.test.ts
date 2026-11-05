@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fromAwaitingQuote, fromBotDraft, fromFollowupDraft, fromFunnelFlag, fromInvoiceNudge } from '../src/index.js';
+import { fromAwaitingQuote, fromBotDraft, fromFollowupDraft, fromFunnelFlag, fromInvoiceNudge, fromRuleReview } from '../src/index.js';
 
 const awaiting = {
   doc: '1561',
@@ -76,5 +76,16 @@ describe('fromInvoiceNudge', () => {
     expect(fromInvoiceNudge({ ...n, daysOverdue: 130 }).fingerprint).toBe(f);
     expect(fromInvoiceNudge({ ...n, next: { kind: 'call', label: 'Phone call', day: 30 } }).fingerprint).not.toBe(f);
     expect(fromInvoiceNudge({ ...n, balance: 3900 }).fingerprint).not.toBe(f);
+  });
+});
+
+describe('fromRuleReview', () => {
+  const r = { id: 'resurfacing-pause', label: 'Resurfacing pause', text: 'Not taking large resurfacing.', reviewBy: '2027-03-01', untilWhen: 'tech #2 starts' };
+  it('is nothing before the review date, an admin item on or after it', () => {
+    expect(fromRuleReview(r, '2027-02-28')).toBeNull();
+    expect(fromRuleReview(r, '2027-03-01')).toMatchObject({ key: 'rule:resurfacing-pause', area: 'admin', lane: 'needs-you', link: '/referrals#policies' });
+  });
+  it('a new review date reopens it', () => {
+    expect(fromRuleReview({ ...r, reviewBy: '2027-04-01' }, '2027-05-01')!.fingerprint).not.toBe(fromRuleReview(r, '2027-05-01')!.fingerprint);
   });
 });

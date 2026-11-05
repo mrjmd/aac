@@ -1,4 +1,5 @@
 import { loadItemsView } from "@/lib/items";
+import { getCanHelpStore } from "@/lib/can-help";
 import { getPeopleStore } from "@/lib/people";
 import { Drawer, ToastHost } from "./components/items";
 import { SignOut } from "./sign-out";
@@ -10,10 +11,13 @@ import { Rail } from "./rail";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const [initial, people] = await Promise.all([
+  const [initial, people, referrals] = await Promise.all([
     loadItemsView().catch(() => null),
     getPeopleStore()
       .list()
+      .catch(() => []),
+    getCanHelpStore()
+      .referrals()
       .catch(() => []),
   ]);
   return (
@@ -31,7 +35,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <SignOut />
       </header>
       <div className="shell">
-        <Rail />
+        <Rail referralGaps={referrals.filter((r) => !r.phone).length} />
         <main>
           <div className="wrap">{children}</div>
         </main>

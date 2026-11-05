@@ -16,6 +16,7 @@
     "@aac/customers": "workspace:*",
     "@aac/items": "workspace:*",
     "@aac/metrics": "workspace:*",
+    "@aac/quoting": "workspace:*",
     "@aac/scheduling": "workspace:*",
     "@aac/shared-utils": "workspace:*",
     "@aac/ui": "workspace:*",

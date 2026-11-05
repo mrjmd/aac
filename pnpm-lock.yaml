@@ -60,6 +60,9 @@ importers:
       '@aac/metrics':
         specifier: workspace:*
         version: link:../../packages/metrics
+      '@aac/quoting':
+        specifier: workspace:*
+        version: link:../../packages/quoting
       '@aac/scheduling':
         specifier: workspace:*
         version: link:../../packages/scheduling

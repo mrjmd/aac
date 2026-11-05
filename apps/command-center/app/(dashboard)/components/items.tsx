@@ -427,10 +427,16 @@ export function Drawer() {
               Open customer page
             </Link>
           )}
-          {i.link && (
-            <a className="btn" href={i.link} target="_blank" rel="noreferrer">
-              Open source
-            </a>
+          {i.link?.startsWith("/") ? (
+            <Link className="btn" href={i.link} onClick={() => setOpen(null)}>
+              Open page
+            </Link>
+          ) : (
+            i.link && (
+              <a className="btn" href={i.link} target="_blank" rel="noreferrer">
+                Open source
+              </a>
+            )
           )}
         </div>
       </aside>

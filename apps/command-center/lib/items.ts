@@ -1,5 +1,6 @@
 import {
   fromInvoiceNudge,
+  fromRuleReview,
   fromTodo,
   ItemStore,
   nyDate,
@@ -11,7 +12,9 @@ import {
   type ItemCandidate,
   type ItemState,
 } from "@aac/items";
+import { isRuleActive } from "@aac/quoting";
 import { cards, type NudgeRow } from "./cards";
+import { getCanHelpStore } from "./can-help";
 import { getRedis } from "./redis";
 import { readSnapshot } from "./snapshots";
 import { loadTodos } from "./todos";
@@ -22,17 +25,21 @@ export function getItemStore(): ItemStore {
 
 /**
  * Everything that can be an item right now: the latest detector run, the
- * saved invoice nudge ladder, and Matt's pending to-dos.
+ * saved invoice nudge ladder, Matt's pending to-dos, and owner policies
+ * whose review date has arrived.
  */
 export async function loadCandidates(now = new Date()): Promise<{
   candidates: ItemCandidate[];
   detectedAt: string | null;
   source: string | null;
 }> {
-  const [snapshot, todos, nudges] = await Promise.all([
+  const [snapshot, todos, nudges, rules] = await Promise.all([
     getItemStore().getCandidates(),
     loadTodos(),
     readSnapshot<NudgeRow[]>(cards.nudges().name),
+    getCanHelpStore()
+      .rules()
+      .catch(() => []),
   ]);
   const today = nyDate(now);
   // The saved nudge ladder replaces triage's plain overdue items (same d3:
@@ -43,6 +50,11 @@ export async function loadCandidates(now = new Date()): Promise<{
       ...(snapshot?.candidates ?? []).filter((c) => !laddered.has(c.key)),
       ...(nudges?.data ?? []).flatMap((n) => (n.next ? [fromInvoiceNudge({ ...n, next: n.next })] : [])),
       ...todos.filter((t) => t.status === "pending").map((t) => fromTodo(t, today)),
+      ...rules.flatMap((r) => {
+        if (!r.reviewBy || !isRuleActive(r, today)) return [];
+        const c = fromRuleReview({ id: r.id, label: r.short ?? r.id, text: r.text, reviewBy: r.reviewBy, ...(r.untilWhen ? { untilWhen: r.untilWhen } : {}) }, today);
+        return c ? [c] : [];
+      }),
     ],
     detectedAt: snapshot?.at ?? null,
     source: snapshot?.source ?? null,

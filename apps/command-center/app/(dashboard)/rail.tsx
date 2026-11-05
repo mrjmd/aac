@@ -15,8 +15,8 @@ const AREAS = [
   { href: "/commercial", key: "commercial", label: "Commercial" },
 ] as const;
 
-/** The mockup's area rail: Overview, the areas with open-item counts, then System. */
-export function Rail() {
+/** The mockup's area rail: Overview, the areas with open-item counts, then System. Referrals counts contacts missing a phone. */
+export function Rail({ referralGaps = 0 }: { referralGaps?: number }) {
   const pathname = usePathname();
   const { view } = useItems();
   const talks = pendingPeople(usePeople().people).length;
@@ -31,10 +31,10 @@ export function Rail() {
   const todayCount = view?.items.filter((i) => i.band === "today" && i.lane !== "confirm").length ?? 0;
   const overview = ["/today", "/week", "/month"].some((p) => pathname.startsWith(p));
 
-  const link = (href: string, label: string, on: boolean, cnt?: number, red?: boolean) => (
+  const link = (href: string, label: string, on: boolean, cnt?: number, tone?: "red" | "amber" | boolean) => (
     <Link key={href} href={href} className={on ? "on" : ""}>
       <span>{label}</span>
-      {cnt ? <span className={`count${red ? " red" : ""}`}>{cnt}</span> : null}
+      {cnt ? <span className={`count${tone ? ` ${tone === true ? "red" : tone}` : ""}`}>{cnt}</span> : null}
     </Link>
   );
 
@@ -46,6 +46,7 @@ export function Rail() {
       <div className="sep" />
       {link("/people", "People", pathname.startsWith("/people"), talks)}
       {link("/customers", "Customers", pathname.startsWith("/customers"))}
+      {link("/referrals", "Referrals", pathname.startsWith("/referrals"), referralGaps, "amber")}
       {link("/health", "System", pathname.startsWith("/health"), counts.system, reds.system)}
       <div className="sep" />
       <span className="later micro">Customer pages open from any item</span>
