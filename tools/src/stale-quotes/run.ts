@@ -75,6 +75,11 @@ const MIKE_EMAIL = 'mike@attackacrack.com';
 const T1_VARIANTS = [2, 3]; // days after quote
 const T2_VARIANTS = [10, 14]; // days after quote (min 7d after T1 send)
 const T3_GAP_DAYS = 21; // after T2 send
+// Quotes this old skip T1/T2 and get one honest "last check-in" (the T3
+// closer), then a recommend-close flag if it goes unanswered (owner,
+// 2026-11-05; funnel data: 90% of wins close within a week of the quote).
+const LAST_CHECKIN_AGE_DAYS = 90;
+const LAST_CHECKIN_GAP_DAYS = 7; // after our last outbound
 // Matt's capacity rule (10/21): it's about SQUARE FOOTAGE, not dollars.
 // Stated footage wins — over 300 sq ft is a hold ("not even interested in
 // taking on 400 sq ft"; the 450 two-car garage holds, the 285 basement
@@ -117,6 +122,10 @@ interface EstimateState {
   statedTiming?: { resumeAt: string; evidence: string; channel: string; extractedAt: string };
   /** Last inbound timestamp the intent extractor has already seen. */
   lastExtractedInboundAt?: string;
+  /** Extractor's verdict on that inbound: does it still need Matt's reply?
+   *  false = polite sign-off ("thanks, I'll get back to you"), so the ladder
+   *  may continue. Owner decision 2026-11-05. */
+  lastInboundNeedsReply?: boolean;
   touches: TouchRecord[];
   closedFlag?: { kind: 'age-out' | 'declined'; detail: string; at: string };
 }
@@ -453,6 +462,9 @@ interface Extraction {
   evidence: string | null;
   statedTiming: { resumeAt: string; evidence: string } | null;
   humanTopic: boolean; // price negotiation / complaint / payment chasing
+  /** The customer's latest message asks or requests something Matt hasn't
+   *  answered. A polite sign-off is false. */
+  needsReply: boolean;
 }
 
 function buildExtractionPrompt(input: {
@@ -481,7 +493,8 @@ Answer in strict JSON, nothing else:
   "confidence": "high" | "medium" | "low",
   "evidence": "<verbatim customer words supporting the intent>" | null,
   "statedTiming": { "resumeAt": "YYYY-MM-DD", "evidence": "<verbatim customer words>" } | null,
-  "humanTopic": true | false
+  "humanTopic": true | false,
+  "needsReply": true | false
 }
 
 Rules:
@@ -491,7 +504,8 @@ Rules:
 - "engaged" = active conversation that a bot should stay out of right now.
 - "none" = nothing decision-relevant since the quote.
 - humanTopic = true if there is active price negotiation, a complaint/callback, or unpaid-invoice chasing in the thread.
-- statedTiming comes from CUSTOMER words only, never ours.`;
+- statedTiming comes from CUSTOMER words only, never ours.
+- needsReply looks ONLY at the customer's most recent message (text or email). true = it asks a question, requests something (a call, a date, a change, info), or raises a concern that we have not answered after it. false = a polite sign-off or acknowledgment that needs no answer ("thanks, I'll get back to you", "ok sounds good", "got it, will discuss with my wife", a thumbs up). When unsure, true.`;
 }
 
 function parseExtraction(raw: string): Extraction | null {
@@ -500,6 +514,8 @@ function parseExtraction(raw: string): Extraction | null {
   try {
     const j = JSON.parse(m[0]) as Extraction;
     if (!j.intent) return null;
+    // Older cached shapes / a model that drops the field: fail safe to "wait on Matt".
+    if (typeof j.needsReply !== 'boolean') j.needsReply = true;
     return j;
   } catch {
     return null;
@@ -558,10 +574,20 @@ Write the single SMS follow-up now. Output ONLY the message text, no quotes, no 
   return { systemPrompt, userPrompt };
 }
 
-function buildReviewPrompt(draft: string, horizonText: string): string {
+function buildReviewPrompt(draft: string, horizonText: string, tier: 'T1' | 'T2' | 'T3', quoteContext: string): string {
+  // Owner decision 2026-11-05: "I'll close out the quote/file if I don't hear back"
+  // is true on the real final touch, so it's allowed there and nowhere else.
+  const closeRule =
+    tier === 'T3'
+      ? '- (allowed: this IS the final touch, so saying he will close out the quote/file if he does not hear back is honest, not fake urgency)'
+      : '- says or implies the quote/file will be closed out or deleted (only allowed on the final touch, and this is not it)';
   return `Review this outbound SMS draft for a foundation repair company. Answer in strict JSON: {"ok": true|false, "problems": ["..."]}.
 
+The quote this follows up on: ${quoteContext}
+
 Fail it if ANY of these appear:
+${closeRule}
+- refers to a property, town, or piece of work that is not the one in the quote above (mixing up two jobs)
 - mentions price/cost/discount/"prices have changed" in any form
 - invents a fact, conversation, or promise
 - claims availability other than: "${horizonText}" (paraphrase is fine, contradiction is not; implying a sooner slot or fake scarcity = fail)
@@ -953,7 +979,9 @@ async function main(): Promise<void> {
       st.statedTiming = { ...extraction.statedTiming, channel: lastInboundEmailAt && (!thread.lastInboundAt || lastInboundEmailAt > thread.lastInboundAt) ? 'email' : 'sms', extractedAt: new Date(now).toISOString() };
     }
 
-    if (lastIn && (!lastOut || lastIn > lastOut)) {
+    // Customer spoke last. Only a real unanswered question waits on Matt; a
+    // polite sign-off ("thanks, I'll get back to you") lets the ladder run.
+    if (lastIn && (!lastOut || lastIn > lastOut) && st.lastInboundNeedsReply !== false) {
       st.suspended = { reason: 'awaiting-human', detail: `inbound ${isoDay(lastIn)} not yet answered — human replies first`, at: new Date(now).toISOString() };
       pushAwaiting();
       skip(`awaiting human reply (inbound ${isoDay(lastIn)})`);
@@ -992,6 +1020,19 @@ async function main(): Promise<void> {
       continue;
     }
 
+    // ── final touch already sent: wait it out, then recommend close
+    const finalSent = st.touches.filter((t) => t.tier === 'T3' && t.sentDetectedAt).pop();
+    if (finalSent && !(lastIn && lastIn > new Date(finalSent.sentDetectedAt!).getTime())) {
+      if (now - new Date(finalSent.sentDetectedAt!).getTime() > FINAL_AGE_OUT_DAYS * DAY) {
+        st.closedFlag = { kind: 'age-out', detail: `final touch ${finalSent.sentDetectedAt!.slice(0, 10)} unanswered ${FINAL_AGE_OUT_DAYS}d+`, at: new Date(now).toISOString() };
+        queue.flags.push({ kind: 'recommend-close', doc, customer, amount, detail: `final check-in ${finalSent.sentDetectedAt!.slice(0, 10)} unanswered ${FINAL_AGE_OUT_DAYS}d+ → Close in QBO` });
+        skip('final touch aged out — recommend close');
+      } else {
+        skip(`final touch sent ${finalSent.sentDetectedAt!.slice(0, 10)} — waiting ${FINAL_AGE_OUT_DAYS}d`);
+      }
+      continue;
+    }
+
     // ── cadence ladder
     const unanswered = thread.unansweredTouches;
     if (unanswered >= MAX_UNANSWERED) {
@@ -1004,10 +1045,12 @@ async function main(): Promise<void> {
       continue;
     }
 
-    const tier: 'T1' | 'T2' | 'T3' = unanswered === 0 ? 'T1' : unanswered === 1 ? 'T2' : 'T3';
+    const lastCheckIn = ageDays > LAST_CHECKIN_AGE_DAYS;
+    const tier: 'T1' | 'T2' | 'T3' = lastCheckIn ? 'T3' : unanswered === 0 ? 'T1' : unanswered === 1 ? 'T2' : 'T3';
     const anchor = lastOut ?? quoteMs;
-    const dueMs =
-      tier === 'T1'
+    const dueMs = lastCheckIn
+      ? anchor + LAST_CHECKIN_GAP_DAYS * DAY
+      : tier === 'T1'
         ? quoteMs + st.variant.t1Days * DAY
         : tier === 'T2'
           ? Math.max(quoteMs + st.variant.t2Days * DAY, anchor + 7 * DAY)
@@ -1048,6 +1091,7 @@ async function main(): Promise<void> {
       .map((l) => (l as unknown as { SalesItemLineDetail?: { ItemRef?: { name?: string } } }).SalesItemLineDetail?.ItemRef?.name ?? '')
       .filter((n) => n && !/discount|guarantee/i.test(n));
     const firstName = customer.split(/\s+/)[0];
+    const quoteContext = `${items.join(', ')}${address ? ` at ${address}` : ''}`;
     // Exterior resurfacing can't honestly be offered a slot past the
     // outdoor season's end (~Nov 1) — the honest pitch is the spring list.
     const seasonEndMs = Date.UTC(new Date(now).getUTCFullYear(), 10, 1);
@@ -1065,7 +1109,7 @@ async function main(): Promise<void> {
     let draft = (await generateWithRetry(gemini, userPrompt, systemPrompt)).trim().replace(/^["']|["']$/g, '');
     // reviewer gate — one regeneration on failure
     for (let pass = 0; pass < 2; pass++) {
-      const reviewRaw = await generateWithRetry(gemini, buildReviewPrompt(draft, horizonText));
+      const reviewRaw = await generateWithRetry(gemini, buildReviewPrompt(draft, horizonText, tier, quoteContext));
       const review = parseExtractionLoose<{ ok: boolean; problems?: string[] }>(reviewRaw);
       if (review?.ok) break;
       const problems = review?.problems?.join('; ') ?? 'unparseable review';
@@ -1079,7 +1123,7 @@ async function main(): Promise<void> {
     }
     if (!draft) continue;
 
-    const whyNow = `${tier} · ${unanswered} unanswered · quote ${ageDays}d old · ${svc.cls} · ${horizonText}`;
+    const whyNow = `${tier}${lastCheckIn ? ' (last check-in, quote over 90d)' : ''} · ${unanswered} unanswered · quote ${ageDays}d old · ${svc.cls} · ${horizonText}`;
     console.log(`  ${draft}`);
     console.log(`  why: ${whyNow}`);
 
@@ -1185,7 +1229,8 @@ async function extractIfNeeded(input: {
   const { st, lastInboundMs } = input;
   if (!lastInboundMs) return null;
   const lastInboundIso = new Date(lastInboundMs).toISOString();
-  if (st.lastExtractedInboundAt === lastInboundIso) return null; // already processed
+  // already processed (re-run once for entries cached before needsReply existed)
+  if (st.lastExtractedInboundAt === lastInboundIso && st.lastInboundNeedsReply !== undefined) return null;
   const smsTail =
     input.smsTail ??
     input.thread.messages
@@ -1208,7 +1253,10 @@ async function extractIfNeeded(input: {
     }),
   );
   const extraction = parseExtraction(raw);
-  if (extraction) st.lastExtractedInboundAt = lastInboundIso;
+  if (extraction) {
+    st.lastExtractedInboundAt = lastInboundIso;
+    st.lastInboundNeedsReply = extraction.needsReply;
+  }
   return extraction;
 }
 
