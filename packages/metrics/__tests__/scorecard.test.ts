@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import type { QBEstimate, QBInvoice, QBPayment } from '@aac/api-clients/quickbooks';
 import type { QuoCall, QuoMessage } from '@aac/api-clients/quo';
-import { buildScorecard, leadFactOf, quoteSentDay, quoteWon, refreshLeadFacts, SCORECARD_GOALS, scorecardWeeks, weekTarget, type LeadFact } from '../src/index.js';
+import { buildScorecard, leadFactOf, matchJobInvoices, quoteSentDay, quoteWon, refreshLeadFacts, SCORECARD_GOALS, scorecardWeeks, weekTarget, type LeadFact } from '../src/index.js';
 
 // Friday 11/6/2026, 3pm Eastern. Closed weeks run 8/3 .. 10/26, this week is 11/2.
 const now = new Date('2026-11-06T20:00:00Z');
@@ -88,21 +88,47 @@ describe('quotes', () => {
   });
 });
 
-describe('days to get paid', () => {
-  it('averages invoice-to-payment days by dollars over the 4 weeks ending each week', () => {
-    const inv = (Id: string, TxnDate: string) => ({ Id, TxnDate, SyncToken: '0', CustomerRef: { value: 'c' }, Line: [] }) as unknown as QBInvoice;
-    const pay = (TxnDate: string, lines: Array<[string, number]>) =>
-      ({ Id: TxnDate, SyncToken: '0', TxnDate, TotalAmt: 0, CustomerRef: { value: 'c' }, Line: lines.map(([TxnId, Amount]) => ({ Amount, LinkedTxn: [{ TxnId, TxnType: 'Invoice' }] })) }) as QBPayment;
+describe('getting paid', () => {
+  const inv = (Id: string, name: string, TxnDate: string, TotalAmt: number, Balance: number) =>
+    ({ Id, TxnDate, TotalAmt, Balance, SyncToken: '0', CustomerRef: { value: Id, name }, Line: [] }) as unknown as QBInvoice;
+  const pay = (TxnDate: string, TxnId: string, Amount: number) =>
+    ({ Id: TxnDate + TxnId, SyncToken: '0', TxnDate, TotalAmt: Amount, CustomerRef: { value: 'c' }, Line: [{ Amount, LinkedTxn: [{ TxnId, TxnType: 'Invoice' }] }] }) as QBPayment;
+
+  it('matches a job to its invoice by surname first, then the nearest date', () => {
+    const job = ev('2026-10-13T12:00:00Z', '10', 'Teddy Watler');
+    const m = matchJobInvoices([job], [inv('a', 'Teddy Smith', '2026-10-13', 1, 0), inv('b', 'Ted Watler', '2026-10-19', 1, 0), inv('c', 'Watler', '2026-12-30', 1, 0)]);
+    expect(m.get(job.id)?.Id).toBe('b');
+  });
+
+  it('averages days from job to paid off, counting an unpaid job by its days so far, and names unmatched jobs', () => {
     const sc = buildScorecard({
       ...base,
-      invoices: [inv('a', '2026-10-01'), inv('b', '2026-10-27')],
-      // $1,000 paid 30 days late, $3,000 paid the same day: (30×1000 + 0×3000) / 4000 = 7.5 → 8.
-      payments: [pay('2026-10-31', [['a', 1000]]), pay('2026-10-27', [['b', 3000]]), pay('2026-10-28', [['unknown', 500]])],
+      events: [
+        ev('2026-10-27T12:00:00Z', '10', 'Ann Paid'),
+        ev('2026-10-28T12:00:00Z', '10', 'Bob Open'),
+        ev('2026-10-29T12:00:00Z', '10', 'Julian'),
+        // Second day of Bob's job, not titled [cont]: not a job of its own.
+        ev('2026-10-30T12:00:00Z', '10', 'Bob Open'),
+      ],
+      invoices: [inv('a', 'Ann Paid', '2026-10-27', 1000, 0), inv('b', 'Bob Open', '2026-10-28', 500, 500)],
+      payments: [pay('2026-10-25', 'a', 300), pay('2026-11-01', 'a', 700)],
     });
-    expect(row(sc, 'paylag').values[12]).toBe(8);
-    // Still inside the next week's 4-week window, gone 4 weeks later.
-    expect(row(sc, 'paylag').values[13]).toBe(8);
-    expect(row(sc, 'paylag').values[8]).toBeNull();
+    // Ann: paid off 11/1, 5 days. Bob: open, 10/28 to today 11/6, 9 days. (5 + 9) / 2 = 7.
+    expect(row(sc, 'jobpay').values[12]).toBe(7);
+    expect(sc.gaps.join()).toContain('no invoice found for 1 job (Julian 10-29)');
+    expect(row(sc, 'jobs').values[12]).toBe(3);
+  });
+
+  it("counts balances over 30 days old as of each week's end, before later payments", () => {
+    const sc = buildScorecard({
+      ...base,
+      invoices: [inv('a', 'Old Debt', '2026-08-01', 900, 0), inv('b', 'Recent', '2026-10-20', 400, 400)],
+      payments: [pay('2026-10-30', 'a', 900)],
+    });
+    // Week of 10/19 (ends 10/25): the 8/1 invoice was still open, the 10/20 one isn't 30 days old.
+    expect(row(sc, 'owed30').values[11]).toBe(0.9);
+    // Week of 10/26 (ends 11/1): paid 10/30.
+    expect(row(sc, 'owed30').values[12]).toBe(0);
   });
 });
 

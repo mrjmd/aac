@@ -5,7 +5,9 @@ export type { TechWeek } from './tech-utilization.js';
 export {
   buildScorecard,
   CLOSED_WEEKS,
+  followOnJobs,
   leadFactOf,
+  matchJobInvoices,
   quoteSentDay,
   quoteWon,
   refreshLeadFacts,

@@ -81,8 +81,8 @@ export const SCORECARD_GOALS: Record<string, number> = {
   booked: 2,
   jobs: 5,
   collected: 11.5,
-  // Matt 11/06: average under two weeks from invoice to payment.
-  paylag: 14,
+  // Matt 11/06: jobs paid within two weeks on average.
+  jobpay: 14,
 };
 
 const round = (n: number, dp: number) => Math.round(n * 10 ** dp) / 10 ** dp;
@@ -128,7 +128,7 @@ export interface ScorecardInput {
   leads: Record<string, LeadFact>;
   estimates: QBEstimate[];
   payments: QBPayment[];
-  /** Invoices the payments link to (for days to get paid). */
+  /** Invoices back far enough for the jobs shown and any balance still open (days to paid, owed over 30). */
   invoices: QBInvoice[];
   events: CalendarEvent[];
   techEmails: readonly string[];
@@ -171,6 +171,59 @@ export function quoteWon(e: QBEstimate): boolean {
   return e.TxnStatus === 'Accepted' || e.TxnStatus === 'Converted' || !!e.LinkedTxn?.some((t) => t.TxnType === 'Invoice');
 }
 
+const NAME_STOPWORDS = new Set(['the', 'and', 'job', 'llc', 'inc']);
+/** The words that can name a customer, from a calendar title or a QBO customer name. */
+const nameWords = (s: string) => s.toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !NAME_STOPWORDS.has(w));
+
+/** The customer's surname in a calendar title ("Ed Spooner & Cathy Follett" → spooner). */
+const titleSurname = (title: string) => nameWords(title.split(/[-/(&]/)[0]!).pop();
+
+/**
+ * Days that continue a job not titled "[cont]": a green event whose surname
+ * matches a green event 1 to 7 days before it (Ed Spooner 9/10 and 9/11).
+ */
+export function followOnJobs(jobs: CalendarEvent[]): Set<string> {
+  const out = new Set<string>();
+  const sorted = [...jobs].sort((a, b) => a.start.localeCompare(b.start));
+  sorted.forEach((job, k) => {
+    const sn = titleSurname(job.summary);
+    if (!sn) return;
+    const day = eventDay(job);
+    if (sorted.slice(0, k).some((e) => titleSurname(e.summary) === sn && eventDay(e) < day && dayDiff(eventDay(e), day) <= 7)) out.add(job.id);
+  });
+  return out;
+}
+
+/**
+ * Each job's invoice: dated 2 weeks before to 60 days after the job and
+ * sharing a name word with the title, a surname match first, then the
+ * nearest date; one invoice per job. Calendar names drift from QBO (first
+ * names only, misspellings), so some jobs find none.
+ */
+export function matchJobInvoices(jobs: CalendarEvent[], invoices: QBInvoice[]): Map<string, QBInvoice> {
+  const used = new Set<string>();
+  const out = new Map<string, QBInvoice>();
+  for (const job of [...jobs].sort((a, b) => a.start.localeCompare(b.start))) {
+    const words = nameWords(job.summary.split(/[-/(&]/)[0]!);
+    const surname = titleSurname(job.summary);
+    let best: { inv: QBInvoice; score: number } | null = null;
+    for (const inv of invoices) {
+      if (used.has(inv.Id) || !inv.TxnDate) continue;
+      const d = dayDiff(eventDay(job), inv.TxnDate);
+      if (d < -14 || d > 60) continue;
+      const cw = nameWords(inv.CustomerRef.name ?? '');
+      if (!cw.some((w) => words.includes(w))) continue;
+      const score = (surname && cw.includes(surname) ? 0 : 1000) + Math.abs(d);
+      if (!best || score < best.score) best = { inv, score };
+    }
+    if (best) {
+      used.add(best.inv.Id);
+      out.set(job.id, best.inv);
+    }
+  }
+  return out;
+}
+
 /** A multi-day job's later days, e.g. "Teddy Watler [cont]". */
 const CONT_RE = /\[cont\]/i;
 const eventDay = (e: CalendarEvent) => (e.start.length === 10 ? e.start : easternDate(e.start));
@@ -183,15 +236,38 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
 
   const leadList = Object.values(input.leads).filter((l): l is LeadFact & { at: string } => !!l.at && !l.existing);
   const sent = input.estimates.map((e) => ({ e, day: quoteSentDay(e) })).filter((q): q is { e: QBEstimate; day: string } => !!q.day);
-  const invoiceDay = new Map(input.invoices.map((i) => [i.Id, i.TxnDate]));
-  const paid = input.payments.flatMap((p) =>
-    (p.Line ?? []).flatMap((l) =>
-      (l.LinkedTxn ?? [])
-        .filter((t) => t.TxnType === 'Invoice' && invoiceDay.get(t.TxnId) && p.TxnDate)
-        .map((t) => ({ day: p.TxnDate!, amt: l.Amount, days: Math.max(0, dayDiff(invoiceDay.get(t.TxnId)!, p.TxnDate!)) })),
-    ),
-  );
   const past = input.events.filter((e) => !e.summary.startsWith(HOLD_TITLE_PREFIX) && Date.parse(e.start.length === 10 ? `${e.start}T12:00:00Z` : e.start) <= nowMs);
+  const pastJobs = (() => {
+    const green = past.filter((e) => e.colorId === EVENT_CLASS_COLOR_IDS.job && !CONT_RE.test(e.summary));
+    const cont = followOnJobs(green);
+    return green.filter((e) => !cont.has(e.id));
+  })();
+
+  // Payments per invoice, for when each was paid off and what was still open on a given day.
+  const paidOn = new Map<string, Array<{ day: string; amt: number }>>();
+  for (const p of input.payments)
+    for (const l of p.Line ?? [])
+      for (const t of l.LinkedTxn ?? [])
+        if (t.TxnType === 'Invoice' && p.TxnDate) paidOn.set(t.TxnId, [...(paidOn.get(t.TxnId) ?? []), { day: p.TxnDate, amt: l.Amount }]);
+  /** The day an invoice was paid off; null while it's open or when the payment is older than the data. */
+  const paidOff = (inv: QBInvoice) => ((inv.Balance ?? 0) > 0 ? null : (paidOn.get(inv.Id) ?? []).map((p) => p.day).sort().pop() ?? null);
+  /** Still owed on an invoice at the end of `day`: today's balance plus what was paid after it. */
+  const openOn = (inv: QBInvoice, day: string) =>
+    Math.min(inv.TotalAmt ?? Infinity, (inv.Balance ?? 0) + (paidOn.get(inv.Id) ?? []).filter((p) => p.day > day).reduce((n, p) => n + p.amt, 0));
+
+  const jobInvoice = matchJobInvoices(pastJobs, input.invoices);
+  const jobPay = (m: string) =>
+    pastJobs
+      .filter((j) => inWeek(eventDay(j), m) && jobInvoice.has(j.id))
+      .map((j) => {
+        const inv = jobInvoice.get(j.id)!;
+        if ((inv.Balance ?? 0) > 0) return Math.max(0, dayDiff(eventDay(j), today));
+        const off = paidOff(inv);
+        return off == null ? null : Math.max(0, dayDiff(eventDay(j), off));
+      })
+      .filter((d): d is number => d != null);
+  const shown = [...weeks, lastYear];
+  const unmatched = pastJobs.filter((j) => !jobInvoice.has(j.id) && shown.some((m) => inWeek(eventDay(j), m)) && dayDiff(eventDay(j), today) > 7);
 
   const fns: Array<Omit<ScoreRow, 'values' | 'lastYear' | 'targets' | 'lastYearTarget'> & { week: (m: string) => number | null }> = [
     {
@@ -278,8 +354,8 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       fmt: 'int',
       dir: 1,
       goal: null,
-      info: 'Green (job) calendar events, by the day they started. Follow-on days of a multi-day job ("[cont]" in the title) are left out.',
-      week: (m) => past.filter((e) => e.colorId === EVENT_CLASS_COLOR_IDS.job && !CONT_RE.test(e.summary) && inWeek(eventDay(e), m)).length,
+      info: 'Green (job) calendar events, by the day they started. Follow-on days of a multi-day job are left out: "[cont]" in the title, or the same surname as a job 1 to 7 days before.',
+      week: (m) => pastJobs.filter((e) => inWeek(eventDay(e), m)).length,
     },
     {
       key: 'collected',
@@ -291,16 +367,28 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       week: (m) => round(input.payments.filter((p) => inWeek(p.TxnDate, m)).reduce((n, p) => n + p.TotalAmt, 0) / 1000, 1),
     },
     {
-      key: 'paylag',
-      name: 'Days to get paid, 4-wk avg',
+      key: 'jobpay',
+      name: 'Days from job to paid',
       fmt: 'days',
       dir: -1,
       goal: null,
-      info: 'Days from invoice date to payment, averaged by dollars over the payments received in the 4 weeks ending that week (QBO payments linked to an invoice). Payments are dated when they were recorded, so until the books are reconciled a late entry reads as a slow payer.',
+      info: "For the jobs done that week (green calendar events, first day), the average days from the job to its invoice being paid off in QBO. A job still unpaid counts its days so far, so the newest weeks keep growing until they're paid. Each job is matched to its invoice by customer name within 2 weeks before to 60 days after the job; jobs with no match are left out and named above the table. Payments are dated when they were recorded, so a late entry reads as a slow payer until the books are reconciled.",
       week: (m) => {
-        const ps = paid.filter((p) => p.day >= addDays(m, -21) && p.day < addDays(m, 7));
-        const total = ps.reduce((n, p) => n + p.amt, 0);
-        return total > 0 ? Math.round(ps.reduce((n, p) => n + p.days * p.amt, 0) / total) : null;
+        const days = jobPay(m);
+        return days.length ? Math.round(days.reduce((n, d) => n + d, 0) / days.length) : null;
+      },
+    },
+    {
+      key: 'owed30',
+      name: 'Owed over 30 days ($k)',
+      fmt: 'usdk',
+      dir: -1,
+      goal: null,
+      info: "Unpaid invoice balances more than 30 days past the invoice date, as of the end of that week (today for this week): today's QBO balance plus whatever was paid after that day. Collecting an old debt brings it down.",
+      week: (m) => {
+        const end = addDays(m, 6) < today ? addDays(m, 6) : today;
+        const cutoff = addDays(end, -30);
+        return round(input.invoices.filter((i) => i.TxnDate && i.TxnDate <= cutoff).reduce((n, i) => n + openOn(i, end), 0) / 1000, 1);
       },
     },
     {
@@ -317,7 +405,13 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
   return {
     weeks,
     builtAt: input.now.toISOString(),
-    gaps: [...(input.gaps ?? []), ...(input.spend ? [] : ['Google Ads spend (Ads not configured)'])],
+    gaps: [
+      ...(input.gaps ?? []),
+      ...(input.spend ? [] : ['Google Ads spend (Ads not configured)']),
+      ...(unmatched.length
+        ? [`no invoice found for ${unmatched.length} job${unmatched.length > 1 ? 's' : ''} (${unmatched.map((j) => `${j.summary} ${eventDay(j).slice(5)}`).join(', ')})`]
+        : []),
+    ],
     rows: fns.map(({ week, ...row }) => {
       const goal = SCORECARD_GOALS[row.key] ?? row.goal;
       return {
@@ -448,8 +542,8 @@ export async function runScorecard(
   const [estimates, payments, invoices, events, spend] = await Promise.all([
     deps.qb.listEstimatesUpdatedSince(`${from}T00:00:00Z`),
     deps.qb.listPaymentsSince(from),
-    // A payment can settle an invoice months older than it.
-    deps.qb.listInvoicesSince(addDays(from, -180)),
+    // Old enough for any balance still open, which is what owed-over-30 counts.
+    deps.qb.listInvoicesSince(addDays(from, -730)),
     deps.calendar.listEvents({
       timeMin: new Date(`${from}T00:00:00Z`).toISOString(),
       // Far enough ahead for the last week's booked-ahead window.
