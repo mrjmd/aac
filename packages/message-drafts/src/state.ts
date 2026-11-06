@@ -12,6 +12,13 @@ import { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
 import { CLAIM_STALE_MIN } from './types.js';
 
+/**
+ * referral-done fields are read back only inside REFERRAL_REPEAT_H (24h);
+ * setReferral drops fields older than this so the hash can't grow forever
+ * (a hash field has no TTL of its own).
+ */
+export const REFERRAL_PRUNE_MS = 7 * 86_400_000;
+
 export interface DraftState {
   /** Current done/claim marker for an estimate (iso | skipped:* | pending:iso). */
   getFollowup(estimateId: string): Promise<string | null>;
@@ -102,6 +109,11 @@ export class RedisDraftState implements DraftState {
   }
   async setReferral(phone: string, iso: string): Promise<void> {
     await this.redis.hset(keys.messageDraftReferralDone, { [phone]: iso });
+    const all = (await this.redis.hgetall<Record<string, string>>(keys.messageDraftReferralDone)) ?? {};
+    const stale = Object.entries(all)
+      .filter(([, at]) => this.now() - new Date(at).getTime() > REFERRAL_PRUNE_MS)
+      .map(([field]) => field);
+    if (stale.length) await this.redis.hdel(keys.messageDraftReferralDone, ...stale);
   }
 
   async getNoteAttempts(phone: string): Promise<number> {

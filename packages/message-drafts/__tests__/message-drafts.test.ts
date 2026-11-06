@@ -2,8 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import type { QuickBooksClient, QBEstimate } from '@aac/api-clients/quickbooks';
 import type { QuoClient } from '@aac/api-clients/quo';
 import type { GeminiClient } from '@aac/api-clients/gemini';
+import type { Redis } from '@upstash/redis';
+import { keys } from '@aac/shared-utils/redis';
 import {
   MemoryDraftState,
+  RedisDraftState,
+  REFERRAL_PRUNE_MS,
+  REFERRAL_REPEAT_H,
   isDone,
   gateFollowup,
   gateIntake,
@@ -553,5 +558,40 @@ describe('condition counts (System health)', () => {
     const outcome = await processIntakePhone({ ...deps, countCondition }, '+19785550123');
     expect(outcome).toEqual({ kind: 'skipped', reason: 'generation-failed' });
     expect(countCondition).toHaveBeenCalledWith('intake.generation_failed');
+  });
+});
+
+describe('RedisDraftState referral-done bound', () => {
+  /** Just the hash calls setReferral makes. */
+  class HashRedis {
+    h = new Map<string, Map<string, string>>();
+    async hset(key: string, kv: Record<string, string>): Promise<number> {
+      const m = this.h.get(key) ?? new Map<string, string>();
+      for (const [f, v] of Object.entries(kv)) m.set(f, v);
+      this.h.set(key, m);
+      return Object.keys(kv).length;
+    }
+    async hgetall(key: string): Promise<Record<string, string> | null> {
+      const m = this.h.get(key);
+      return m && m.size ? Object.fromEntries(m) : null;
+    }
+    async hdel(key: string, ...fields: string[]): Promise<number> {
+      let n = 0;
+      for (const f of fields) if (this.h.get(key)?.delete(f)) n++;
+      return n;
+    }
+  }
+
+  it('drops referral markers older than REFERRAL_PRUNE_MS on write, keeps fresh ones', async () => {
+    const redis = new HashRedis();
+    const old = new Date(NOW - REFERRAL_PRUNE_MS - 60_000).toISOString();
+    const recent = new Date(NOW - 3_600_000).toISOString();
+    await redis.hset(keys.messageDraftReferralDone, { '+16175550001': old, '+16175550002': recent });
+    const state = new RedisDraftState(redis as unknown as Redis, () => NOW);
+    await state.setReferral('+16175550003', new Date(NOW).toISOString());
+    const after = (await redis.hgetall(keys.messageDraftReferralDone)) ?? {};
+    expect(Object.keys(after).sort()).toEqual(['+16175550002', '+16175550003']);
+    // the prune horizon is well past the window getReferral is read for
+    expect(REFERRAL_PRUNE_MS).toBeGreaterThan(REFERRAL_REPEAT_H * 3_600_000 * 5);
   });
 });
