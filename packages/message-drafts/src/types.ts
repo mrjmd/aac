@@ -14,6 +14,7 @@ import type { QuickBooksClient } from '@aac/api-clients/quickbooks';
 import type { QuoClient } from '@aac/api-clients/quo';
 import type { GeminiClient } from '@aac/api-clients/gemini';
 import { INTERNAL_PHONES } from '@aac/shared-utils/phone';
+import type { ConditionName } from '@aac/shared-utils/health';
 import type { DraftState } from './state.js';
 
 export const OWN_LINE = '+16176681677';
@@ -64,6 +65,8 @@ export interface DraftDeps {
   now?: () => number;
   /** Print drafts instead of posting notes or writing state. */
   dryRun?: boolean;
+  /** Count a silent degradation for the System health page (worker: @aac/shared-utils/health countCondition). Never throws. */
+  countCondition?: (name: ConditionName) => Promise<void>;
 }
 
 export type DraftRecord = Record<string, unknown>;

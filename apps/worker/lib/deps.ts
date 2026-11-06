@@ -9,6 +9,7 @@ import { GeminiClient } from '@aac/api-clients/gemini';
 import { RedisDraftState, type DraftDeps } from '@aac/message-drafts';
 import { CanHelpStore } from '@aac/quoting';
 import { qboTokenStore } from '@aac/shared-utils/qbo-tokens';
+import { countCondition } from './conditions.js';
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -36,6 +37,9 @@ export function getWorkerDeps(): { deps: DraftDeps; redis: Redis } {
     phoneNumber: requireEnv('QUO_PHONE_NUMBER'),
   });
   const gemini = new GeminiClient({ apiKey: requireEnv('GEMINI_API_KEY') });
-  cached = { deps: { qb, quo, gemini, state: new RedisDraftState(redis), canHelp: new CanHelpStore(redis) }, redis };
+  cached = {
+    deps: { qb, quo, gemini, state: new RedisDraftState(redis), canHelp: new CanHelpStore(redis), countCondition: (name) => countCondition(name) },
+    redis,
+  };
   return cached;
 }

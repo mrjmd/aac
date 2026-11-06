@@ -183,6 +183,7 @@ export async function processIntakePhone(deps: DraftDeps, phone: string): Promis
     canHelpBlock,
   });
   if (!result || result.classification !== 'lead') {
+    if (!result && !dryRun) await deps.countCondition?.('intake.generation_failed');
     return skip(result?.classification ?? 'generation-failed');
   }
 

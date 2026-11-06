@@ -14,6 +14,7 @@ import { pollQuoteEmails, resolveMode } from '@aac/quote-drafter';
 import { getQuoteDeps, envMode } from '../lib/quote-deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
 import { recordFailure, recordRun } from '../lib/health.js';
+import { countCondition } from '../lib/conditions.js';
 
 const log = createLogger('worker-quote-email-tick');
 
@@ -63,6 +64,7 @@ export async function GET(request: Request): Promise<Response> {
       // Token minted without gmail.readonly — reauth via
       // tools/src/scratch/reauth-google.ts, then update the worker env.
       log.warn('email channel disabled — token lacks gmail.readonly', { error: msg.slice(0, 200) });
+      await countCondition('quote-email.no_scope');
       return json({ status: 'ok', skipped: 'no-gmail-scope' });
     }
     log.error('quote email tick failed', err as Error);

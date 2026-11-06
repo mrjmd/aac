@@ -521,6 +521,7 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
         }
       } catch (err) {
         log(`  ⚠ Quo note failed: ${(err as Error).message.slice(0, 80)}`);
+        await deps.countCondition?.('stale-quotes.note_failed');
       }
     }
   }

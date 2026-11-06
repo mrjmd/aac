@@ -11,6 +11,7 @@ import { technicianEmails } from '@aac/shared-utils/calendar';
 import { keys } from '@aac/shared-utils/redis';
 import { RedisStaleQuoteStore, type StaleQuoteDeps } from '@aac/stale-quotes';
 import { getWorkerDeps } from './deps.js';
+import { countCondition } from './conditions.js';
 
 const log = createLogger('worker-stale-quotes');
 
@@ -34,6 +35,7 @@ export function getStaleQuoteDeps(): StaleQuoteDeps | null {
     gmail: new GmailClient({ oauth }),
     store: new RedisStaleQuoteStore(redis),
     techEmails: technicianEmails(process.env.TECHNICIAN_EMAILS),
+    countCondition: (name) => countCondition(name),
     log: (line) => {
       if (line.trim()) log.info(line.trim());
     },

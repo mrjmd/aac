@@ -526,3 +526,32 @@ describe('processRoutedReferral (inbound router, phase 4c)', () => {
     expect(note).toContain("isn't something we're able to help with");
   });
 });
+
+describe('condition counts (System health)', () => {
+  it('counts followup.skeleton_fallback when the follow-up falls back to the template', async () => {
+    const { deps, mocks } = makeDeps();
+    const countCondition = vi.fn().mockResolvedValue(undefined);
+    mocks.generateContent.mockResolvedValue('way too short');
+    await processFollowupEstimate({ ...deps, countCondition }, makeEstimate());
+    expect(countCondition).toHaveBeenCalledWith('followup.skeleton_fallback');
+  });
+
+  it('does not count a follow-up that drafted normally', async () => {
+    const { deps } = makeDeps();
+    const countCondition = vi.fn().mockResolvedValue(undefined);
+    await processFollowupEstimate({ ...deps, countCondition }, makeEstimate());
+    expect(countCondition).not.toHaveBeenCalled();
+  });
+
+  it('counts intake.generation_failed when Gemini produces no intake draft', async () => {
+    const { deps, mocks } = makeDeps();
+    const countCondition = vi.fn().mockResolvedValue(undefined);
+    mocks.listMessages.mockResolvedValue({
+      data: [{ direction: 'incoming', text: 'I have a crack in my basement wall', media: [], createdAt: new Date(NOW - 20 * 60_000).toISOString() }],
+    });
+    mocks.generateContent.mockRejectedValue(new Error('model retired'));
+    const outcome = await processIntakePhone({ ...deps, countCondition }, '+19785550123');
+    expect(outcome).toEqual({ kind: 'skipped', reason: 'generation-failed' });
+    expect(countCondition).toHaveBeenCalledWith('intake.generation_failed');
+  });
+});

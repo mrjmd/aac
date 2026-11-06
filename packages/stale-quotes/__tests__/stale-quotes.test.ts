@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { QBEstimate } from '@aac/api-clients/quickbooks';
 import type { QuoMessage } from '@aac/api-clients/quo';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
@@ -155,6 +155,24 @@ describe('runStaleQuotes', () => {
     expect(f.store.queue?.toSend).toHaveLength(1);
     expect(f.store.runlog[0]).toMatchObject({ outcome: 'drafted', doc: '1600' });
     expect(f.store.awaiting?.entries).toEqual([]);
+  });
+
+  it('a Quo note that fails to post is counted as stale-quotes.note_failed; the draft stays queued', async () => {
+    const f = fake();
+    const countCondition = vi.fn().mockResolvedValue(undefined);
+    f.deps.quo.createContactNote = async () => {
+      throw new Error('quo 500');
+    };
+    const r = await runStaleQuotes({ ...f.deps, countCondition }, { dryRun: false });
+    expect(r.queue.toSend).toHaveLength(1);
+    expect(countCondition).toHaveBeenCalledWith('stale-quotes.note_failed');
+  });
+
+  it('a posted note counts nothing', async () => {
+    const f = fake();
+    const countCondition = vi.fn().mockResolvedValue(undefined);
+    await runStaleQuotes({ ...f.deps, countCondition }, { dryRun: false });
+    expect(countCondition).not.toHaveBeenCalled();
   });
 
   it('a queued draft not yet sent is listed as waiting, never re-drafted', async () => {

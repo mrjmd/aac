@@ -88,6 +88,7 @@ export async function processFollowupEstimate(
   });
   const gateFail = draft ? gateFollowup(draft) : 'generation failed';
   if (gateFail) {
+    if (!dryRun) await deps.countCondition?.('followup.skeleton_fallback');
     const summary = est.Line.filter((l) => l.SalesItemLineDetail?.ItemRef?.name)
       .map((l) => l.SalesItemLineDetail!.ItemRef!.name!.toLowerCase()).join(' + ') || 'the repair work we discussed';
     draft = followupFallback(firstName, summary);

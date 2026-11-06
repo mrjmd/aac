@@ -7,6 +7,7 @@ import type { QuoClient } from '@aac/api-clients/quo';
 import type { GeminiClient } from '@aac/api-clients/gemini';
 import type { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import type { GmailClient } from '@aac/api-clients/gmail';
+import type { ConditionName } from '@aac/shared-utils/health';
 import type { StaleQuoteStore } from './state.js';
 
 // ── config ───────────────────────────────────────────────────────────
@@ -162,6 +163,8 @@ export interface StaleQuoteDeps {
   now?: () => number;
   /** Pause between Quo calls (default QUO_THROTTLE_MS; tests pass 0). */
   throttleMs?: number;
+  /** Count a silent skip for the System health page (worker: @aac/shared-utils/health countCondition). Never throws. */
+  countCondition?: (name: ConditionName) => Promise<void>;
 }
 
 export interface RunOptions {

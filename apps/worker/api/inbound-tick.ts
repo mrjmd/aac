@@ -15,6 +15,7 @@ import { CanHelpStore } from '@aac/quoting';
 import { getWorkerDeps } from '../lib/deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
 import { recordFailure, recordRun } from '../lib/health.js';
+import { countCondition } from '../lib/conditions.js';
 
 const log = createLogger('worker-inbound-tick');
 
@@ -46,6 +47,7 @@ export async function GET(request: Request): Promise<Response> {
     // record it so it isn't only in the function log.
     const failed = summary.entries.filter((e) => e.outcome === 'failed');
     if (failed.length) {
+      await countCondition('router.read_failed', { by: failed.length });
       await recordFailure('inbound-tick', `inbound router: ${failed.length} burst(s) failed`, {
         failed: failed.slice(0, 5).map((e) => ({ phone: e.phone, detail: e.detail?.slice(0, 200) ?? null })),
       });
