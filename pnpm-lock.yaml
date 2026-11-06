@@ -706,6 +706,9 @@ importers:
       '@aac/customers':
         specifier: workspace:*
         version: link:../customers
+      '@aac/items':
+        specifier: workspace:*
+        version: link:../items
       '@aac/shared-utils':
         specifier: workspace:*
         version: link:../shared-utils
