@@ -36,6 +36,11 @@ export async function writeHeartbeat(): Promise<void> {
   await health.writeHeartbeat(getRedis(), 'agent');
 }
 
+/** Stamp `cron:<job>:last-run` (+ today's counts). The watchdog reads error-surface's. Never throws. */
+export async function trackCronRun(job: string, result: health.CronRunResult): Promise<void> {
+  await health.trackCronRun(getRedis(), job, result);
+}
+
 // ── Cron cursors ────────────────────────────────────────────────────
 
 /**
@@ -69,14 +74,11 @@ export interface HealthErrorEntry {
 }
 
 /**
- * Claim "we already SMS'd Matt about this error on this deploy". Returns
- * true iff this is the first time we're surfacing this fingerprint on
- * this commit SHA. 24h TTL — even without a redeploy, the same error
- * eventually resurfaces.
- *
- * The dedup namespace is (commitSha, fingerprint). When middleware ships
- * a new deploy, the SHA changes and previously-silenced errors resurface
- * naturally — that's how Matt knows whether a fix worked.
+ * "We already SMS'd Matt about this error on this deploy." Claimed only
+ * after the text went out (a failed send must not silence the error). The
+ * namespace is (commitSha, fingerprint) with a 24h TTL: a new deploy, or a
+ * day, lets the same error text again, which is how Matt learns whether a
+ * fix held.
  */
 export async function claimErrorSurfaceNotification(
   commitSha: string,
@@ -86,6 +88,29 @@ export async function claimErrorSurfaceNotification(
   const key = keys.dedupe('error-surface', `${commitSha}:${fingerprint}`);
   const result = await redis.set(key, 'sent', { nx: true, ex: ttl.dedupe });
   return result === 'OK';
+}
+
+/** Read-only: has this (deploy, fingerprint) already been texted (see claimErrorSurfaceNotification)? */
+export async function isErrorSurfaceClaimed(commitSha: string, fingerprint: string): Promise<boolean> {
+  const redis = getRedis();
+  return (await redis.get(keys.dedupe('error-surface', `${commitSha}:${fingerprint}`))) !== null;
+}
+
+/** How long a texted fingerprint counts as a repeat (any deploy) for the daytime-only rule. */
+export const ERROR_SURFACE_REPEAT_SEC = 7 * 86_400;
+
+/** Remember that this fingerprint was texted (any deploy), so a later occurrence is a repeat. */
+export async function markErrorFingerprintSurfaced(fingerprint: string): Promise<void> {
+  const redis = getRedis();
+  await redis.set(keys.dedupe('error-surface-seen', fingerprint), new Date().toISOString(), {
+    ex: ERROR_SURFACE_REPEAT_SEC,
+  });
+}
+
+/** Was this fingerprint texted in the last ERROR_SURFACE_REPEAT_SEC, on any deploy? */
+export async function wasErrorFingerprintSurfaced(fingerprint: string): Promise<boolean> {
+  const redis = getRedis();
+  return (await redis.get(keys.dedupe('error-surface-seen', fingerprint))) !== null;
 }
 
 /**

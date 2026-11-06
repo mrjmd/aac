@@ -41,6 +41,18 @@ See `docs/projects/agent-vision.md` for the long-term destination.
   line, listens for the reply, calls back to middleware with the decision.
 - **(Future) Strategic mode / voice-clone / self-reflection runtime** —
   Layer 1/3/4 work.
+- **Error-surface cron** (`api/cron/error-surface.ts`, every 10 min, logic in
+  `lib/error-surface.ts`): texts Matt new `health:errors` entries from the
+  agent line, and checks the worker watchdog's heartbeat. Rules: reads the
+  whole 100-entry list; dedup by (deploy SHA, fingerprint) claimed only
+  after the text went out; a fingerprint's first occurrence texts at any
+  hour, a repeat (texted in the last 7 days) only 8 AM to 9 PM Eastern
+  (held until then); at most 5 error texts per tick, the newest five, plus
+  one "N more errors suppressed (sources)" text; the cursor never passes a
+  failed send or a held repeat (a send still failing 12h on is given up).
+  A tick that delivered everything it owed stamps
+  `cron:error-surface:last-run`; the worker watchdog texts if that goes
+  25 min stale, and this cron texts if the watchdog's heartbeat does.
 
 ## Active rules
 

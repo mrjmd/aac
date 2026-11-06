@@ -1,31 +1,47 @@
 /**
- * Error-surfacing tick — Crawl-phase logic for routing middleware errors
- * to Matt via SMS from the agent comms line.
+ * Error-surfacing tick: texts Matt new `health:errors` entries from the
+ * agent comms line. Logic lives here (testable in isolation) so the cron
+ * handler stays a thin auth + dispatch wrapper. The Walk-phase diagnostic
+ * agent will wrap this same flow with LLM-judged diagnosis + proposed fix.
  *
- * Logic lives here (testable in isolation) so the cron handler stays a
- * thin auth + dispatch wrapper. The Walk-phase diagnostic agent will
- * wrap this same flow with LLM-judged diagnosis + proposed fix.
+ * Cursor: writers LPUSH onto `health:errors` and LTRIM to 100, so an index
+ * would drift; the cursor is the timestamp of the newest entry that is
+ * DONE. Each tick reads the whole list and considers entries newer than it.
+ * The cursor only moves across a contiguous run of done entries (sent,
+ * deduped, or counted in a suppressed line), so a failed send or an
+ * overnight-held repeat is retried next tick, never skipped. Entries after
+ * one that is not done are re-read next tick and dedupe on their claim.
  *
- * Cursor semantics: middleware LPUSHes onto `health:errors` and LTRIMs
- * to 100, so a strictly-monotonic numeric index would drift. Instead we
- * track the timestamp of the most-recently-surfaced entry. On each
- * tick we read the head of the list and forward only entries newer
- * than the cursor (or, on first run, just the head entry — see below).
+ * Rules:
+ * - Dedup by (deploy SHA, fingerprint), claimed only AFTER the text went out.
+ * - A fingerprint's first occurrence texts at any hour; a repeat (texted
+ *   in the last 7 days, any deploy) only 8 AM to 9 PM Eastern, held until then.
+ * - At most 5 error texts per tick, the newest five; the rest become one
+ *   "N more errors suppressed" text naming their sources.
+ * - A send that keeps failing is given up after 12h (logged), well inside
+ *   the 24h claims, so the cursor can't stall into re-texting old entries.
  *
- * First-run policy: on cold boot (no cursor), we DO NOT page-flood Matt
- * with the last 100 errors. We just stamp the latest timestamp as the
- * starting cursor and exit. From the next tick onward, only new errors
- * surface.
+ * First-run policy: on cold boot (no cursor), stamp the newest timestamp as
+ * the cursor and exit (no backlog flood).
+ *
+ * Every tick that delivered what it owed stamps `cron:error-surface:last-run`;
+ * the worker watchdog alerts when that goes stale (25 min).
  */
 
 import { createHash } from 'node:crypto';
 import { createLogger } from '@aac/shared-utils/logger';
+import { easternMinuteOfDay } from '@aac/shared-utils/eastern';
+import { HEALTH_ERRORS_CAP } from '@aac/shared-utils/health';
 import { QuoClient } from '@aac/api-clients/quo';
 import {
   readRecentHealthErrors,
   getCronCursor,
   setCronCursor,
   claimErrorSurfaceNotification,
+  isErrorSurfaceClaimed,
+  markErrorFingerprintSurfaced,
+  wasErrorFingerprintSurfaced,
+  trackCronRun,
   HealthErrorEntry,
 } from './redis.js';
 
@@ -33,8 +49,15 @@ const log = createLogger('agent:error-surface');
 
 const JOB_NAME = 'error-surface';
 
-/** Cap per tick — even if many errors accumulated, don't dump >5 SMS at once. */
-const MAX_SURFACED_PER_TICK = 5;
+/** Cap per tick: at most this many error texts, plus one "N more suppressed" text. */
+export const MAX_SURFACED_PER_TICK = 5;
+
+/** Repeats text only inside this Eastern window [start, end). First occurrences text any hour. */
+export const DAY_START_H = 8;
+export const DAY_END_H = 21;
+
+/** A send still failing this long after the error was logged is given up (cursor may pass it). */
+export const GIVE_UP_AFTER_MS = 12 * 3_600_000;
 
 /**
  * How much of the error message to fold into the dedup fingerprint.
@@ -57,6 +80,12 @@ export interface SurfaceResult {
   skipped_first_run: number;
   skipped_stale: number;
   skipped_deduped: number;
+  /** Repeats held overnight (texted after 8 AM). */
+  held_night: number;
+  /** Over the per-tick cap, reported in one "N more suppressed" text. */
+  suppressed: number;
+  /** Sends that kept failing past GIVE_UP_AFTER_MS, dropped. */
+  given_up: number;
   errors: number;
   newest_timestamp: string | null;
 }
@@ -87,7 +116,29 @@ interface SurfaceDeps {
   recipient: string;
   /** E.164 number to send from (agent comms line). */
   sender: string;
+  now?: Date;
 }
+
+/** 8 AM to 9 PM Eastern. */
+export function isDaytime(at: Date): boolean {
+  const hour = Math.floor(easternMinuteOfDay(at) / 60);
+  return hour >= DAY_START_H && hour < DAY_END_H;
+}
+
+/** One text for everything over the cap: count plus sources, busiest first. */
+export function formatSuppressedSms(entries: HealthErrorEntry[]): string {
+  const counts = new Map<string, number>();
+  for (const e of entries) counts.set(e.source, (counts.get(e.source) ?? 0) + 1);
+  const sources = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([src, n]) => (n > 1 ? `${src} (${n})` : src))
+    .join(', ');
+  const n = entries.length;
+  return `[errors] ${n} more error${n === 1 ? '' : 's'} suppressed (${MAX_SURFACED_PER_TICK}-text cap per run). Sources: ${sources}. Full list: health:errors.`;
+}
+
+type Status = 'sent' | 'deduped' | 'suppressed' | 'held' | 'failed' | 'given-up';
+const DONE: ReadonlySet<Status> = new Set<Status>(['sent', 'deduped', 'suppressed', 'given-up']);
 
 /**
  * Format a single error entry into an SMS body. Kept terse — readable
@@ -105,18 +156,22 @@ export function formatErrorSms(entry: HealthErrorEntry): string {
   return `[${app} error]\nsrc: ${entry.source}\nat: ${ts}\n${msg}${details}`;
 }
 
+/** Never throws: a Redis read failing is treated as "not claimed / not seen" (text rather than swallow). */
+async function safeBool(label: string, fn: () => Promise<boolean>): Promise<boolean> {
+  try {
+    return await fn();
+  } catch (err) {
+    log.warn(`${label} failed; treating as false`, { err: (err as Error).message });
+    return false;
+  }
+}
+
 /**
- * Run one tick of the error-surface job.
- *
- * - Read the head of middleware's health-errors list.
- * - If no cursor exists yet: stamp the cursor at the newest entry and exit
- *   (so we don't dump backlog on first boot).
- * - Otherwise: forward every entry strictly newer than the cursor, up to
- *   MAX_SURFACED_PER_TICK, in chronological order (oldest first), then
- *   advance the cursor to the newest forwarded entry.
+ * Run one tick of the error-surface job (see the file header for the rules).
  */
 export async function runErrorSurfaceTick(deps: SurfaceDeps): Promise<SurfaceResult> {
-  const head = await readRecentHealthErrors(50);
+  const now = deps.now ?? new Date();
+  const head = await readRecentHealthErrors(HEALTH_ERRORS_CAP);
   const cursor = await getCronCursor(JOB_NAME);
 
   const result: SurfaceResult = {
@@ -125,13 +180,24 @@ export async function runErrorSurfaceTick(deps: SurfaceDeps): Promise<SurfaceRes
     skipped_first_run: 0,
     skipped_stale: 0,
     skipped_deduped: 0,
+    held_night: 0,
+    suppressed: 0,
+    given_up: 0,
     errors: 0,
     newest_timestamp: cursor,
   };
 
-  if (head.length === 0) {
-    log.debug('No errors in middleware health stream');
+  const finish = async (): Promise<SurfaceResult> => {
+    // "Work happened" means every text this tick owed went out.
+    if (result.errors === 0) {
+      await trackCronRun(JOB_NAME, { sent: result.surfaced, skipped: result.skipped_deduped + result.held_night, errors: 0 });
+    }
     return result;
+  };
+
+  if (head.length === 0) {
+    log.debug('No errors in the health stream');
+    return finish();
   }
 
   // First run: stamp the latest timestamp, don't forward any backlog.
@@ -140,65 +206,116 @@ export async function runErrorSurfaceTick(deps: SurfaceDeps): Promise<SurfaceRes
     await setCronCursor(JOB_NAME, newest);
     result.skipped_first_run = head.length;
     result.newest_timestamp = newest;
-    log.info('First run — stamped cursor at newest, no backlog surfaced', {
-      newest,
-      backlog: head.length,
-    });
-    return result;
+    log.info('First run — stamped cursor at newest, no backlog surfaced', { newest, backlog: head.length });
+    return finish();
   }
 
-  // New entries are those with timestamp > cursor. head is newest-first,
-  // so reverse to get chronological order for SMS delivery.
-  const newEntries = head.filter((e) => e.timestamp > cursor).reverse();
-  result.skipped_stale = head.length - newEntries.length;
-
-  if (newEntries.length === 0) {
+  // head is newest-first; work oldest-first.
+  const entries = head.filter((e) => e.timestamp > cursor).reverse();
+  result.skipped_stale = head.length - entries.length;
+  if (entries.length === 0) {
     log.debug('No new errors since last tick', { cursor });
-    return result;
+    return finish();
   }
 
-  const toSurface = newEntries.slice(-MAX_SURFACED_PER_TICK);
-  if (toSurface.length < newEntries.length) {
-    log.warn('Capped errors surfaced this tick', {
-      pending: newEntries.length,
-      surfacing: toSurface.length,
-    });
-  }
+  const daytime = isDaytime(now);
+  const status: Array<Status | undefined> = new Array(entries.length);
+  /** In-tick duplicates follow their first entry's outcome. */
+  const dupOf: Array<number | undefined> = new Array(entries.length);
+  const firstByKey = new Map<string, number>();
+  const candidates: number[] = [];
 
-  for (const entry of toSurface) {
+  // 1. Classify: already texted, a repeat held overnight, or a candidate.
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
     const sha = entry.commitSha || 'unknown';
     const fingerprint = errorFingerprint(entry);
-    let claimed: boolean;
-    try {
-      claimed = await claimErrorSurfaceNotification(sha, fingerprint);
-    } catch (err) {
-      // If dedup claim itself fails, fall through and send — better to
-      // double-notify than swallow a real error.
-      log.warn('Dedup claim failed; forwarding anyway', { err: (err as Error).message });
-      claimed = true;
-    }
-
-    if (!claimed) {
-      result.skipped_deduped += 1;
-      // Still advance the cursor past the duplicate so we don't keep
-      // re-checking the same entries every tick.
-      result.newest_timestamp = entry.timestamp;
+    const key = `${sha}:${fingerprint}`;
+    const first = firstByKey.get(key);
+    if (first !== undefined) {
+      dupOf[i] = first;
       continue;
     }
-
-    try {
-      await deps.quo.sendMessage(deps.recipient, formatErrorSms(entry), deps.sender);
-      result.surfaced += 1;
-      result.newest_timestamp = entry.timestamp;
-    } catch (err) {
-      result.errors += 1;
-      log.error('Failed to send error-surface SMS', err as Error, { entry });
+    firstByKey.set(key, i);
+    if (await safeBool('Dedup check', () => isErrorSurfaceClaimed(sha, fingerprint))) {
+      status[i] = 'deduped';
+    } else if (!daytime && (await safeBool('Repeat check', () => wasErrorFingerprintSurfaced(fingerprint)))) {
+      status[i] = 'held';
+    } else {
+      candidates.push(i);
     }
   }
 
-  if (result.newest_timestamp) {
-    await setCronCursor(JOB_NAME, result.newest_timestamp);
+  // 2. Cap: the newest five text; the rest go in one suppressed line.
+  const toSend = candidates.slice(-MAX_SURFACED_PER_TICK);
+  const overCap = candidates.slice(0, Math.max(0, candidates.length - MAX_SURFACED_PER_TICK));
+
+  // 3. Send oldest-first; claim only after the text went out.
+  for (const i of toSend) {
+    const entry = entries[i];
+    const sha = entry.commitSha || 'unknown';
+    const fingerprint = errorFingerprint(entry);
+    try {
+      await deps.quo.sendMessage(deps.recipient, formatErrorSms(entry), deps.sender);
+    } catch (err) {
+      result.errors += 1;
+      status[i] = 'failed';
+      log.error('Failed to send error-surface SMS', err as Error, { entry });
+      continue;
+    }
+    status[i] = 'sent';
+    result.surfaced += 1;
+    try {
+      await claimErrorSurfaceNotification(sha, fingerprint);
+      await markErrorFingerprintSurfaced(fingerprint);
+    } catch (err) {
+      // Sent but unclaimed: the worst case is the same error texting again.
+      log.warn('Dedup claim after send failed', { err: (err as Error).message });
+    }
   }
 
-  return result;
+  // 4. One text for everything over the cap (in-tick duplicates included).
+  if (overCap.length) {
+    const over = new Set(overCap);
+    const covered = entries.filter((_, i) => over.has(i) || (dupOf[i] !== undefined && over.has(dupOf[i]!)));
+    log.warn('Capped errors surfaced this tick', { candidates: candidates.length, suppressed: covered.length });
+    let ok = true;
+    try {
+      await deps.quo.sendMessage(deps.recipient, formatSuppressedSms(covered), deps.sender);
+    } catch (err) {
+      ok = false;
+      result.errors += 1;
+      log.error('Failed to send suppressed-errors SMS', err as Error, { suppressed: covered.length });
+    }
+    for (const i of overCap) status[i] = ok ? 'suppressed' : 'failed';
+  }
+
+  // 5. Resolve duplicates, give up on old failures, count.
+  for (let i = 0; i < entries.length; i++) {
+    if (dupOf[i] !== undefined) {
+      const s = status[dupOf[i]!];
+      status[i] = s === 'sent' ? 'deduped' : s;
+    }
+    if (status[i] === 'failed' && now.getTime() - Date.parse(entries[i].timestamp) > GIVE_UP_AFTER_MS) {
+      status[i] = 'given-up';
+      result.given_up += 1;
+      log.error('Error-surface giving up on an entry whose send keeps failing', undefined, { entry: entries[i] });
+    }
+    if (status[i] === 'deduped') result.skipped_deduped += 1;
+    if (status[i] === 'held') result.held_night += 1;
+    if (status[i] === 'suppressed') result.suppressed += 1;
+  }
+
+  // 6. Advance the cursor across the contiguous done prefix only.
+  let advanced: string | null = null;
+  for (let i = 0; i < entries.length; i++) {
+    if (!DONE.has(status[i]!)) break;
+    advanced = entries[i].timestamp;
+  }
+  if (advanced) {
+    await setCronCursor(JOB_NAME, advanced);
+    result.newest_timestamp = advanced;
+  }
+
+  return finish();
 }
