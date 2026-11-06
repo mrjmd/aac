@@ -33,6 +33,14 @@ Plan: `analysis/02-strategy/stale-quote-followup-plan-2026-10.md`.
 - The extraction (intent, stated timing, needs-reply) is cached per quote by
   the last inbound timestamp; only live runs save it, so a dry run
   re-extracts every thread.
+- Conversation gates are per customer (QBO customer id): SMS, calls and every
+  email address / "Quote N" thread across all their Pending quotes are read
+  once and suspend every one of them (Jill Fairweather, 11/06: an email on
+  #1389's thread did not stop a T1 on #1587). A stated timing on one quote
+  holds its siblings without being copied onto them, and is never replaced
+  by an extraction of an inbound older than when it was recorded (owner
+  hand-sets survive). The awaiting-reply list has one entry per customer.
+  The cadence ladder (touch count, tier) stays per quote.
 - A run past `deadlineMs` stops starting new quotes, saves state, and keeps
   the last full queue and awaiting list (`partial: true`).
 - The draft cap (`MAX_DRAFTS_PER_DAY`, 6) is per Eastern day: touches already

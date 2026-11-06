@@ -28,7 +28,7 @@
  * the 6-month readout.
  */
 import type { QBCustomer, QBEstimate, QBInvoice } from '@aac/api-clients/quickbooks';
-import type { QuoMessage } from '@aac/api-clients/quo';
+import type { QuoCall, QuoMessage } from '@aac/api-clients/quo';
 import type { GmailMessage } from '@aac/api-clients/gmail';
 import { isBotDraft } from '@aac/quoting';
 import { easternDate } from '@aac/shared-utils/eastern';
@@ -108,6 +108,14 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
       !(e.LinkedTxn ?? []).some((t) => t.TxnType === 'Invoice') &&
       !isBotDraft(e),
   );
+  // Conversation gates are per customer, not per quote: one customer can
+  // hold several Pending quotes (Jill Fairweather #1389 + #1587), and an
+  // inbound on any channel suspends all of them. Grouped before the --doc
+  // filter so a one-quote run still reads the whole conversation.
+  const contactOf = (e: QBEstimate): Contact =>
+    customerContact(e, e.CustomerRef?.value ? custById.get(e.CustomerRef.value) : undefined, now);
+  const groups = groupByCustomer(pending.map((e) => ({ e, c: contactOf(e) })));
+  const conversations = new Map<string, Conversation>();
   if (docArg) pending = pending.filter((e) => e.DocNumber === docArg);
   // Freshest first: recent quotes are the ones a nudge can still save, so
   // the daily draft cap goes to them before the deep-cold tail.
@@ -135,6 +143,7 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
   };
   const runlog: RunlogRow[] = [];
   const awaitingHuman: AwaitingHumanEntry[] = [];
+  const awaitingCustomers = new Set<string>();
   // The cap is per Eastern day, not per run: the worker's backstop slot
   // finishes a scan the first slot's time budget cut short, and must only
   // fill what is left of today's cap (11/06: two slots drafted 6 each). A
@@ -152,16 +161,9 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
       break;
     }
     const doc = e.DocNumber ?? e.Id;
-    const cust = e.CustomerRef?.value ? custById.get(e.CustomerRef.value) : undefined;
     const customer = e.CustomerRef?.name ?? 'unknown';
-    const custAny = cust as unknown as {
-      PrimaryPhone?: { FreeFormNumber?: string };
-      BillAddr?: { Line1?: string; City?: string };
-    } | undefined;
-    const phone = quickNormalizePhone(custAny?.PrimaryPhone?.FreeFormNumber);
-    const address = `${custAny?.BillAddr?.Line1 ?? ''} ${custAny?.BillAddr?.City ?? ''}`.trim();
-    const email = e.BillEmail?.Address ?? (cust as unknown as { PrimaryEmailAddr?: { Address?: string } })?.PrimaryEmailAddr?.Address ?? null;
-    const quoteMs = new Date(e.TxnDate ?? e.MetaData?.CreateTime ?? now).getTime();
+    const { phone, address, quoteMs, key: customerKey } = contactOf(e);
+    const group = groups.get(customerKey)!;
     const ageDays = Math.floor((now - quoteMs) / DAY);
     const amount = e.TotalAmt ?? 0;
 
@@ -233,17 +235,20 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
       continue;
     }
 
-    // ── thread + calls
+    // ── the customer's whole conversation (SMS + calls + email), read once
+    // per customer and shared by every Pending quote they hold. Calls and
+    // email count from the customer's oldest Pending quote; the ladder's
+    // touch count stays per quote (analyzeThread from this quote's date).
+    let convo = conversations.get(customerKey);
+    if (!convo) {
+      convo = await readConversation({ quo, gmail, throttle }, group);
+      conversations.set(customerKey, convo);
+    }
     let thread: ThreadFacts = { messages: [], lastInboundAt: null, lastOutboundAt: null, unansweredTouches: 0, touchesSinceQuote: 0 };
     if (phone) {
-      await sleep(throttle);
-      const page = await quo.listMessages({ participantE164: phone, maxResults: 100 }).catch(() => ({ data: [] as QuoMessage[] }));
-      thread = analyzeThread(page.data, quoteMs);
-      await sleep(throttle);
-      const calls = await quo.listCalls({ participantE164: phone, maxResults: 30 }).catch(() => ({ data: [] }));
-      for (const c of calls.data) {
+      thread = analyzeThread(convo.messages, quoteMs);
+      for (const c of convo.calls) {
         const at = new Date(c.createdAt).getTime();
-        if (at <= quoteMs) continue;
         if (c.direction === 'incoming' && (!thread.lastInboundAt || at > thread.lastInboundAt)) thread.lastInboundAt = at;
         if (c.direction === 'outgoing' && (c.duration ?? 0) >= 40 && (!thread.lastOutboundAt || at > thread.lastOutboundAt)) thread.lastOutboundAt = at;
       }
@@ -267,37 +272,24 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
       }
     }
 
-    // ── email read (gate 5 surface b): BillEmail thread + quote-notification replies.
-    // Track BOTH directions: Matt replies to these threads from matt@attackacrack.com,
-    // and an unanswered-customer check that only sees SMS outbound false-positives
-    // (Lisa Martin #1501 showed "awaiting 1d" the day after Matt answered her by email).
-    let emailTail = '';
+    // ── email (gate 5 surface b): every BillEmail/PrimaryEmail and "Quote N"
+    // thread of this customer. Track BOTH directions: Matt replies to these
+    // threads from matt@attackacrack.com, and an unanswered-customer check
+    // that only sees SMS outbound false-positives (Lisa Martin #1501 showed
+    // "awaiting 1d" the day after Matt answered her by email).
     let lastInboundEmailAt: number | null = null;
     let lastOutboundEmailAt: number | null = null;
     let lastInboundEmailSnippet = '';
-    if (email || doc) {
-      const parts: string[] = [];
-      if (email) parts.push(`from:${email}`, `to:${email}`);
-      if (doc) parts.push(`subject:"Quote ${doc}"`);
-      const q = `(${parts.join(' OR ')}) newer_than:180d -in:spam -in:trash`;
-      const msgs = await gmail.listMessages({ query: q, maxResults: 15 }).catch(() => [] as GmailMessage[]);
-      const human = msgs.filter((m) => m.fromAddress && !/quickbooks|intuit/i.test(m.fromAddress));
-      for (const m of human) {
-        const at = new Date(m.at).getTime();
-        if (at <= quoteMs) continue;
-        if (OUR_EMAILS.has(m.fromAddress!.toLowerCase())) {
-          if (!lastOutboundEmailAt || at > lastOutboundEmailAt) lastOutboundEmailAt = at;
-        } else if (!lastInboundEmailAt || at > lastInboundEmailAt) {
-          lastInboundEmailAt = at;
-          lastInboundEmailSnippet = (m.body || m.snippet || m.subject || '').replace(/\s+/g, ' ').slice(0, 200);
-        }
+    for (const m of convo.emails) {
+      const at = new Date(m.at).getTime();
+      if (OUR_EMAILS.has(m.fromAddress!.toLowerCase())) {
+        if (!lastOutboundEmailAt || at > lastOutboundEmailAt) lastOutboundEmailAt = at;
+      } else if (!lastInboundEmailAt || at > lastInboundEmailAt) {
+        lastInboundEmailAt = at;
+        lastInboundEmailSnippet = (m.body || m.snippet || m.subject || '').replace(/\s+/g, ' ').slice(0, 200);
       }
-      emailTail = human
-        .slice(0, 8)
-        .reverse()
-        .map((m) => `[${m.at.slice(0, 10)} ${OUR_EMAILS.has(m.fromAddress!.toLowerCase()) ? 'OUT (us)' : m.fromAddress}] ${m.subject}: ${(m.body || m.snippet).replace(/\s+/g, ' ').slice(0, 400)}`)
-        .join('\n');
     }
+    const emailTail = convo.emailTail;
 
     // ── gate: no channel at all
     if (!phone && !thread.messages.length) {
@@ -319,7 +311,9 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
     const lastIn = Math.max(thread.lastInboundAt ?? 0, lastInboundEmailAt ?? 0) || null;
     const lastOut = Math.max(thread.lastOutboundAt ?? 0, lastOutboundEmailAt ?? 0) || null;
     const pushAwaiting = (): void => {
-      if (!lastIn) return;
+      // one entry per customer: the freshest quote (scanned first) stands for the conversation
+      if (!lastIn || awaitingCustomers.has(customerKey)) return;
+      awaitingCustomers.add(customerKey);
       const viaEmail = Boolean(lastInboundEmailAt && (!thread.lastInboundAt || lastInboundEmailAt > thread.lastInboundAt));
       const lastInSms = [...thread.messages].reverse().find((m) => m.direction !== 'outgoing' && m.text);
       awaitingHuman.push({
@@ -355,7 +349,10 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
       skip('human-only topic');
       continue;
     }
-    if (extraction?.statedTiming) {
+    // A stated timing recorded after this inbound (an owner hand-set, or an
+    // extraction from a later run) is newer evidence: keep it.
+    const timingIsNewer = Boolean(lastIn && st.statedTiming && new Date(st.statedTiming.extractedAt).getTime() >= lastIn);
+    if (extraction?.statedTiming && !timingIsNewer) {
       st.statedTiming = { ...extraction.statedTiming, channel: lastInboundEmailAt && (!thread.lastInboundAt || lastInboundEmailAt > thread.lastInboundAt) ? 'email' : 'sms', extractedAt: new Date(now).toISOString() };
     }
 
@@ -373,10 +370,13 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
     }
     st.suspended = undefined; // survived the suspend gates
 
-    // ── stated-timing override
-    if (st.statedTiming && new Date(st.statedTiming.resumeAt).getTime() > now) {
-      st.suspended = { reason: 'stated-timing', detail: `"${st.statedTiming.evidence.slice(0, 100)}" → resume ${st.statedTiming.resumeAt}`, at: new Date(now).toISOString(), until: st.statedTiming.resumeAt };
-      skip(`stated timing → ${st.statedTiming.resumeAt}`);
+    // ── stated-timing override: this quote's, else the latest one the
+    // customer gave on any of their other Pending quotes (read, never copied)
+    const timing = activeTiming(st, now) ?? siblingTiming(group, e.Id, state.estimates, now);
+    if (timing) {
+      const via = timing.doc === doc ? '' : ` (said on #${timing.doc})`;
+      st.suspended = { reason: 'stated-timing', detail: `"${timing.evidence.slice(0, 100)}" → resume ${timing.resumeAt}${via}`, at: new Date(now).toISOString(), until: timing.resumeAt };
+      skip(`stated timing → ${timing.resumeAt}${via}`);
       continue;
     }
 
@@ -574,6 +574,116 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
   }
 
   return { partial, horizon: horizon.text, queue, awaiting: awaitingHuman, runlog, pendingInScope: pending.length, draftedThisRun: draftsThisRun };
+}
+
+interface Contact {
+  /** QBO customer id, else the phone, else the estimate: whose conversation this is. */
+  key: string;
+  phone: string | null;
+  email: string | null;
+  address: string;
+  quoteMs: number;
+}
+
+interface CustomerGroup {
+  key: string;
+  phone: string | null;
+  emails: Set<string>;
+  docs: Set<string>;
+  estimateIds: string[];
+  /** The oldest Pending quote's date: calls and email count from here. */
+  fromMs: number;
+}
+
+interface Conversation {
+  messages: QuoMessage[];
+  calls: QuoCall[];
+  /** Human (non-QuickBooks) email after fromMs, newest first. */
+  emails: GmailMessage[];
+  emailTail: string;
+}
+
+function customerContact(e: QBEstimate, cust: QBCustomer | undefined, now: number): Contact {
+  const custAny = cust as unknown as {
+    PrimaryPhone?: { FreeFormNumber?: string };
+    BillAddr?: { Line1?: string; City?: string };
+    PrimaryEmailAddr?: { Address?: string };
+  } | undefined;
+  const phone = quickNormalizePhone(custAny?.PrimaryPhone?.FreeFormNumber);
+  return {
+    key: e.CustomerRef?.value ? `c:${e.CustomerRef.value}` : phone ? `p:${phone}` : `e:${e.Id}`,
+    phone,
+    email: e.BillEmail?.Address ?? custAny?.PrimaryEmailAddr?.Address ?? null,
+    address: `${custAny?.BillAddr?.Line1 ?? ''} ${custAny?.BillAddr?.City ?? ''}`.trim(),
+    quoteMs: new Date(e.TxnDate ?? e.MetaData?.CreateTime ?? now).getTime(),
+  };
+}
+
+function groupByCustomer(rows: Array<{ e: QBEstimate; c: Contact }>): Map<string, CustomerGroup> {
+  const groups = new Map<string, CustomerGroup>();
+  for (const { e, c } of rows) {
+    let g = groups.get(c.key);
+    if (!g) {
+      g = { key: c.key, phone: c.phone, emails: new Set(), docs: new Set(), estimateIds: [], fromMs: c.quoteMs };
+      groups.set(c.key, g);
+    }
+    g.phone ??= c.phone;
+    if (c.email) g.emails.add(c.email.toLowerCase());
+    g.docs.add(e.DocNumber ?? e.Id);
+    g.estimateIds.push(e.Id);
+    g.fromMs = Math.min(g.fromMs, c.quoteMs);
+  }
+  return groups;
+}
+
+async function readConversation(
+  io: { quo: StaleQuoteDeps['quo']; gmail: StaleQuoteDeps['gmail']; throttle: number },
+  g: CustomerGroup,
+): Promise<Conversation> {
+  let messages: QuoMessage[] = [];
+  let calls: QuoCall[] = [];
+  if (g.phone) {
+    await sleep(io.throttle);
+    messages = (await io.quo.listMessages({ participantE164: g.phone, maxResults: 100 }).catch(() => ({ data: [] as QuoMessage[] }))).data;
+    await sleep(io.throttle);
+    calls = (await io.quo.listCalls({ participantE164: g.phone, maxResults: 30 }).catch(() => ({ data: [] as QuoCall[] }))).data
+      .filter((c) => new Date(c.createdAt).getTime() > g.fromMs);
+  }
+  const parts: string[] = [];
+  for (const em of g.emails) parts.push(`from:${em}`, `to:${em}`);
+  for (const d of g.docs) parts.push(`subject:"Quote ${d}"`);
+  const q = `(${parts.join(' OR ')}) newer_than:180d -in:spam -in:trash`;
+  const msgs = await io.gmail.listMessages({ query: q, maxResults: 15 }).catch(() => [] as GmailMessage[]);
+  const human = msgs.filter((m) => m.fromAddress && !/quickbooks|intuit/i.test(m.fromAddress));
+  const emails = human.filter((m) => new Date(m.at).getTime() > g.fromMs);
+  const emailTail = human
+    .slice(0, 8)
+    .reverse()
+    .map((m) => `[${m.at.slice(0, 10)} ${OUR_EMAILS.has(m.fromAddress!.toLowerCase()) ? 'OUT (us)' : m.fromAddress}] ${m.subject}: ${(m.body || m.snippet).replace(/\s+/g, ' ').slice(0, 400)}`)
+    .join('\n');
+  return { messages, calls, emails, emailTail };
+}
+
+interface ActiveTiming {
+  resumeAt: string;
+  evidence: string;
+  doc: string;
+}
+
+function activeTiming(st: EstimateState | undefined, now: number): ActiveTiming | null {
+  if (!st?.statedTiming || new Date(st.statedTiming.resumeAt).getTime() <= now) return null;
+  return { resumeAt: st.statedTiming.resumeAt, evidence: st.statedTiming.evidence, doc: st.doc };
+}
+
+/** The latest still-future stated timing on the customer's other Pending quotes. */
+function siblingTiming(g: CustomerGroup, selfId: string, estimates: Record<string, EstimateState>, now: number): ActiveTiming | null {
+  let best: ActiveTiming | null = null;
+  for (const id of g.estimateIds) {
+    if (id === selfId) continue;
+    const t = activeTiming(estimates[id], now);
+    if (t && (!best || t.resumeAt > best.resumeAt)) best = t;
+  }
+  return best;
 }
 
 function variantLabel(st: EstimateState): string {

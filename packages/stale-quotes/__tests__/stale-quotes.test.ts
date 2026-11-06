@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { QBEstimate } from '@aac/api-clients/quickbooks';
 import type { QuoMessage } from '@aac/api-clients/quo';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
+import type { GmailMessage } from '@aac/api-clients/gmail';
 import {
   MemoryStaleQuoteStore,
   analyzeThread,
@@ -10,6 +11,7 @@ import {
   computeBookingHorizon,
   expandEvent,
   runStaleQuotes,
+  type EstimateState,
   type StaleQuoteDeps,
 } from '../src/index.js';
 
@@ -43,11 +45,16 @@ interface Fake {
   store: MemoryStaleQuoteStore;
   notes: string[];
   prompts: string[];
+  /** Phones listMessages was asked for, and the Gmail queries, in order. */
+  smsReads: string[];
+  gmailQueries: string[];
 }
 
 function fake(opts: {
   estimates?: QBEstimate[];
-  messages?: QuoMessage[];
+  messages?: QuoMessage[] | ((phone: string) => QuoMessage[]);
+  customers?: unknown[];
+  emails?: (query: string) => GmailMessage[];
   events?: CalendarEvent[];
   gemini?: (prompt: string) => string;
   now?: () => number;
@@ -55,10 +62,12 @@ function fake(opts: {
   const store = new MemoryStaleQuoteStore();
   const notes: string[] = [];
   const prompts: string[] = [];
+  const smsReads: string[] = [];
+  const gmailQueries: string[] = [];
   const estimates = opts.estimates ?? [estimate()];
   const tables: Record<string, unknown[]> = {
     Estimate: estimates,
-    Customer: [{ Id: 'c1', PrimaryPhone: { FreeFormNumber: '(617) 555-0100' }, BillAddr: { Line1: '12 Elm St', City: 'Quincy' } }],
+    Customer: opts.customers ?? [{ Id: 'c1', PrimaryPhone: { FreeFormNumber: '(617) 555-0100' }, BillAddr: { Line1: '12 Elm St', City: 'Quincy' } }],
     Invoice: [],
   };
   const deps: StaleQuoteDeps = {
@@ -70,7 +79,11 @@ function fake(opts: {
       getEstimate: async (id: string) => estimates.find((e) => e.Id === id) ?? null,
     },
     quo: {
-      listMessages: async () => ({ data: opts.messages ?? [] }),
+      listMessages: async ({ participantE164 }: { participantE164: string }) => {
+        smsReads.push(participantE164);
+        const m = opts.messages;
+        return { data: typeof m === 'function' ? m(participantE164) : (m ?? []) };
+      },
       listCalls: async () => ({ data: [] }),
       findContactByPhone: async () => ({ id: 'q1' }),
       createContactNote: async (_id: string, text: string) => {
@@ -87,14 +100,19 @@ function fake(opts: {
       },
     },
     calendar: { listEvents: async () => opts.events ?? [] },
-    gmail: { listMessages: async () => [] },
+    gmail: {
+      listMessages: async ({ query }: { query: string }) => {
+        gmailQueries.push(query);
+        return opts.emails ? opts.emails(query) : [];
+      },
+    },
     store,
     techEmails: ['mike@attackacrack.com'],
     log: () => {},
     now: opts.now ?? (() => NOW),
     throttleMs: 0,
   };
-  return { deps, store, notes, prompts };
+  return { deps, store, notes, prompts, smsReads, gmailQueries };
 }
 
 describe('classifyService', () => {
@@ -216,10 +234,11 @@ describe('runStaleQuotes', () => {
     it('a run cut short by its deadline leaves the rest of the cap to the backstop slot', async () => {
       let t = NOW;
       const f = fake({ estimates: eight(), now: () => t });
-      // Each estimate's scan costs 1s of clock; the deadline stops the first run after a few.
-      f.deps.quo.listMessages = async () => {
+      // Each draft costs 1s of clock; the deadline stops the first run after a few.
+      const getEstimate = f.deps.qb.getEstimate;
+      f.deps.qb.getEstimate = async (id: string) => {
         t += 1000;
-        return { data: [] };
+        return getEstimate(id);
       };
       const first = await runStaleQuotes(f.deps, { dryRun: false, deadlineMs: NOW + 2500 });
       expect(first.partial).toBe(true);
@@ -318,6 +337,125 @@ describe('runStaleQuotes', () => {
     expect(f.store.queue.generatedAt).toBe('before');
     expect(f.store.awaiting.generatedAt).toBe('before');
     expect(Object.keys(f.store.state.estimates)).toHaveLength(1);
+  });
+});
+
+describe('conversation gates are per customer', () => {
+  // Jill Fairweather (11/06): #1389 (June, BillEmail set) and #1587 (11/03,
+  // no BillEmail), one QBO customer. Her 11/04 email reply suspended #1389
+  // as an active conversation while #1587 got a T1 draft.
+  const jill = { Id: 'c1303', PrimaryPhone: { FreeFormNumber: '(781) 771-9444' } };
+  const pat = { Id: 'c1', PrimaryPhone: { FreeFormNumber: '(617) 555-0100' } };
+  const old1389 = (): QBEstimate =>
+    estimate({ Id: '2389', DocNumber: '1389', TxnDate: '2026-06-09', CustomerRef: { value: 'c1303', name: 'Jill Fairweather' }, BillEmail: { Address: 'jill@example.com' } } as Partial<QBEstimate>);
+  const new1587 = (): QBEstimate =>
+    estimate({ Id: '3771', DocNumber: '1587', TxnDate: '2026-11-01', CustomerRef: { value: 'c1303', name: 'Jill Fairweather' } });
+  const gmailMsg = (from: string, at: number, body: string): GmailMessage =>
+    ({ id: `g${at}`, threadId: 't', at: new Date(at).toISOString(), fromAddress: from, subject: 'Re: 39 Hobart Ln. Quote', body, snippet: body }) as GmailMessage;
+  const signOff = (): string => '{"intent":"engaged","confidence":"high","evidence":null,"statedTiming":null,"humanTopic":false,"needsReply":false}';
+  const draftOr = (extraction: () => string) => (prompt: string): string => {
+    if (prompt.startsWith('Review this outbound SMS')) return '{"ok": true}';
+    if (prompt.includes('statedTiming')) return extraction();
+    return 'Hi Jill, just checking back in.';
+  };
+  const seeded = (over: Partial<EstimateState>): EstimateState => ({
+    estimateId: '3771', doc: '1587', customer: 'Jill Fairweather', phone: '+17817719444', firstSeenAt: '2026-11-03T12:00:00.000Z',
+    seasonClass: 'injection', largeResurf: false, variant: { t1Days: 2, t2Days: 10 }, touches: [], ...over,
+  });
+
+  it("an inbound email on one quote's thread suspends every Pending quote of that customer", async () => {
+    const f = fake({
+      estimates: [old1389(), new1587()],
+      customers: [jill],
+      // Gmail finds her reply only when the query carries her address.
+      emails: (q) => (q.includes('from:jill@example.com') ? [gmailMsg('jill@example.com', NOW - DAY, 'Thanks, taking it to the board.')] : []),
+      gemini: draftOr(signOff),
+    });
+    const r = await runStaleQuotes(f.deps, { dryRun: false });
+    expect(r.queue.toSend).toHaveLength(0);
+    expect(f.notes).toHaveLength(0);
+    expect(r.queue.skipped.map((s) => [s.doc, s.reason])).toEqual([
+      ['1587', 'active conversation (inbound 2026-11-03)'],
+      ['1389', 'active conversation (inbound 2026-11-03)'],
+    ]);
+    // One read of the conversation for the customer, covering both quotes.
+    expect(f.smsReads).toEqual(['+17817719444']);
+    expect(f.gmailQueries).toHaveLength(1);
+    expect(f.gmailQueries[0]).toContain('subject:"Quote 1389"');
+    expect(f.gmailQueries[0]).toContain('subject:"Quote 1587"');
+  });
+
+  it('a one-quote run still reads the whole customer conversation', async () => {
+    const f = fake({
+      estimates: [old1389(), new1587()],
+      customers: [jill],
+      emails: (q) => (q.includes('from:jill@example.com') ? [gmailMsg('jill@example.com', NOW - DAY, 'Thanks!')] : []),
+      gemini: draftOr(signOff),
+    });
+    const r = await runStaleQuotes(f.deps, { dryRun: true, doc: '1587' });
+    expect(r.queue.toSend).toHaveLength(0);
+    expect(r.queue.skipped[0]).toMatchObject({ doc: '1587', reason: 'active conversation (inbound 2026-11-03)' });
+  });
+
+  it("another customer's conversation never suspends a quote", async () => {
+    const f = fake({
+      estimates: [old1389(), estimate()],
+      customers: [jill, pat],
+      messages: (phone) => (phone === '+17817719444' ? [msg('incoming', NOW - DAY, 'Thanks!')] : []),
+      gemini: draftOr(signOff),
+    });
+    const r = await runStaleQuotes(f.deps, { dryRun: true });
+    expect(r.queue.toSend.map((d) => d.doc)).toEqual(['1600']);
+  });
+
+  it("a sibling quote's stated timing holds the other quotes, without copying it onto them", async () => {
+    const f = fake({ estimates: [old1389(), new1587()], customers: [jill], gemini: draftOr(signOff) });
+    const handSet = {
+      resumeAt: '2026-11-20',
+      evidence: 'Owner 11/06: Jill is taking it to the condo board',
+      channel: 'sms',
+      extractedAt: new Date(NOW - 3_600_000).toISOString(),
+    };
+    f.store.state.estimates['3771'] = seeded({
+      statedTiming: handSet,
+      suspended: { reason: 'stated-timing', detail: 'board review → resume 2026-11-20 (owner, 11/06)', at: handSet.extractedAt, until: '2026-11-20' },
+    });
+    const r = await runStaleQuotes(f.deps, { dryRun: false });
+    expect(r.queue.toSend).toHaveLength(0);
+    expect(r.queue.skipped.find((s) => s.doc === '1389')?.reason).toBe('stated timing → 2026-11-20 (said on #1587)');
+    expect(f.store.state.estimates['2389'].statedTiming).toBeUndefined();
+    expect(f.store.state.estimates['2389'].suspended).toMatchObject({ reason: 'stated-timing', until: '2026-11-20' });
+    expect(f.store.state.estimates['3771'].statedTiming).toEqual(handSet);
+    expect(f.store.state.estimates['3771'].suspended).toMatchObject({ reason: 'stated-timing', until: '2026-11-20' });
+  });
+
+  it('a stated timing recorded after the inbound is not overwritten by extracting that inbound', async () => {
+    const timingOf = (resumeAt: string) => (): string =>
+      `{"intent":"engaged","confidence":"high","evidence":null,"statedTiming":{"resumeAt":"${resumeAt}","evidence":"after the holidays"},"humanTopic":false,"needsReply":false}`;
+    const handSet = { resumeAt: '2026-11-20', evidence: 'Owner 11/06: board review', channel: 'sms', extractedAt: new Date(NOW - 3_600_000).toISOString() };
+    // Inbound older than the hand-set: kept.
+    const older = fake({ estimates: [new1587()], customers: [jill], messages: [msg('incoming', NOW - DAY, 'board meets soon')], gemini: draftOr(timingOf('2027-01-05')) });
+    older.store.state.estimates['3771'] = seeded({ statedTiming: handSet });
+    await runStaleQuotes(older.deps, { dryRun: false });
+    expect(older.store.state.estimates['3771'].statedTiming).toEqual(handSet);
+    // A newer inbound is new evidence: replaced.
+    const newer = fake({ estimates: [new1587()], customers: [jill], messages: [msg('incoming', NOW - 60_000, 'after the holidays')], gemini: draftOr(timingOf('2027-01-05')) });
+    newer.store.state.estimates['3771'] = seeded({ statedTiming: handSet });
+    await runStaleQuotes(newer.deps, { dryRun: false });
+    expect(newer.store.state.estimates['3771'].statedTiming?.resumeAt).toBe('2027-01-05');
+  });
+
+  it('lists a customer awaiting a reply once, under their freshest quote', async () => {
+    const f = fake({
+      estimates: [old1389(), new1587()],
+      customers: [jill],
+      messages: [msg('outgoing', NOW - 5 * DAY), msg('incoming', NOW - DAY, 'Can you come Tuesday?')],
+      gemini: draftOr(() => '{"intent":"engaged","confidence":"high","evidence":null,"statedTiming":null,"humanTopic":false,"needsReply":true}'),
+    });
+    const r = await runStaleQuotes(f.deps, { dryRun: false });
+    expect(r.awaiting.map((a) => a.doc)).toEqual(['1587']);
+    expect(f.store.state.estimates['2389'].suspended?.reason).toBe('awaiting-human');
+    expect(f.store.state.estimates['3771'].suspended?.reason).toBe('awaiting-human');
   });
 });
 
