@@ -3,7 +3,15 @@ export * from './store.js';
 export * from './address.js';
 export * from './identity.js';
 export { collect, cleanEmailBody, type CollectDeps, type TriageGmail } from './collect.js';
-export { analyze, type AnalyzeDeps, type TriageGemini } from './analyze.js';
+export {
+  analyze,
+  VERDICT_CACHE_SALT,
+  VERDICT_PROMPT_TEMPLATE,
+  verdictCacheSalt,
+  verdictHash,
+  type AnalyzeDeps,
+  type TriageGemini,
+} from './analyze.js';
 export {
   botDraftRows,
   loadAwaiting,

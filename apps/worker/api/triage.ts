@@ -88,6 +88,7 @@ async function handle(request: Request): Promise<Response> {
       byDetector: countBy(r.candidates, (c) => c.detector),
       published: live,
       llmErrors: stats.llmErrors ?? 0,
+      llmCacheHits: stats.llmCacheHits ?? 0,
       emailSweepOk: stats.emailSweepOk ?? 0,
       geminiCanaryOk: stats.geminiCanaryOk ?? 0,
     };

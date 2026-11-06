@@ -11,6 +11,7 @@
  * docs/projects/triage-dashboard.md. All thresholds are constants below.
  */
 
+import { createHash } from 'node:crypto';
 import { GeminiClient, parseJsonObject } from '@aac/api-clients/gemini';
 import {
   EVENT_CLASS_COLOR_IDS as COLORS,
@@ -28,7 +29,7 @@ import {
   tokensAlike,
   type Xref,
 } from './identity.js';
-import type { TriageStore } from './store.js';
+import type { TriageStore, VerdictCacheId } from './store.js';
 import type { EmailThreadSnapshot, Finding, FindingsFile, Section, Snapshot, ThreadSnapshot } from './types.js';
 
 // ── thresholds ───────────────────────────────────────────────────────
@@ -55,7 +56,7 @@ export interface AnalyzeDeps {
   geminiApiKey: string;
   /** Defaults to `new GeminiClient(opts)`, exactly like prod middleware; tests and the replay proof swap it. */
   createGemini?: (opts: { apiKey: string }) => TriageGemini;
-  store: Pick<TriageStore, 'getTranscript' | 'loadDismissals'>;
+  store: Pick<TriageStore, 'getTranscript' | 'loadDismissals' | 'getVerdict' | 'setVerdict'>;
   /** Our business line (QUO_PHONE_NUMBER), E.164; '' when unset. */
   quoPhoneNumber: string;
   /** Both addresses count as "Mike is assigned" (attackacrack = new events,
@@ -195,6 +196,113 @@ function parseVerdict(raw: string): LlmVerdict | null {
   } catch {
     return null;
   }
+}
+
+// ── L1/L2 verdict prompt + per-thread cache (plan decision 2) ─────────
+
+interface VerdictPromptContext {
+  /** UTC date of the run, YYYY-MM-DD. */
+  today: string;
+  /** The run's Eastern wall clock, e.g. "Thursday, Nov 5, 2026, 8:05 AM". */
+  nowEastern: string;
+  calendar: string;
+  estimates: string;
+}
+
+/** The L1/L2 system prompt. Its text with the context blanked is part of every cache key. */
+const verdictSystemPrompt = (p: VerdictPromptContext): string =>
+  `You triage SMS/call/email threads for Attack A Crack, a foundation-repair company in Quincy MA. Matt is the owner. In threads, OUT messages and transcript lines starting "M:" are Matt; IN and "C:" are the other party. Today is ${p.today} (now: ${p.nowEastern} Eastern).
+
+Below is the company Google Calendar (past 14 days + next 60 days). Event kinds: JOB = booked paid work, ASSESS = assessment visit, CALLBACK = warranty rework.
+
+CALENDAR:
+${p.calendar}
+
+Below are the QBO estimates (quotes) created or updated in the last 60 days — this is the record of quotes actually sent.
+
+ESTIMATES:
+${p.estimates}
+
+For the thread you are given, decide if it contains a genuinely actionable gap:
+- "booked_gap": Matt told this person a visit/job is (or will be) scheduled, and NO calendar event above plausibly matches them (check names, addresses, dates carefully). This is the worst miss — a customer who thinks they're booked.
+- "quote_promised": Matt told this person he would send a quote/estimate/price, and NO estimate above plausibly matches them dated or updated on-or-after the promise. This is lost deal flow — flag it even if the customer hasn't nudged. If a matching estimate exists, it is NOT quote_promised.
+- "deal_closer": the customer approved a quote, asked to schedule, or asked a question that blocks a sale — and the ball is in Matt's court.
+- "unresolved": the customer awaits a reply, or Matt promised a non-quote follow-up that hasn't visibly happened.
+- "solicitation": the OTHER party is selling TO Matt — lead-gen or marketing services, "do you need more work / more jobs / more customers?", SEO, advertising, recruiting, bulk or robo texts. A real customer talks about THEIR property or problem; a solicitor talks about Matt's business volume. Set needs_action false.
+- "none": nothing pending on our side (vendors we already work with, personal threads, or threads where Matt's last message settles everything).
+
+Be conservative: a real gap only. If a matching calendar event exists, it is NOT a booked_gap. Respond with ONLY a JSON object:
+{"needs_action": boolean, "category": "booked_gap"|"quote_promised"|"deal_closer"|"unresolved"|"solicitation"|"none", "customer_name": string|null, "title": "short label", "summary": "1-2 sentences", "evidence": "short verbatim quote from the thread", "suggested_action": "imperative, short", "urgency": "red"|"yellow"|"info", "confidence": "high"|"medium"|"low", "due_at": "YYYY-MM-DDTHH:MM"|null}
+
+due_at: only when the thread pins the open action to a specific time: Matt promised one ("I'll call you at 2", "I'll call tomorrow morning", "I'll have the quote to you Friday") or the customer asked for one ("can you call me at 2pm today?"). Resolve it to an Eastern-time date and time using the message's date ("tomorrow morning" = 09:00 the next day, "end of day" = 17:00, a day with no time = 09:00 that day). No specific time in the thread = null. Never invent one from urgency.`;
+
+/** Generation params that shape a verdict (retries don't, so they stay out). */
+const VERDICT_GEN = {
+  // 3.6-flash counts internal reasoning against this budget —
+  // 1024 truncated ~20% of responses mid-JSON.
+  maxOutputTokens: 8192,
+  temperature: 0,
+} as const;
+
+/**
+ * Everything run-independent that shapes a verdict: the cache version (bump
+ * it to drop every cached verdict on purpose), the model, the generation
+ * params and the prompt template with its run context blanked out.
+ */
+export function verdictCacheSalt(parts: { version: string; model: string; gen: object; template: string }): string {
+  return JSON.stringify([parts.version, parts.model, parts.gen, parts.template]);
+}
+
+/** The blanked template (exported so a test can simulate an edit to it). */
+export const VERDICT_PROMPT_TEMPLATE = verdictSystemPrompt({
+  today: '{TODAY}',
+  nowEastern: '{NOW}',
+  calendar: '{CALENDAR}',
+  estimates: '{ESTIMATES}',
+});
+
+/**
+ * The model is the GeminiClient default (the -latest alias analyze builds
+ * it with); an alias re-point isn't visible here, so the 7-day TTL bounds
+ * how long old-model verdicts live.
+ */
+export const VERDICT_CACHE_SALT = verdictCacheSalt({
+  version: 'triage-verdict-v1',
+  model: 'gemini-flash-latest',
+  gen: VERDICT_GEN,
+  template: VERDICT_PROMPT_TEMPLATE,
+});
+
+/**
+ * A thread's cache hash: the salt + its last activity + the exact user
+ * prompt (every message, call, voicemail and transcript excerpt it shows
+ * the model). Any new activity, prompt edit or param change misses.
+ *
+ * The calendar, estimates and today's date are deliberately NOT in it: they
+ * change every run, so keying on them would never hit. That is why
+ * CONTEXT_DEPENDENT verdicts are always re-asked.
+ */
+export function verdictHash(userPrompt: string, lastActivityAt: string, salt: string = VERDICT_CACHE_SALT): string {
+  return createHash('sha256')
+    .update(salt)
+    .update('\u0000')
+    .update(lastActivityAt)
+    .update('\u0000')
+    .update(userPrompt)
+    .digest('hex')
+    .slice(0, 24);
+}
+
+/**
+ * Categories the prompt decides against the CALENDAR and ESTIMATES
+ * sections (a booking or a sent quote can resolve them with no new thread
+ * activity). A cached one is re-asked every run; everything else is reused.
+ */
+const CONTEXT_DEPENDENT: ReadonlySet<string> = new Set(['booked_gap', 'quote_promised']);
+
+function validVerdict(v: unknown): v is LlmVerdict {
+  const o = v as Partial<LlmVerdict> | null;
+  return !!o && typeof o.needs_action === 'boolean' && !!o.category;
 }
 
 // ── analyze ──────────────────────────────────────────────────────────
@@ -952,40 +1060,15 @@ export async function analyze(snapshot: Snapshot, deps: AnalyzeDeps): Promise<Fi
     .join('\n');
 
   const nowEastern = new Date(now).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'long', year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  const systemPrompt = `You triage SMS/call/email threads for Attack A Crack, a foundation-repair company in Quincy MA. Matt is the owner. In threads, OUT messages and transcript lines starting "M:" are Matt; IN and "C:" are the other party. Today is ${nowIso.slice(0, 10)} (now: ${nowEastern} Eastern).
-
-Below is the company Google Calendar (past 14 days + next 60 days). Event kinds: JOB = booked paid work, ASSESS = assessment visit, CALLBACK = warranty rework.
-
-CALENDAR:
-${calendarContext}
-
-Below are the QBO estimates (quotes) created or updated in the last 60 days — this is the record of quotes actually sent.
-
-ESTIMATES:
-${estimateContext}
-
-For the thread you are given, decide if it contains a genuinely actionable gap:
-- "booked_gap": Matt told this person a visit/job is (or will be) scheduled, and NO calendar event above plausibly matches them (check names, addresses, dates carefully). This is the worst miss — a customer who thinks they're booked.
-- "quote_promised": Matt told this person he would send a quote/estimate/price, and NO estimate above plausibly matches them dated or updated on-or-after the promise. This is lost deal flow — flag it even if the customer hasn't nudged. If a matching estimate exists, it is NOT quote_promised.
-- "deal_closer": the customer approved a quote, asked to schedule, or asked a question that blocks a sale — and the ball is in Matt's court.
-- "unresolved": the customer awaits a reply, or Matt promised a non-quote follow-up that hasn't visibly happened.
-- "solicitation": the OTHER party is selling TO Matt — lead-gen or marketing services, "do you need more work / more jobs / more customers?", SEO, advertising, recruiting, bulk or robo texts. A real customer talks about THEIR property or problem; a solicitor talks about Matt's business volume. Set needs_action false.
-- "none": nothing pending on our side (vendors we already work with, personal threads, or threads where Matt's last message settles everything).
-
-Be conservative: a real gap only. If a matching calendar event exists, it is NOT a booked_gap. Respond with ONLY a JSON object:
-{"needs_action": boolean, "category": "booked_gap"|"quote_promised"|"deal_closer"|"unresolved"|"solicitation"|"none", "customer_name": string|null, "title": "short label", "summary": "1-2 sentences", "evidence": "short verbatim quote from the thread", "suggested_action": "imperative, short", "urgency": "red"|"yellow"|"info", "confidence": "high"|"medium"|"low", "due_at": "YYYY-MM-DDTHH:MM"|null}
-
-due_at: only when the thread pins the open action to a specific time: Matt promised one ("I'll call you at 2", "I'll call tomorrow morning", "I'll have the quote to you Friday") or the customer asked for one ("can you call me at 2pm today?"). Resolve it to an Eastern-time date and time using the message's date ("tomorrow morning" = 09:00 the next day, "end of day" = 17:00, a day with no time = 09:00 that day). No specific time in the thread = null. Never invent one from urgency.`;
+  const systemPrompt = verdictSystemPrompt({ today: nowIso.slice(0, 10), nowEastern, calendar: calendarContext, estimates: estimateContext });
 
   let llmErrors = 0;
-  const askVerdict = async (label: string, userPrompt: string): Promise<LlmVerdict | null> => {
+  const askGemini = async (label: string, userPrompt: string): Promise<LlmVerdict | null> => {
     try {
       const raw = await gemini.generateContent(userPrompt, {
         systemPrompt,
-        temperature: 0,
-        // 3.6-flash counts internal reasoning against this budget —
-        // 1024 truncated ~20% of responses mid-JSON.
-        maxOutputTokens: 8192,
+        temperature: VERDICT_GEN.temperature,
+        maxOutputTokens: VERDICT_GEN.maxOutputTokens,
         retries: 2,
       });
       const v = parseVerdict(raw);
@@ -1001,6 +1084,38 @@ due_at: only when the thread pins the open action to a specific time: Matt promi
     }
   };
 
+  // Per-thread verdict cache: reuse a verdict while the thread is unchanged;
+  // write each fresh one the moment it returns, so a run cut short still
+  // warms the next. Errors and parse failures are never cached; a cache
+  // read or write failure only costs a Gemini call.
+  let llmCacheHits = 0;
+  const askVerdict = async (
+    label: string,
+    thread: Omit<VerdictCacheId, 'hash'>,
+    lastActivityAt: string,
+    userPrompt: string,
+  ): Promise<LlmVerdict | null> => {
+    const id: VerdictCacheId = { ...thread, hash: verdictHash(userPrompt, lastActivityAt) };
+    try {
+      const hit = await store.getVerdict(id);
+      if (hit && validVerdict(hit.verdict) && !CONTEXT_DEPENDENT.has(hit.verdict.category)) {
+        llmCacheHits++;
+        return hit.verdict;
+      }
+    } catch (err) {
+      log(`  ! verdict cache read failed ${label}: ${(err as Error).message.slice(0, 120)}`);
+    }
+    const v = await askGemini(label, userPrompt);
+    if (v) {
+      try {
+        await store.setVerdict(id, { verdict: { ...v }, at: nowIso });
+      } catch (err) {
+        log(`  ! verdict cache write failed ${label}: ${(err as Error).message.slice(0, 120)}`);
+      }
+    }
+    return v;
+  };
+
   const candidates = snapshot.threads.filter((t) => t.messages.length > 0 || t.calls.length > 0);
   stats.llmThreads = candidates.length;
   const verdicts = new Map<string, LlmVerdict>();
@@ -1011,7 +1126,7 @@ due_at: only when the thread pins the open action to a specific time: Matt promi
       batch.map(async (t) => {
         const digest = await threadDigest(t, store, ourDigits);
         if (!digest.trim()) return;
-        const v = await askVerdict(t.phone, `THREAD with ${t.phone}:\n${digest}`);
+        const v = await askVerdict(t.phone, { channel: 'sms', threadId: t.phone }, t.lastActivityAt, `THREAD with ${t.phone}:\n${digest}`);
         if (v) verdicts.set(t.phone, v);
       }),
     );
@@ -1120,10 +1235,16 @@ due_at: only when the thread pins the open action to a specific time: Matt promi
     const batch = emailThreads.slice(i, i + LLM_CONCURRENCY);
     await Promise.all(
       batch.map(async (t) => {
-        const v = await askVerdict(`email:${t.threadId}`, `EMAIL THREAD:\n${emailDigest(t)}`);
+        const v = await askVerdict(
+          `email:${t.threadId}`,
+          { channel: 'email', threadId: t.threadId },
+          t.lastActivityAt,
+          `EMAIL THREAD:\n${emailDigest(t)}`,
+        );
         if (v) emailVerdicts.set(t.threadId, v);
       }),
     );
+    if (i % 20 === 0) log(`  LLM email ${Math.min(i + LLM_CONCURRENCY, emailThreads.length)}/${emailThreads.length}`);
   }
 
   for (const t of emailThreads) {
@@ -1186,6 +1307,7 @@ due_at: only when the thread pins the open action to a specific time: Matt promi
     }
   }
   stats.llmErrors = llmErrors;
+  stats.llmCacheHits = llmCacheHits;
 
   // ── D15: cloud-worker message drafts + heartbeats ───────────────────
   // The aac-worker-monorepo crons post AI drafts as Quo contact notes

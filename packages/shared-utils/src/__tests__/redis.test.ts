@@ -144,6 +144,12 @@ describe('keys', () => {
       expect(keys.triageVoicemail('AC123')).toBe('triage:voicemail:AC123');
     });
 
+    it('builds the per-thread verdict cache key, with a 7-day TTL', () => {
+      expect(keys.triageVerdict('sms', '+16175550123', 'abc123')).toBe('triage:verdict:sms:+16175550123:abc123');
+      expect(keys.triageVerdict('email', '18f00aa', 'abc123')).toBe('triage:verdict:email:18f00aa:abc123');
+      expect(ttl.triageVerdict).toBe(604_800);
+    });
+
     it('exposes the static triage keys', () => {
       expect(keys.triageDismissals).toBe('triage:dismissals');
       expect(keys.triageMode).toBe('triage:mode');

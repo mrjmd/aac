@@ -492,6 +492,15 @@ export const keys = {
   triageLastRun: 'triage:last-run' as const,
   /** NX lock so overlapping triage runs never run twice. */
   triageRunLock: 'triage:run-lock' as const,
+  /**
+   * STRING: JSON {verdict, at} — one cached L1 (sms) / L2 (email) Gemini
+   * verdict. `hash` covers the thread's prompt (every message, call,
+   * voicemail and transcript excerpt), the prompt template, model and
+   * generation params, so new activity or a prompt change misses. TTL
+   * ttl.triageVerdict.
+   */
+  triageVerdict: (channel: 'sms' | 'email', threadId: string, hash: string) =>
+    `triage:verdict:${channel}:${threadId}:${hash}` as const,
 } as const;
 
 /**
@@ -518,4 +527,5 @@ export const ttl = {
   agentProposal: 86_400,     // 24h — Matt either responds same day or we move on
   schedulingProposalDecision: 2_592_000, // 30d — kept for command-center retro view
   inboundRead: 2_592_000,   // 30d — a later burst reuses photo reads from the earlier one
+  triageVerdict: 604_800,   // 7d — bounds how long a verdict outlives calendar/estimate changes
 } as const;

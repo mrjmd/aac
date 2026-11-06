@@ -100,6 +100,7 @@ describe('triage endpoint', () => {
       candidates: 2,
       byDetector: { L1: 1, D5: 1 },
       published: false,
+      llmCacheHits: 0,
     });
     expect(publishTriageItems).not.toHaveBeenCalled();
     expect(kv.get('triage:last-run')).toMatchObject({ mode: 'dry', candidates: 2 });

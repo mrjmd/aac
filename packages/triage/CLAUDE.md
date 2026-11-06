@@ -21,7 +21,8 @@ Plan: `docs/plans/triage-to-worker.md` (cleanup step 3b).
   phones, emails, names; addresses attach only).
 - `address.ts`: triage's token address match (`addrKey`/`addrsAlike`),
   built on `@aac/customers` name tokens.
-- `store.ts`: `TriageStore` (transcript + voicemail cache, dismissals);
+- `store.ts`: `TriageStore` (transcript + voicemail cache, dismissals,
+  verdict cache);
   `RedisTriageStore` and `MemoryTriageStore` (tests, proofs, dry runs).
 
 ## Callers
@@ -50,6 +51,16 @@ Plan: `docs/plans/triage-to-worker.md` (cleanup step 3b).
 - `triage:transcript:{callId}` / `triage:voicemail:{callId}`: the cached
   Quo call transcript / voicemail (`transcript: null` = rang out). No TTL;
   a call is fetched once ever.
+- `triage:verdict:{sms|email}:{threadId}:{hash}`: the per-thread L1/L2
+  Gemini verdict cache (plan decision 2), 7-day TTL, shared by the worker and
+  manual runs. `hash` = `verdictHash(userPrompt, lastActivityAt)`: the
+  thread's full prompt + last activity + `VERDICT_CACHE_SALT` (version,
+  model, generation params, the system-prompt template with its run context
+  blanked). New activity or a prompt/model/param edit misses; bump the salt
+  version to drop all. The calendar, estimates and date are NOT keyed (they
+  change every run), so cached `booked_gap` / `quote_promised` verdicts are
+  always re-asked. Errors and parse failures are never cached; fresh
+  verdicts are written as they return. `stats.llmCacheHits` counts reuse.
 - `triage:dismissals`: the owner's suppression rules, `{ match, sections?,
   reason?, addedAt?, until? }`. Edit with dismiss.ts, never raw.
 - `triage:mode`, `triage:last-run`, `triage:run-lock`: the worker cron's
