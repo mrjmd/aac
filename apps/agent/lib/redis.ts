@@ -10,6 +10,7 @@
 import { Redis } from '@upstash/redis';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { createLogger } from '@aac/shared-utils/logger';
+import * as health from '@aac/shared-utils/health';
 import type { StoredProposal } from '@aac/scheduling';
 import { getEnv } from './env.js';
 import type { AgentRole } from './roles.js';
@@ -32,8 +33,7 @@ export function getRedis(): Redis {
 // ── Health ──────────────────────────────────────────────────────────
 
 export async function writeHeartbeat(): Promise<void> {
-  const redis = getRedis();
-  await redis.set(keys.heartbeat('agent'), new Date().toISOString());
+  await health.writeHeartbeat(getRedis(), 'agent');
 }
 
 // ── Cron cursors ────────────────────────────────────────────────────

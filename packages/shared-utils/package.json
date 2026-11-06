@@ -12,6 +12,7 @@
     "./calendar": "./dist/calendar.js",
     "./eastern": "./dist/eastern.js",
     "./redis": "./dist/redis.js",
+    "./health": "./dist/health.js",
     "./qbo-tokens": "./dist/qbo-tokens.js",
     "./logger": "./dist/logger.js",
     "./types": "./dist/types.js",

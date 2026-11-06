@@ -9,6 +9,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
 import { keys } from '@aac/shared-utils/redis';
+import { writeHeartbeat } from '@aac/shared-utils/health';
 import { getRedis } from '../lib/redis.js';
 
 const log = createLogger('health');
@@ -185,7 +186,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     // Write heartbeat
-    await redis.set(keys.heartbeat('middleware'), new Date().toISOString());
+    await writeHeartbeat(redis, 'middleware');
 
     return res.status(200).json({
       status: 'healthy',

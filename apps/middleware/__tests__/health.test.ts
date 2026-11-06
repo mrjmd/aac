@@ -12,6 +12,7 @@ vi.mock('../lib/redis.js', () => ({
 }));
 
 import handler from '../api/health.js';
+import { logHealthError, trackWebhookProcessed, type HealthRedis } from '@aac/shared-utils/health';
 
 function makeReq(method = 'GET') {
   return { method } as any;
@@ -82,6 +83,62 @@ describe('health endpoint', () => {
       (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('middleware')
     );
     expect(heartbeatCall).toBeDefined();
+  });
+
+  it('reads back what the shared health writers store (key + value-shape contract the command center depends on)', async () => {
+    const strings = new Map<string, string>();
+    const list: string[] = [];
+    const writer: HealthRedis = {
+      set: async (key, value) => {
+        strings.set(key, value);
+        return 'OK';
+      },
+      incr: async (key) => {
+        const n = Number(strings.get(key) ?? 0) + 1;
+        strings.set(key, String(n));
+        return n;
+      },
+      expire: async () => 1,
+      lpush: async (_key, ...els) => list.unshift(...els),
+      ltrim: async () => 'OK',
+    };
+    await trackWebhookProcessed(writer, 'quo');
+    await trackWebhookProcessed(writer, 'quo');
+    await trackWebhookProcessed(writer, 'google-ads');
+    await logHealthError(writer, 'worker:sweep', 'sweep failed', { route: '/api/sweep' });
+
+    // Upstash auto-deserializes: counts come back as numbers, list entries as objects.
+    const parse = (v: string): unknown => {
+      try {
+        return JSON.parse(v);
+      } catch {
+        return v;
+      }
+    };
+    mockRedis.get.mockImplementation(async (key: string) => (strings.has(key) ? parse(strings.get(key)!) : null));
+    mockRedis.lrange.mockImplementation(async () => list.map(parse));
+
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const body = res.json.mock.calls[0][0];
+    expect(body.metrics.webhooks.quo).toEqual({ processed24h: 2, lastProcessed: strings.get('webhooks:quo:last') });
+    expect(body.metrics.webhooks.googleAds.processed24h).toBe(1);
+    expect(body.metrics.webhooks.pipedrive).toEqual({ processed24h: 0, lastProcessed: null });
+    expect(body.metrics.errors).toHaveLength(1);
+    expect(body.metrics.errors[0]).toMatchObject({
+      source: 'worker:sweep',
+      message: 'sweep failed',
+      details: { route: '/api/sweep' },
+    });
+    expect(Number.isNaN(Date.parse(body.metrics.errors[0].timestamp))).toBe(false);
+  });
+
+  it('writes the heartbeat to health:middleware:ts', async () => {
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(mockRedis.set).toHaveBeenCalledWith('health:middleware:ts', expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
   });
 
   it('handles Redis failure gracefully', async () => {

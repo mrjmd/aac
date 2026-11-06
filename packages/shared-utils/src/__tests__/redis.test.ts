@@ -28,6 +28,12 @@ describe('keys', () => {
     it('builds the cron action marker key (same string markCronAction always wrote)', () => {
       expect(keys.cronAction('reminder', 'evt-123')).toBe('cron:reminder:evt-123');
     });
+
+    it('builds the cron last-run and daily result keys (same strings trackCronRun always wrote)', () => {
+      expect(keys.cronLastRun('qb-reconcile')).toBe('cron:qb-reconcile:last-run');
+      expect(keys.cronResult('qb-reconcile', '2026-11-05')).toBe('cron:qb-reconcile:2026-11-05:result');
+      expect(ttl.cronResult).toBe(2_592_000);
+    });
   });
 
   describe('deduplication', () => {

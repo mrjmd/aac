@@ -304,8 +304,11 @@ export const keys = {
   /** LIST (newest first, capped): Matt's drags and verbs with each item's rank features at that moment. Training data for the Today ranking. */
   itemRankLog: 'cc:items:rank-log' as const,
 
-  /** ISO time a middleware cron last ran. Written by middleware's trackCronRun (same string); read by the watchdog. */
+  /** ISO time a cron last ran. Written by trackCronRun (@aac/shared-utils/health); the watchdog reads the middleware jobs. */
   cronLastRun: (job: string) => `cron:${job}:last-run` as const,
+
+  /** JSON {sent, skipped, errors} of a cron's run on a UTC day (YYYY-MM-DD). Written by trackCronRun, TTL ttl.cronResult. */
+  cronResult: (job: string, date: string) => `cron:${job}:${date}:result` as const,
 
   /**
    * SET NX marker for a once-per-entity cron action (e.g. the reminder text
@@ -484,6 +487,7 @@ export const ttl = {
   qbRefreshLock: 30,         // 30 seconds — refresh round-trip is ~1s; TTL only guards crashes
   qbOAuthState: 600,         // 10 minutes (connect → Intuit consent → callback)
   webhookCount: 172_800,     // 48 hours (keep yesterday + today)
+  cronResult: 2_592_000,     // 30 days
   campaign: 7_776_000,       // 90 days
   attribution: 31_536_000,   // 1 year
   fieldSession: 31_536_000,  // 1 year (renewed on activity — effectively forever)

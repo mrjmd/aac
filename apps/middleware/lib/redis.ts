@@ -13,6 +13,7 @@ import { Redis } from '@upstash/redis';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { createLogger } from '@aac/shared-utils/logger';
 import { settleDueAt } from '@aac/shared-utils/inbound-settle';
+import * as health from '@aac/shared-utils/health';
 import { SCHEDULING_AUTO_PROPOSE_THRESHOLD } from '@aac/scheduling/constants';
 import { getEnv } from './env.js';
 
@@ -267,16 +268,7 @@ export async function scheduleInboundSettle(phone: string, nowMs: number): Promi
 export async function trackWebhookProcessed(
   source: 'pipedrive' | 'quo' | 'google-ads' | 'qb'
 ): Promise<void> {
-  const redis = getRedis();
-  const now = new Date().toISOString();
-  const today = now.split('T')[0];
-
-  await Promise.all([
-    redis.incr(keys.webhookCount(source, today)),
-    redis.set(keys.webhookLast(source), now),
-  ]);
-  // Set TTL on the count key so it auto-cleans
-  await redis.expire(keys.webhookCount(source, today), ttl.webhookCount);
+  await health.trackWebhookProcessed(getRedis(), source);
 }
 
 export async function logHealthError(
@@ -284,26 +276,7 @@ export async function logHealthError(
   message: string,
   details?: Record<string, unknown>
 ): Promise<void> {
-  const redis = getRedis();
-  // Vercel injects VERCEL_GIT_COMMIT_SHA per deploy; we stamp it on each
-  // error so the agent-side notifier can dedupe within a deploy but reset
-  // on a new one (Matt knows whether a fix worked instead of staying silent).
-  const commitSha = process.env.VERCEL_GIT_COMMIT_SHA || 'local';
-  const error = JSON.stringify({
-    source,
-    message,
-    details,
-    commitSha,
-    timestamp: new Date().toISOString(),
-  });
-
-  await redis.lpush(keys.healthErrors, error);
-  await redis.ltrim(keys.healthErrors, 0, 99); // Keep last 100
-}
-
-export async function writeHeartbeat(): Promise<void> {
-  const redis = getRedis();
-  await redis.set(keys.heartbeat('middleware'), new Date().toISOString());
+  await health.logHealthError(getRedis(), source, message, details);
 }
 
 // ── Scheduling Pipeline ─────────────────────────────────────────────
@@ -503,14 +476,7 @@ export async function trackCronRun(
   jobName: string,
   result: { sent: number; skipped: number; errors: number }
 ): Promise<void> {
-  const redis = getRedis();
-  const now = new Date().toISOString();
-  const today = now.split('T')[0];
-
-  await Promise.all([
-    redis.set(`cron:${jobName}:last-run`, now),
-    redis.set(`cron:${jobName}:${today}:result`, JSON.stringify(result), { ex: 30 * 86_400 }),
-  ]);
+  await health.trackCronRun(getRedis(), jobName, result);
 }
 
 /**
