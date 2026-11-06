@@ -22,6 +22,7 @@ import {
 } from '../../lib/redis.js';
 import { getEnv } from '../../lib/env.js';
 import { getPipedrive, getQuo } from '../../lib/clients.js';
+import { bestEffort } from '../../lib/best-effort.js';
 
 const log = createLogger('google-ads-webhook');
 
@@ -261,8 +262,12 @@ ${city ? `City: ${city}` : ''}`;
       leadId: payload.lead_id,
     });
 
-    // Log error for health dashboard
-    await logHealthError('google-ads', (error as Error).message, { leadId: payload.lead_id });
+    // Log error for health dashboard. Best-effort: Redis may be the thing
+    // that failed (dedup included), and a throw here would turn the ack
+    // into a 5xx.
+    await bestEffort('logHealthError', () =>
+      logHealthError('google-ads', (error as Error).message, { leadId: payload.lead_id }),
+    );
 
     // Return 200 to acknowledge receipt (prevent infinite retries)
     return res.status(200).json({

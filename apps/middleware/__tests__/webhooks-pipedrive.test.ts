@@ -390,6 +390,45 @@ describe('pipedrive webhook', () => {
   });
 });
 
+describe('pipedrive webhook — Redis outage (10/19 auto-disable pattern)', () => {
+  it('acks 200 and drops the event when the dedup check throws and the health write throws too', async () => {
+    const redis = await import('../lib/redis.js');
+    (markEventProcessed as any).mockRejectedValueOnce(new Error('ECONNREFUSED redis'));
+    (redis.logHealthError as any).mockRejectedValueOnce(new Error('ECONNREFUSED redis'));
+    const res = makeRes();
+
+    await expect(handler(makeReq(makePayload()), res)).resolves.not.toThrow();
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json.mock.calls[0][0].status).toBe('error');
+    expect(storePhoneMapping).not.toHaveBeenCalled();
+    expect(mockQuo.createContact).not.toHaveBeenCalled();
+  });
+
+  it('acks 200 when processing fails and the catch-path health write throws', async () => {
+    const redis = await import('../lib/redis.js');
+    (storePhoneMapping as any).mockRejectedValueOnce(new Error('ECONNREFUSED redis'));
+    (redis.logHealthError as any).mockRejectedValueOnce(new Error('ECONNREFUSED redis'));
+    const res = makeRes();
+
+    await handler(makeReq(makePayload()), res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json.mock.calls[0][0].status).toBe('error');
+  });
+
+  it('still rejects bad credentials with 401 (auth runs before any Redis call)', async () => {
+    mockEnv.pipedrive.webhookUser = 'pd';
+    mockEnv.pipedrive.webhookPass = 'secret';
+    const res = makeRes();
+
+    await handler(makeReq(makePayload(), 'POST', { authorization: 'Basic bad' }), res);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(markEventProcessed).not.toHaveBeenCalled();
+  });
+});
+
 describe('isQbErrorCode', () => {
   it('matches the structured fault code in the message', () => {
     const err = new Error(

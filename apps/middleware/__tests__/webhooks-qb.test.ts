@@ -295,6 +295,43 @@ describe('QB webhook POST', () => {
   });
 });
 
+describe('QB webhook — Redis outage (10/19 auto-disable pattern)', () => {
+  const redisDown = () => new Error('ECONNREFUSED redis');
+
+  it('acks 200 and drops the event when the dedup check throws', async () => {
+    (markEventProcessed as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(redisDown());
+    const res = await POST(makeRequest({ events: [makeEvent()] }));
+    expect(res.status).toBe(200);
+    expect(mockQb.getEstimate).not.toHaveBeenCalled();
+    expect(writePendingDirective).not.toHaveBeenCalled();
+    expect((await res.json()).counts.ignored).toBe(1);
+  });
+
+  it('acks 200 when trackWebhookProcessed throws', async () => {
+    mockQb.getEstimate.mockResolvedValueOnce(makeAcceptedEstimate());
+    (trackWebhookProcessed as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(redisDown());
+    const res = await POST(makeRequest({ events: [makeEvent()] }));
+    expect(res.status).toBe(200);
+    expect(writePendingDirective).toHaveBeenCalledTimes(1);
+  });
+
+  it('acks 200 when processing fails and the catch-path health write throws', async () => {
+    const { logHealthError } = await import('../lib/redis.js');
+    mockQb.getEstimate.mockRejectedValueOnce(new Error('QB down'));
+    (logHealthError as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(redisDown());
+    const res = await POST(makeRequest({ events: [makeEvent()] }));
+    expect(res.status).toBe(200);
+    expect(logHealthError).toHaveBeenCalledTimes(1);
+    expect((await res.json()).counts.ignored).toBe(1);
+  });
+
+  it('still answers 401 on a bad signature', async () => {
+    const res = await POST(makeRequest({ events: [makeEvent()] }, { sig: 'bad' }));
+    expect(res.status).toBe(401);
+    expect(markEventProcessed).not.toHaveBeenCalled();
+  });
+});
+
 describe('message-drafts fast-path enqueue', () => {
   it('queues the estimate when its quote email went out (EmailSent + Pending)', async () => {
     mockQb.getEstimate.mockResolvedValue(

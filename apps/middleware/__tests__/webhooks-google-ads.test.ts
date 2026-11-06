@@ -206,3 +206,37 @@ describe('google-ads webhook key check', () => {
     expect(res.json.mock.calls[0][0].status).toBe('processed');
   });
 });
+
+describe('google-ads webhook — Redis outage (10/19 auto-disable pattern)', () => {
+  it('acks 200 and drops the lead when the dedup check throws and the health write throws too', async () => {
+    const redis = await import('../lib/redis.js');
+    (markEventProcessed as any).mockRejectedValueOnce(new Error('ECONNREFUSED redis'));
+    (redis.logHealthError as any).mockRejectedValueOnce(new Error('ECONNREFUSED redis'));
+    const res = makeRes();
+
+    await expect(handler(makeReq(makePayload()), res)).resolves.not.toThrow();
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json.mock.calls[0][0].status).toBe('error');
+    expect(mockPipedrive.createPerson).not.toHaveBeenCalled();
+    expect(redis.logHealthError).toHaveBeenCalledTimes(1);
+  });
+
+  it('acks 200 when processing fails and the catch-path health write throws', async () => {
+    const redis = await import('../lib/redis.js');
+    mockPipedrive.searchPersonByPhone.mockRejectedValueOnce(new Error('PD down'));
+    (redis.logHealthError as any).mockRejectedValueOnce(new Error('ECONNREFUSED redis'));
+    const res = makeRes();
+
+    await handler(makeReq(makePayload()), res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json.mock.calls[0][0].status).toBe('error');
+  });
+
+  it('still rejects a bad google_key with 401', async () => {
+    const res = makeRes();
+    await handler(makeReq(makePayload({ google_key: 'wrong' })), res);
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+});

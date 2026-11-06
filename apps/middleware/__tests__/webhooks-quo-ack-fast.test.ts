@@ -273,3 +273,40 @@ describe('internal numbers skip the customer pipeline', () => {
     await vi.waitFor(() => expect(dispatchMock).toHaveBeenCalledTimes(1));
   });
 });
+
+describe('Redis outage (10/19 auto-disable pattern)', () => {
+  const redisDown = () => new Error('ECONNREFUSED redis');
+
+  it('acks 200 and drops the event when the dedup check throws and the health write throws too', async () => {
+    redisMocks.markEventProcessed.mockRejectedValueOnce(redisDown());
+    redisMocks.logHealthError.mockRejectedValueOnce(redisDown());
+    const res = await POST(req(makeMessageEvent()));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'error' });
+    expect(redisMocks.scheduleIntakeDraft).not.toHaveBeenCalled();
+    expect(pdMock.logActivity).not.toHaveBeenCalled();
+    expect(redisMocks.logHealthError).toHaveBeenCalledTimes(1);
+  });
+
+  it('acks 200 when an in-handler Redis write throws and the health write throws too', async () => {
+    redisMocks.trackWebhookProcessed.mockRejectedValueOnce(redisDown());
+    redisMocks.logHealthError.mockRejectedValueOnce(redisDown());
+    // Internal number path calls trackWebhookProcessed inside the try.
+    const evt = makeMessageEvent({ direction: 'incoming', from: '+18573126761', to: '+16176681677' });
+    const res = await POST(req(evt));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'error' });
+  });
+
+  it('still answers 401 on a bad signature', async () => {
+    const { verifyOpenPhoneWebhookSignature } = await import('@aac/shared-utils/webhook-signature');
+    (verifyOpenPhoneWebhookSignature as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    try {
+      const res = await POST(req(makeMessageEvent()));
+      expect(res.status).toBe(401);
+      expect(redisMocks.markEventProcessed).not.toHaveBeenCalled();
+    } finally {
+      (verifyOpenPhoneWebhookSignature as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    }
+  });
+});

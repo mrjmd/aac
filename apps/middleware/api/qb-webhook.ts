@@ -43,6 +43,7 @@ import {
 import { bookedEventFor, listUpcomingEvents } from '../lib/booked-events.js';
 import { maybePostSuggestionNote } from '../lib/suggestion-note.js';
 import { notifyWorkerFollowup } from '../lib/worker-notify.js';
+import { bestEffort } from '../lib/best-effort.js';
 
 const log = createLogger('qb-webhook');
 
@@ -161,7 +162,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const results = await Promise.allSettled(events.map((evt) => processEvent(evt)));
-  await trackWebhookProcessed('qb');
+  await bestEffort('trackWebhookProcessed', () => trackWebhookProcessed('qb'));
 
   const counts = results.reduce(
     (acc, r) => {
@@ -189,7 +190,15 @@ async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
   }
 
   const dedupId = evt.id || `${evt.type}:${evt.intuitentityid}:${evt.time ?? ''}`;
-  const isNew = await markEventProcessed('qb', dedupId);
+  let isNew: boolean;
+  try {
+    isNew = await markEventProcessed('qb', dedupId);
+  } catch (err) {
+    // Redis down: ack and drop (at-most-once is the contract). Processing
+    // without dedup could double-queue a directive.
+    log.error('QB dedup check failed — dropping event', err as Error, { dedupId });
+    return 'ignored';
+  }
   if (!isNew) {
     log.debug('Duplicate QB event', { dedupId });
     return 'duplicate';
@@ -315,7 +324,9 @@ async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
       eventId: evt.id,
       entityId: evt.intuitentityid,
     });
-    await logHealthError('qb', (err as Error).message, { eventId: evt.id });
+    await bestEffort('logHealthError', () =>
+      logHealthError('qb', (err as Error).message, { eventId: evt.id }),
+    );
     return 'ignored';
   }
 }
