@@ -25,7 +25,7 @@ that ALL other packages, apps, and tools depend on.
 | `calendar.ts` | Calendar conventions: color IDs, HOLD/STUB prefixes, technician emails, busy rules (`isBusyEvent`, `selectBusyEvents`, `isTechOutOfOffice`) |
 | `eastern.ts` | Eastern business day: `easternDate`, `easternDayRange`, `easternOffset`, `easternWallTime`, `shiftDate`, `daysBetween`, `isCalendarDate` |
 | `redis.ts` | Key schema builders, TTL constants |
-| `health.ts` | Health bookkeeping, Redis client as a parameter: `logHealthError`, `trackCronRun`, `writeHeartbeat`, `trackWebhookProcessed`. Readers (middleware /api/health, agent error-surface, watchdog, triage) depend on the exact keys and value shapes |
+| `health.ts` | Health bookkeeping, Redis client as a parameter: `logHealthError`, `trackCronRun`, `writeHeartbeat`, `trackWebhookProcessed`, and `countCondition` (silent-skip counts per Eastern day in `health:conditions:{day}`, 14-day TTL; optional entity; rolling 2h window for `ROLLING_CONDITIONS`; names and labels in `CONDITIONS`). Readers (middleware /api/health, command center System health, agent error-surface, watchdog, triage) depend on the exact keys and value shapes |
 | `inbound-settle.ts` | Inbound router settle rule: `settleDueAt` (last + 2 min, capped at first + 10 min) |
 | `qbo-tokens.ts` | `qboTokenStore(redis)`: the shared QBO token slot + refresh lock, as QuickBooksClient callbacks |
 | `webhook-signature.ts` | `verifyOpenPhoneWebhookSignature` (Quo HMAC), `timingSafeEqualString` (constant-time secret/bearer compare, fails closed on empty) |

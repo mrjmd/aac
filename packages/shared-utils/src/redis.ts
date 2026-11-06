@@ -33,6 +33,29 @@ export const keys = {
   /** SET NX EX marker: a worker route already recorded a health error in the last few minutes (stops a per-minute failure flooding the 100-entry list). */
   healthErrorThrottle: (source: string) => `health:errors:throttle:${source}` as const,
 
+  /**
+   * HASH: condition name → count of silent skips on an Eastern day
+   * (YYYY-MM-DD), e.g. 'invoice-create.no_qb_customer'. Written by
+   * countCondition (@aac/shared-utils/health), TTL ttl.healthConditions.
+   * Read by the command center System health page.
+   */
+  healthConditions: (day: string) => `health:conditions:${day}` as const,
+
+  /**
+   * HASH: '<condition>|<entity id>' → JSON {label, at} for the skips that
+   * name what they skipped (e.g. the calendar event of a job not invoiced).
+   * Only written when the caller passes an entity, so it stays as small as
+   * the day's skips. Same day and TTL as healthConditions.
+   */
+  healthConditionEntities: (day: string) => `health:conditions:${day}:entities` as const,
+
+  /**
+   * ZSET: one member per occurrence of a rolling-window condition (score =
+   * epoch ms), pruned to the last ttl.healthConditionRecent seconds on every
+   * write. The watchdog counts the last hour (Gemini degraded).
+   */
+  healthConditionRecent: (name: string) => `health:conditions:recent:${name}` as const,
+
   /** Webhook audit stream — read by Command Center */
   webhookAuditStream: 'logs:webhooks' as const,
 
@@ -543,4 +566,6 @@ export const ttl = {
   schedulingProposalDecision: 2_592_000, // 30d — kept for command-center retro view
   inboundRead: 2_592_000,   // 30d — a later burst reuses photo reads from the earlier one
   triageVerdict: 604_800,   // 7d — bounds how long a verdict outlives calendar/estimate changes
+  healthConditions: 1_209_600, // 14d of daily silent-skip counts (System health page, 7-day view)
+  healthConditionRecent: 7_200, // 2h of rolling-window occurrences (watchdog reads the last hour)
 } as const;
