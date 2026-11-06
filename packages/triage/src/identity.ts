@@ -34,7 +34,7 @@
 import { nameTokens, tokensAlike } from '@aac/customers';
 import { streetKey } from '@aac/shared-utils/address';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
-import type { CustomerSnapshot, EmailThreadSnapshot, ThreadSnapshot } from './collect.ts';
+import type { CustomerSnapshot, EmailThreadSnapshot, ThreadSnapshot } from './types.js';
 import { EVENT_CLASS_COLOR_IDS as COLORS } from '@aac/shared-utils/calendar';
 
 const DAY = 86_400_000;
