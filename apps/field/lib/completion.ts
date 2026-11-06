@@ -6,9 +6,9 @@
  */
 
 import { keys } from '@aac/shared-utils/redis';
+import type { PaymentStatus } from '@aac/payments';
 import { getRedis } from './clients';
 
-export type PaymentStatus = 'cash' | 'check' | 'card' | 'not_yet_paid';
 export type Phase = 'checked_in' | 'before_photo_taken' | 'completed' | 'cancelled';
 
 /**

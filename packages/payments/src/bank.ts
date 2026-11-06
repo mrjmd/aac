@@ -11,10 +11,17 @@
  * in their record (the field reflects where they ORIGINALLY went, not
  * where they currently are). So we have to fetch the Deposits separately
  * and subtract their linked Payments to get the truly-undeposited set.
+ *
+ * Moved from apps/field/lib/bank.ts; the caller passes the QuickBooks
+ * client in.
  */
 
-import type { QBAccount, QBPayment, QBPaymentMethod } from '@aac/api-clients/quickbooks';
-import { getQuickBooks } from './clients';
+import type {
+  QBAccount,
+  QBPayment,
+  QBPaymentMethod,
+  QuickBooksClient,
+} from '@aac/api-clients/quickbooks';
 
 /** Stable across QBO realms — Undeposited Funds is always account 8. */
 const UNDEPOSITED_FUNDS_ID = '8';
@@ -37,9 +44,7 @@ export interface UndepositedPayment {
   refNum?: string;
 }
 
-export async function getUndepositedPayments(): Promise<UndepositedPayment[]> {
-  const qb = getQuickBooks();
-
+export async function getUndepositedPayments(qb: QuickBooksClient): Promise<UndepositedPayment[]> {
   // 1) Pull all Payments in the recent window (QB doesn't let us filter by DepositToAccountRef in SQL)
   const since = isoMonthsAgo(PAYMENT_HISTORY_MONTHS);
   const paymentsResp = await qb.query<{ QueryResponse?: { Payment?: QBPayment[] } }>(
@@ -78,8 +83,7 @@ export async function getUndepositedPayments(): Promise<UndepositedPayment[]> {
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 
-export async function getBankAccounts(): Promise<QBAccount[]> {
-  const qb = getQuickBooks();
+export async function getBankAccounts(qb: QuickBooksClient): Promise<QBAccount[]> {
   const accts = await qb.listAccounts({ type: 'Bank' });
   // Sort by balance desc so the most-used account floats to the default-selected slot
   return accts.sort((a, b) => (b.CurrentBalance ?? 0) - (a.CurrentBalance ?? 0));

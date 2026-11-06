@@ -3,14 +3,13 @@
 import { del } from '@vercel/blob';
 import { revalidatePath } from 'next/cache';
 import { createLogger } from '@aac/shared-utils/logger';
-import { getCalendar } from '@/lib/clients';
+import { getCalendar, getPipedrive, getQuickBooks } from '@/lib/clients';
 import {
   getCompletion,
   setCompletion,
   type CompletionEdit,
   type CompletionPhoto,
   type CompletionRecord,
-  type PaymentStatus,
 } from '@/lib/completion';
 import { classifyEvent } from '@/lib/event-classification';
 import {
@@ -19,7 +18,7 @@ import {
   bucketForEvent,
   daysLate,
 } from '@/lib/event-time-bucket';
-import { executePaymentBranch } from '@/lib/payment-branches';
+import { executePaymentBranch, type PaymentStatus } from '@aac/payments';
 import { findEventContinuation } from '@/lib/multiday';
 import { getCurrentSession } from '@/lib/session';
 import { formatDateDisplay } from '@/lib/dates';
@@ -285,7 +284,11 @@ export async function submitCompletion(_prev: ActionState | null, formData: Form
   let linkedInvoiceId: string | undefined;
   let linkedPaymentId: string | null | undefined;
   if (isRepair && paymentStatus) {
-    const outcome = await executePaymentBranch(evt, paymentStatus);
+    const outcome = await executePaymentBranch(
+      { pd: getPipedrive(), qb: getQuickBooks() },
+      evt,
+      paymentStatus,
+    );
     if (!outcome.ok) {
       log.warn('submitCompletion rejected: payment branch failed', {
         eventId,

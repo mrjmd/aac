@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { getBankAccounts, getUndepositedPayments } from '@/lib/bank';
+import { getBankAccounts, getUndepositedPayments } from '@aac/payments';
+import { getQuickBooks } from '@/lib/clients';
 import DepositForm from './deposit-form';
 
 export const dynamic = 'force-dynamic';
@@ -7,8 +8,8 @@ export const revalidate = 0;
 
 export default async function BankPage() {
   const [payments, bankAccounts] = await Promise.all([
-    getUndepositedPayments(),
-    getBankAccounts(),
+    getUndepositedPayments(getQuickBooks()),
+    getBankAccounts(getQuickBooks()),
   ]);
 
   const total = payments.reduce((s, p) => s + p.amount, 0);

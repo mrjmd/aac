@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { createBankDeposit, type CreateDepositResult } from './actions';
-import type { UndepositedPayment } from '@/lib/bank';
+import type { UndepositedPayment } from '@aac/payments';
 
 interface BankAccountOption {
   id: string;

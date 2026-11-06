@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { getQuickBooks } from '@/lib/clients';
-import { getUndepositedPayments } from '@/lib/bank';
+import { getUndepositedPayments } from '@aac/payments';
 import { getCurrentSession } from '@/lib/session';
 import { createLogger } from '@aac/shared-utils/logger';
 
@@ -33,7 +33,7 @@ export async function createBankDeposit(formData: FormData): Promise<CreateDepos
   if (selected.length === 0) return { ok: false, error: 'Select at least one payment to deposit.' };
 
   // Re-fetch the truth from QB instead of trusting client-side amounts.
-  const undeposited = await getUndepositedPayments();
+  const undeposited = await getUndepositedPayments(getQuickBooks());
   const byId = new Map(undeposited.map((p) => [p.id, p]));
 
   const lines: Array<{ paymentId: string; amount: number }> = [];

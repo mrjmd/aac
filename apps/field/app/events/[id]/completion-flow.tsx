@@ -14,7 +14,8 @@ import {
   type ActionState,
 } from './actions';
 import PhotoLightbox from '@/components/photo-lightbox';
-import type { CompletionEdit, CompletionPhoto, CompletionRecord, PaymentStatus } from '@/lib/completion';
+import type { CompletionEdit, CompletionPhoto, CompletionRecord } from '@/lib/completion';
+import type { PaymentStatus } from '@aac/payments';
 import type { EventType } from '@/lib/event-classification';
 import type { EventTimeBucket } from '@/lib/event-time-bucket';
 

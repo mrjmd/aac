@@ -15,6 +15,9 @@
  * record and surface to the technician. Never throws on business
  * conditions (multi-invoice, no-invoice, etc.) — those become structured
  * { ok: false } results so the form can display them clearly.
+ *
+ * Moved from apps/field/lib/payment-branches.ts; the caller passes the
+ * Pipedrive and QuickBooks clients in.
  */
 
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
@@ -24,11 +27,10 @@ import type {
   QuickBooksClient,
   QBPaymentMethod,
 } from '@aac/api-clients/quickbooks';
-import type { PipedrivePerson } from '@aac/api-clients/pipedrive';
+import type { PipedriveClient, PipedrivePerson } from '@aac/api-clients/pipedrive';
 import { createLogger } from '@aac/shared-utils/logger';
-import { getPipedrive, getQuickBooks } from './clients';
 import { matchEventToPerson, matchPersonToQBCustomer } from '@aac/customers';
-import type { PaymentStatus } from './completion';
+import type { PaymentStatus } from './types.js';
 
 const log = createLogger('field:payment-branches');
 
@@ -57,12 +59,17 @@ export interface PaymentBranchFailure {
 
 export type PaymentBranchOutcome = PaymentBranchSuccess | PaymentBranchFailure;
 
+export interface PaymentBranchDeps {
+  pd: PipedriveClient;
+  qb: QuickBooksClient;
+}
+
 export async function executePaymentBranch(
+  deps: PaymentBranchDeps,
   event: CalendarEvent,
   paymentStatus: PaymentStatus,
 ): Promise<PaymentBranchOutcome> {
-  const pd = getPipedrive();
-  const qb = getQuickBooks();
+  const { pd, qb } = deps;
 
   // 1) Event → PD person → QB customer
   const person = await matchEventToPerson(event, pd);
@@ -92,11 +99,11 @@ export async function executePaymentBranch(
     switch (paymentStatus) {
       case 'cash':
       case 'check':
-        return await applyCashOrCheckPayment(recent, customerId, displayName, paymentStatus);
+        return await applyCashOrCheckPayment(recent, customerId, displayName, paymentStatus, qb);
       case 'card':
         return await verifyCardPayment(recent, displayName, qb);
       case 'not_yet_paid':
-        return await sendInvoiceNow(recent, displayName, customer);
+        return await sendInvoiceNow(recent, displayName, customer, qb);
     }
   } catch (err) {
     log.error('Payment branch threw', err as Error, { customerId, paymentStatus });
@@ -158,12 +165,12 @@ async function applyCashOrCheckPayment(
   customerId: string,
   displayName: string,
   status: 'cash' | 'check',
+  qb: QuickBooksClient,
 ): Promise<PaymentBranchOutcome> {
   const picked = pickSingleOpen(invoices, displayName);
   if (!picked.ok) return picked.failure;
   const invoice = picked.invoice;
 
-  const qb = getQuickBooks();
   const methods = await qb.listPaymentMethods();
   const target = status === 'cash' ? 'cash' : 'check';
   const method = methods.find((m) => m.Name?.toLowerCase() === target);
@@ -244,6 +251,7 @@ async function sendInvoiceNow(
   invoices: QBInvoice[],
   displayName: string,
   customer: QBCustomer,
+  qb: QuickBooksClient,
 ): Promise<PaymentBranchOutcome> {
   const picked = pickSingleOpen(invoices, displayName);
   if (!picked.ok) return picked.failure;
@@ -267,7 +275,6 @@ async function sendInvoiceNow(
     );
   }
 
-  const qb = getQuickBooks();
   await qb.sendInvoice(invoice.Id, recipient);
   log.info('Sent invoice email', { invoiceId: invoice.Id, recipient });
   return { ok: true, invoiceId: invoice.Id, paymentId: null };
