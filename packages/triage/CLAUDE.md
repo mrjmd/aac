@@ -26,8 +26,13 @@ Plan: `docs/plans/triage-to-worker.md` (cleanup step 3b).
 
 ## Callers
 
+- `apps/worker/api/triage.ts`: the daily cron (13:05 UTC, after stale
+  quotes), mode `triage:mode` (off | dry | live). Runs collect → analyze →
+  `triageCandidates(findings, stale, { now })` with no labels or legacy log
+  (plan decision 1) and, live, publishes with source `triage-worker`.
+  Wiring in `apps/worker/lib/triage-deps.ts` + `triage-run.ts`.
 - `tools/src/triage/refresh.sh`: by hand (launchd `com.aac.triage` until
-  the worker ships). Chains `collect.ts` (writes snapshot.json), quote-trigger
+  the worker runs live). Chains `collect.ts` (writes snapshot.json), quote-trigger
   harvest-edits, `analyze.ts` (writes findings.json, then calls
   `push-items.ts` unless `--no-push`) and `render.ts` (triage.html).
 - `tools/src/triage/push-items.ts`: publishes candidates with source
@@ -39,9 +44,6 @@ Plan: `docs/plans/triage-to-worker.md` (cleanup step 3b).
   `--dry-run` edits an in-memory copy.
 - `tools/src/triage/seed-store.ts`: one-time seed of the store from the
   laptop files (`--dry-run` to count).
-- Planned: `apps/worker/api/triage.ts`, daily cron after stale quotes, mode
-  `triage:mode` (off | dry | live), source `triage-worker`, no labels
-  (plan decision 1).
 
 ## State (Redis, keys in `@aac/shared-utils/redis`)
 
@@ -50,8 +52,8 @@ Plan: `docs/plans/triage-to-worker.md` (cleanup step 3b).
   a call is fetched once ever.
 - `triage:dismissals`: the owner's suppression rules, `{ match, sections?,
   reason?, addedAt?, until? }`. Edit with dismiss.ts, never raw.
-- `triage:mode`, `triage:last-run`, `triage:run-lock`: reserved for the
-  worker cron.
+- `triage:mode`, `triage:last-run`, `triage:run-lock`: the worker cron's
+  mode, last-run summary (counts + timing) and NX run lock.
 - Reads: `stale-quotes:queue` / `stale-quotes:awaiting` (through
   `@aac/stale-quotes`), field completions, scheduling directives, todos,
   worker runlogs and heartbeats (collect). Writes `keys.itemCandidates` only

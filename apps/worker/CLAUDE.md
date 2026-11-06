@@ -55,6 +55,19 @@ Plain Vercel Serverless Functions (no framework) that run the
   then skip until tomorrow. Gated by Redis `stale-quotes:mode`
   (off | dry | live, unset = off); dry refreshes only the awaiting-reply
   list. Needs the Google env (calendar + Gmail are hard gates).
+- `api/triage.ts`: daily triage (`@aac/triage`, docs/plans/triage-to-worker.md),
+  cron 13:05 UTC, after the stale-quote slots so it reads that morning's
+  queue. collect → analyze → triageCandidates with no bot-draft labels (plan
+  decision 1); `live` publishes to `keys.itemCandidates` as source
+  `triage-worker`, `dry` records counts only (`triage:last-run`). Gated by
+  Redis `triage:mode` (off | dry | live, unset = off); once per Eastern day
+  per mode, `?force=1` (middleware secret) runs again. analyze can't resume,
+  so one slot and a 720s deadline: past it the run is dropped unpublished and
+  recorded as a health error. NX lock `triage:run-lock` with an owner-checked
+  release. A run that finishes blind (LLM errors, email sweep or Gemini
+  canary failed) is recorded too. Needs the Redis, QBO, Quo, Gemini and
+  Google env (`skipped: 'no-<group>-env'` otherwise); maxDuration 800 /
+  memory 1024.
 - `api/health.ts` — liveness.
 
 ## Health bookkeeping
@@ -66,10 +79,11 @@ Plain Vercel Serverless Functions (no framework) that run the
   every route's top-level 500, deps that fail to build (`guarded()` wraps
   routes with work before their try), and package failures swallowed into a
   result (inbound-tick `failed` bursts, quote-tick/quote-draft `failed`
-  drafts and a missing asset manifest, ads-conversions `summary.failed`).
+  drafts and a missing asset manifest, ads-conversions `summary.failed`,
+  a triage run that finished blind).
   One entry per source per 10 min (`keys.healthErrorThrottle`) so a
   per-minute failure can't flood the 100-entry list; the log gets them all.
-- **Last run**: sweep, inbound-tick, quote-email-tick and stale-quotes stamp
+- **Last run**: sweep, inbound-tick, quote-email-tick, stale-quotes and triage stamp
   `cron:<route>:last-run` (+ daily result) after a run that did its work;
   tick and quote-tick keep their heartbeats, ads-conversions and watchdog
   stamp in their packages. The watchdog reads none of the new ones yet.
