@@ -460,10 +460,10 @@ export async function analyze(snapshot: Snapshot, deps: AnalyzeDeps): Promise<Fi
     // an invoice created and simply never emailed sits at NotSet forever.
     // Both mean the customer likely never received it.
     //
-    // Grace period: the middleware invoice-send cron emails job invoices at
-    // ~7:05am two days after the green calendar job (invoice-create runs the
-    // morning after). A fresh unsent invoice is therefore normal; only flag
-    // once it's >= 3 days old and the automation has definitively missed it.
+    // Grace period: the field app's Not Yet Paid branch emails the invoice at
+    // job completion (invoice-create runs the morning after and does not
+    // send). A fresh unsent invoice is therefore normal; only flag once it's
+    // >= 3 days old and it has definitively been missed.
     if (inv.EmailStatus === 'NeedToSend' || inv.EmailStatus === 'NotSet' || !inv.EmailStatus) {
       if (daysAgo(inv.TxnDate, now) < 3) continue;
       findings.push({

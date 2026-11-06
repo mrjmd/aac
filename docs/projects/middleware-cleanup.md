@@ -67,7 +67,7 @@ Defined at `lib/templates.ts:36-39`, never rendered anywhere. Either wire it up 
 ## Out of scope (not cleanup — load-bearing inconsistencies)
 
 - `api/webhooks/quo.ts` uses the Web Standard `Request/Response` handler shape (vs. `(req: VercelRequest, res: VercelResponse)` everywhere else). This is **load-bearing** — it's needed to access raw bytes for HMAC verification. Don't "fix" it.
-- `api/cron/invoice-send.ts` exists in code but isn't wired in `vercel.json`. This is the Cron B kill decision (2026-05-27 DECISIONS.md) — the file remains as a manual emergency endpoint. Keep as-is.
+- `api/cron/invoice-send.ts` was never wired in `vercel.json` (Cron B kill decision, 2026-05-27 DECISIONS.md) and was deleted 2026-11-06.
 
 ## Related
 

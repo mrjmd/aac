@@ -16,7 +16,7 @@ job, which causes three real failures:
    review-prompt SMS the morning after *every* green job day — so the customer
    gets "how did we do, leave us a review!" while we're coming back tomorrow.
    Matt: "That always confuses people, and I've never fixed it."
-   (`invoice-send` is NOT in vercel.json crons, so the review SMS is the only
+   (there is no invoice-send cron, so the review SMS is the only
    scheduled customer-facing post-job message. The other path is the field
    app's Not Yet Paid branch, which emails the QB invoice immediately.)
 2. **Field flow expects completion every day.** Mike can't truthfully

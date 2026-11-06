@@ -40,10 +40,10 @@ describe('middleware health wrappers', () => {
   });
 
   it('logHealthError pushes the JSON entry onto health:errors and caps it at 100', async () => {
-    await logHealthError('cron:invoice-send', 'boom', { id: 1 });
+    await logHealthError('cron:invoice-create', 'boom', { id: 1 });
     const [key, raw] = client.lpush.mock.calls[0] as unknown as [string, string];
     expect(key).toBe('health:errors');
-    expect(JSON.parse(raw)).toMatchObject({ source: 'cron:invoice-send', message: 'boom', details: { id: 1 }, timestamp: NOW.toISOString() });
+    expect(JSON.parse(raw)).toMatchObject({ source: 'cron:invoice-create', message: 'boom', details: { id: 1 }, timestamp: NOW.toISOString() });
     expect(client.ltrim).toHaveBeenCalledWith('health:errors', 0, 99);
   });
 

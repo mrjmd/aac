@@ -1,7 +1,8 @@
 /**
  * Invoice Create Cron — Auto-create a QuickBooks invoice for each
  * green calendar job scheduled today, from the customer's most-recent
- * Accepted estimate. Does NOT send the invoice — invoice-send handles that.
+ * Accepted estimate. Does NOT send the invoice; the field app's Not Yet Paid
+ * branch emails it at job completion.
  *
  * Schedule (when enabled in vercel.json): daily ~7am ET.
  * Supports dry run: GET /api/cron/invoice-create?dry=true

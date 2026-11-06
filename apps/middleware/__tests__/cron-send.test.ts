@@ -58,7 +58,7 @@ describe('settleFailedSend', () => {
   it('never throws when the release itself fails; reports the marker as kept', async () => {
     redisDel.mockRejectedValueOnce(new Error('ECONNREFUSED'));
     const err = await settleFailedSend(
-      'invoice-send',
+      'invoice-create',
       'evt-3',
       new VendorHttpError('quickbooks', 500, 'QuickBooks API error: 500 - x'),
     );

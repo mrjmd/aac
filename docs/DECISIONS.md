@@ -216,6 +216,8 @@ Both are populated by `normalizeQbApproval` via `@aac/quoting/estimateDuration`.
 
 **How to apply:** Don't add invoice-send to `vercel.json`. The `invoice-send.ts` handler can stay deployed as a manual endpoint for emergency use, or be deleted when field app is steady-state.
 
+**Update 2026-11-06:** `api/cron/invoice-send.ts` and its tests are deleted (unscheduled, unreferenced, not watched). Git history has it if it is ever needed again.
+
 ---
 
 ## 2026-05-27 — Inbound phone triage = part-time human hire
