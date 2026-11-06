@@ -221,3 +221,30 @@ describe('runStaleQuotes', () => {
     expect(Object.keys(f.store.state.estimates)).toHaveLength(1);
   });
 });
+
+describe('QBO paging', () => {
+  it('pulls 1000 rows a page and keeps paging past a full page', async () => {
+    const f = fake();
+    const sqls: string[] = [];
+    const closed = Array.from({ length: 1000 }, (_, i) => estimate({ Id: `f${i}`, DocNumber: `F${i}`, TxnStatus: 'Closed' }));
+    f.deps.qb.query = async <T>(sql: string) => {
+      sqls.push(sql);
+      const entity = /FROM (\w+)/.exec(sql)![1]!;
+      const start = Number(/STARTPOSITION (\d+)/.exec(sql)![1]);
+      const rows: Record<string, unknown[]> = {
+        Estimate: start === 1 ? closed : [estimate()],
+        Customer: [{ Id: 'c1', PrimaryPhone: { FreeFormNumber: '(617) 555-0100' } }],
+        Invoice: [],
+      };
+      return { QueryResponse: { [entity]: rows[entity] } } as T;
+    };
+    const r = await runStaleQuotes(f.deps, { dryRun: true });
+    const est = sqls.filter((s) => s.includes('FROM Estimate'));
+    expect(est).toHaveLength(2);
+    expect(est[0]).toContain('STARTPOSITION 1 MAXRESULTS 1000');
+    expect(est[1]).toContain('STARTPOSITION 1001 MAXRESULTS 1000');
+    expect(sqls.every((s) => s.includes('MAXRESULTS 1000'))).toBe(true);
+    // The Pending quote on page 2 was seen.
+    expect(r.queue.toSend.map((d) => d.doc)).toEqual(['1600']);
+  });
+});

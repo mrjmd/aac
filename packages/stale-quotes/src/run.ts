@@ -600,17 +600,20 @@ async function extractIfNeeded(input: {
   return extraction;
 }
 
+/** QBO's cap on one query page. */
+const QBO_PAGE_SIZE = 1000;
+
 async function queryAll<T>(qb: StaleQuoteDeps['qb'], entity: string): Promise<T[]> {
   const all: T[] = [];
   let start = 1;
   for (;;) {
     const res = await qb.query<{ QueryResponse: Record<string, T[] | undefined> }>(
-      `SELECT * FROM ${entity} ORDER BY MetaData.CreateTime STARTPOSITION ${start} MAXRESULTS 100`,
+      `SELECT * FROM ${entity} ORDER BY MetaData.CreateTime STARTPOSITION ${start} MAXRESULTS ${QBO_PAGE_SIZE}`,
     );
     const page = res.QueryResponse[entity] ?? [];
     all.push(...page);
-    if (page.length < 100) break;
-    start += 100;
+    if (page.length < QBO_PAGE_SIZE) break;
+    start += QBO_PAGE_SIZE;
   }
   return all;
 }
