@@ -48,7 +48,7 @@ Two grading bugs found in the quote numbers:
    in `@aac/shared-utils/redis`. No customer-facing change.
 2. **The page.** System gets a Health | Automations switch. One card per
    automation: stage (drafts for you / does it itself), meter (proven and raw against the 90% bar), last 20 outcomes, since
-   date. Drill-in: weekly outcomes chart, the bar as a checklist, what it
+   date. Drill-in: weekly outcomes chart, the bar as a checklist, a **By kind of case** table (per kind: right of graded, raw, proven vs the bar, hurt count, status, and its own auto-send switch, live only once that kind qualifies), what it
    learned, recent drafts with what it wrote vs what Matt sent.
 3. **Lessons (weekly).** An LLM pass over the week's changed drafts groups
    Matt's edits into patterns and writes a proposed rule change with its
