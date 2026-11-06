@@ -26,6 +26,10 @@ export interface DraftState {
   setIntake(phone: string, value: string): Promise<void>;
   releaseIntake(phone: string): Promise<void>;
 
+  /** When the last mid-conversation referral note was posted (iso), if any. */
+  getReferral(phone: string): Promise<string | null>;
+  setReferral(phone: string, iso: string): Promise<void>;
+
   getNoteAttempts(phone: string): Promise<number>;
   incrNoteAttempts(phone: string): Promise<number>;
   clearNoteAttempts(phone: string): Promise<void>;
@@ -93,6 +97,13 @@ export class RedisDraftState implements DraftState {
     await this.redis.hdel(keys.messageDraftIntakeDone, phone);
   }
 
+  getReferral(phone: string): Promise<string | null> {
+    return this.redis.hget<string>(keys.messageDraftReferralDone, phone);
+  }
+  async setReferral(phone: string, iso: string): Promise<void> {
+    await this.redis.hset(keys.messageDraftReferralDone, { [phone]: iso });
+  }
+
   async getNoteAttempts(phone: string): Promise<number> {
     const v = await this.redis.hget<number>(keys.messageDraftNoteAttempts, phone);
     return Number(v ?? 0);
@@ -128,6 +139,7 @@ export class RedisDraftState implements DraftState {
 export class MemoryDraftState implements DraftState {
   followup = new Map<string, string>();
   intake = new Map<string, string>();
+  referral = new Map<string, string>();
   attempts = new Map<string, number>();
   firstRunAt: string | null = null;
   records: Array<Record<string, unknown>> = [];
@@ -165,6 +177,13 @@ export class MemoryDraftState implements DraftState {
   }
   async releaseIntake(phone: string): Promise<void> {
     this.intake.delete(phone);
+  }
+
+  async getReferral(phone: string): Promise<string | null> {
+    return this.referral.get(phone) ?? null;
+  }
+  async setReferral(phone: string, iso: string): Promise<void> {
+    this.referral.set(phone, iso);
   }
 
   async getNoteAttempts(phone: string): Promise<number> {

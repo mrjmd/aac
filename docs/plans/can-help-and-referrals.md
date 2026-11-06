@@ -42,10 +42,11 @@ step; when they show work we can't do, kindly decline fast and get out of the lo
    per phone so the quote drafter can reuse it instead of re-reading.
 4. **Referral listener.** Any inbound (not just first touch) that the read or the
    T4-style gate marks as out of scope drafts a referral message to a Quo note,
-   using the Referrals list. Never sends.
+   using the Referrals list. Never sends. BUILT 11/05 as the inbound router's
+   referral route (`docs/plans/inbound-router.md` phase 4).
 5. **Command center: Referrals page (BUILT 11/05, mockup Pst2iVyZze9Y9TsawzrhRm
    approved).** `/referrals`: who we send what (edit in place, private note),
    time-bound policies (edit, end now), decline rules (edit, pause, + rule) on the
    same page since each rule points at its referrals. A policy whose `reviewBy`
    arrives becomes an admin item (`fromRuleReview`). Rail count = referrals
-   missing a phone. The "Referral drafts" section is an empty state until step 4.
+   missing a phone. The "Referral drafts" section lists decline and referral notes from the drafts runlog.

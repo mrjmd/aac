@@ -18,8 +18,10 @@ import {
   processFollowupEstimate,
   processIntakePhone,
   processRoutedIntake,
+  processRoutedReferral,
   type DraftDeps,
   type RoutedIntake,
+  type RoutedReferral,
 } from '../src/index.js';
 
 const NOW = new Date('2026-10-21T15:00:00Z').getTime();
@@ -465,5 +467,62 @@ describe('followup candidates', () => {
   it('isFollowupCandidate requires EmailSent + Pending', () => {
     expect(isFollowupCandidate(makeEstimate())).toBe(true);
     expect(isFollowupCandidate(makeEstimate({ TxnStatus: 'Accepted' } as Partial<QBEstimate>))).toBe(false);
+  });
+});
+
+describe('processRoutedReferral (inbound router, phase 4c)', () => {
+  const routed = (over: Partial<RoutedReferral> = {}): RoutedReferral => ({
+    reason: 'Leaking cinder block bulkhead: injection cannot stop water in hollow block.',
+    referrals: ['Air Guardian ((508) 355-0044)'],
+    conversation: ['CUSTOMER: Crack in my wall', 'MATT: Quote is on the way', 'CUSTOMER: Also the bulkhead leaks [2 photo(s)]'],
+    photoNotes: ['block bulkhead stairwell, water at the base'],
+    ...over,
+  });
+  const reply =
+    'Thanks for sending those. Since the bulkhead walls are cinder block, our injection process unfortunately can\'t stop the water there. Air Guardian at (508) 355-0044 would be a great call for that part. The wall crack quote still stands.';
+
+  it('drafts one continuation from the thread, names the referral, records it', async () => {
+    const { deps, state, mocks } = makeDeps();
+    mocks.generateContent.mockResolvedValue(reply);
+    const outcome = await processRoutedReferral(deps, '+19785550140', routed());
+    expect(outcome.kind).toBe('drafted');
+    expect(mocks.generateContent).toHaveBeenCalledTimes(1);
+    const prompt = mocks.generateContent.mock.calls[0][0] as string;
+    expect(prompt).toContain('MATT: Quote is on the way');
+    expect(prompt).toContain('block bulkhead stairwell, water at the base');
+    expect(prompt).toContain('Air Guardian ((508) 355-0044)');
+    const note = mocks.createContactNote.mock.calls[0][1] as string;
+    expect(note).toContain('REFERRAL DRAFT');
+    expect(note).toContain('Why: Leaking cinder block');
+    expect(note).not.toContain('fallback');
+    expect(await state.getReferral('+19785550140')).toBe(new Date(NOW).toISOString());
+    expect(state.records.at(-1)).toMatchObject({ type: 'referral', via: 'router', outcome: 'drafted', referrals: ['Air Guardian ((508) 355-0044)'] });
+  });
+
+  it('one referral note per phone per day', async () => {
+    const { deps, state, mocks } = makeDeps();
+    mocks.generateContent.mockResolvedValue(reply);
+    await state.setReferral('+19785550140', new Date(NOW - 3 * 3600_000).toISOString());
+    expect(await processRoutedReferral(deps, '+19785550140', routed())).toEqual({ kind: 'skipped', reason: 'referral-drafted-recently' });
+    await state.setReferral('+19785550140', new Date(NOW - 25 * 3600_000).toISOString());
+    expect((await processRoutedReferral(deps, '+19785550140', routed())).kind).toBe('drafted');
+  });
+
+  it('a draft that drops the referral, asks for details or quotes a price falls back to the skeleton', async () => {
+    const { deps, mocks } = makeDeps();
+    mocks.generateContent.mockResolvedValue('Unfortunately we can\'t help with the bulkhead, it is cinder block and our injection cannot stop the water. Best of luck with it!');
+    await processRoutedReferral(deps, '+19785550140', routed());
+    const note = mocks.createContactNote.mock.calls[0][1] as string;
+    expect(note).toContain('Air Guardian ((508) 355-0044) would be a great call');
+    expect(note).toContain('(fallback used: referral not named)');
+  });
+
+  it('no referral fits: a straight decline, CAN\'T HELP note', async () => {
+    const { deps, mocks } = makeDeps();
+    mocks.generateContent.mockResolvedValue(null);
+    await processRoutedReferral(deps, '+19785550140', routed({ referrals: [] }));
+    const note = mocks.createContactNote.mock.calls[0][1] as string;
+    expect(note).toContain("CAN'T HELP DRAFT");
+    expect(note).toContain("isn't something we're able to help with");
   });
 });

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { isRuleActive, type Referral, type StandingRule } from "@aac/quoting/can-help";
+import type { ReferralDraft } from "@/lib/can-help";
 import { PageHeader } from "../components/layout-parts";
 import { useItems } from "../items-context";
 
@@ -32,7 +33,7 @@ function flash(id: string) {
 }
 
 /** The approved Referrals mockup: who we send what, the decline and case-by-case rules, time-bound policies. */
-export function ReferralsView({ initial, today }: { initial: Data; today: string }) {
+export function ReferralsView({ initial, drafts, today }: { initial: Data; drafts: ReferralDraft[]; today: string }) {
   const [data, setData] = useState(initial);
   const [editing, setEditing] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -290,11 +291,27 @@ export function ReferralsView({ initial, today }: { initial: Data; today: string
       <section className="sec">
         <div className="sec-h">
           <h2>Referral drafts</h2>
-          <span className="hint">From the referral listener (not built yet).</span>
+          <span className="hint">Kind declines drafted into a Quo note on the customer&apos;s conversation. Nothing is ever sent for you.</span>
         </div>
-        <div className="empty">
-          When a customer asks for work on this list, the listener drafts a referral text into a Quo note on their conversation. Each draft shows up here with who it pointed them to.
-          Nothing is ever sent for you.
+        <div className="card">
+          {drafts.length === 0 && (
+            <div className="empty">When a customer asks for work on this list, the drafter writes the decline into a Quo note, naming who to call. Each one shows up here.</div>
+          )}
+          {drafts.map((d) => (
+            <div className="rule" key={`${d.phone}-${d.at}`}>
+              <div className="n">
+                <div className="t">{d.draft}</div>
+                <div className="meta">
+                  <span className="tag">{d.at ? new Date(d.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }) : "?"}</span>
+                  <span className="tag">{d.phone}</span>
+                  <span className="tag">{d.when === "first" ? "First reply" : "Mid-conversation"}</span>
+                  {d.referrals?.map((r) => <span key={r} className="tag">→ {r}</span>)}
+                  {d.referrals?.length === 0 && <span className="tag">No referral</span>}
+                </div>
+                {d.reason && <div className="kv" style={{ fontSize: 12, color: "var(--muted)" }}>{d.reason}</div>}
+              </div>
+            </div>
+          ))}
         </div>
       </section>
     </div>

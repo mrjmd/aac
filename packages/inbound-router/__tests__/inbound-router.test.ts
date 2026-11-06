@@ -4,14 +4,16 @@ import { keys } from '@aac/shared-utils/redis';
 vi.mock('@aac/message-drafts', async (orig) => ({
   ...(await orig<typeof import('@aac/message-drafts')>()),
   processRoutedIntake: vi.fn(),
+  processRoutedReferral: vi.fn(),
 }));
-import { processRoutedIntake, type DraftDeps } from '@aac/message-drafts';
+import { processRoutedIntake, processRoutedReferral, type DraftDeps } from '@aac/message-drafts';
 import {
   act,
   burstContent,
   decide,
   liveRoutes,
   routedIntake,
+  routedReferral,
   sweepInbound,
   parseRead,
   routePhone,
@@ -589,6 +591,52 @@ describe('live routes', () => {
     expect(await act(deps, PHONE, live, ctx([{ route: 'scheduling', why: '' }]))).toEqual([]);
     expect(await job()).toBeNull();
     expect(routed).not.toHaveBeenCalled();
+  });
+
+  it('referral live: a decline once Matt is talking to them goes to the referral drafter; a first-reply decline does not', async () => {
+    const referral = vi.mocked(processRoutedReferral);
+    referral.mockReset();
+    referral.mockResolvedValue({ kind: 'drafted', record: {} });
+    const { deps } = makeDeps({ messages: [] });
+    deps.drafts = drafts;
+    const live = new Set(['referral'] as const);
+    expect(await act(deps, PHONE, live, ctx([{ route: 'decline', why: '' }], st({ mattEngaged: true })))).toEqual([
+      { route: 'decline', outcome: 'drafted' },
+    ]);
+    expect(referral.mock.calls[0][2]).toMatchObject({ reason: 'leaking block', referrals: ['Air Guardian ((508) 355-0044)'] });
+    expect(await act(deps, PHONE, live, ctx([{ route: 'decline', why: '' }], st({ intakeDone: true })))).toHaveLength(1);
+    referral.mockClear();
+    // first reply: intake's, even when intake isn't live; other routes: not referral's
+    expect(await act(deps, PHONE, live, ctx([{ route: 'decline', why: '' }]))).toEqual([]);
+    expect(await act(deps, PHONE, live, ctx([{ route: 'quote', why: '' }], st({ mattEngaged: true })))).toEqual([]);
+    expect(referral).not.toHaveBeenCalled();
+    // both live on a first reply: intake drafts it, once
+    await act(deps, PHONE, new Set(['intake', 'referral'] as const), ctx([{ route: 'decline', why: '' }]));
+    expect(routed).toHaveBeenCalledTimes(1);
+    expect(referral).not.toHaveBeenCalled();
+  });
+
+  it('routedReferral: both sides of the thread oldest first, auto-replies out, this burst\'s photos and voicemail', () => {
+    const t = {
+      messages: [
+        msg('m0', 'incoming', 60 * 24, 'Crack in my foundation'),
+        msg('a1', 'outgoing', 60 * 24 - 1, 'Apologies for missing your call! Please send us a text with your name'),
+        msg('o1', 'outgoing', 60 * 23, 'Thanks Sean, quote is on the way'),
+        ...thread.messages,
+      ],
+      calls: thread.calls,
+      voicemails: thread.voicemails,
+    } as unknown as Thread;
+    const r = routedReferral(ctx([]).read, t, ctx([]).referrals, NOW - 8 * 60_000);
+    expect(r.conversation).toEqual([
+      'CUSTOMER: Crack in my foundation',
+      'MATT: Thanks Sean, quote is on the way',
+      'CUSTOMER: Water in my bulkhead',
+      'CUSTOMER: [2 photo(s)]',
+      'CUSTOMER: [voicemail] Hi, bulkhead leaks, call me',
+    ]);
+    expect(r.photoNotes).toEqual(['block wall, wet', 'puddle']);
+    expect(r.referrals).toEqual(['Air Guardian ((508) 355-0044)']);
   });
 
   it('tick with intake live: drafts, logs what it did; a retry re-arms without another read', async () => {

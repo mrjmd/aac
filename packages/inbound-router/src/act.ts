@@ -11,9 +11,14 @@
  *   debounce and no T4 gate call; it stops judging the customer's texts,
  *   photos and voicemails itself. A declined or need-info burst never gets
  *   a quote draft.
+ * - referral: a decline once Matt is already talking to them (the customer
+ *   adds work on the can't-help list mid-thread) goes to message-drafts'
+ *   processRoutedReferral, which continues the thread and names the
+ *   referral. Before this route nothing drafted these: the old quote
+ *   trigger's decline note only fired when photos or a promise ran a quote.
  */
 import { keys } from '@aac/shared-utils/redis';
-import { processRoutedIntake, type RoutedIntake } from '@aac/message-drafts';
+import { AUTO_RE, processRoutedIntake, processRoutedReferral, type RoutedIntake, type RoutedReferral } from '@aac/message-drafts';
 import { enqueueRoutedQuote, type RoutedQuoteJob } from '@aac/quote-drafter';
 import type { Referral } from '@aac/quoting';
 import type { Thread } from './read.js';
@@ -27,6 +32,14 @@ export async function liveRoutes(deps: Pick<RouterDeps, 'redis'>): Promise<Set<L
       .map((s) => s.trim())
       .filter((s): s is LiveRoute => (LIVE_ROUTES as readonly string[]).includes(s)),
   );
+}
+
+/** "Name (phone)" for each referral the read picked, best first. */
+function referralNames(read: InboundRead, referrals: Map<string, Referral>): string[] {
+  return read.canHelp.referralIds.flatMap((id) => {
+    const r = referrals.get(id);
+    return r ? [`${r.name}${r.phone ? ` (${r.phone})` : ''}`] : [];
+  });
 }
 
 /** The customer's side of the thread as intake needs it. */
@@ -53,10 +66,7 @@ export function routedIntake(
     verdict: read.canHelp.verdict,
     reason: read.canHelp.reason,
     question: read.canHelp.question,
-    referrals: read.canHelp.referralIds.flatMap((id) => {
-      const r = referrals.get(id);
-      return r ? [`${r.name}${r.phone ? ` (${r.phone})` : ''}`] : [];
-    }),
+    referrals: referralNames(read, referrals),
     entities: read.entities,
     customerText: [...inbound.map((m) => (m.text ?? '').trim()).filter(Boolean), ...voicemails].join('\n'),
     mediaCount: inbound.reduce((n, m) => n + (m.media?.length ?? 0), 0),
@@ -83,9 +93,9 @@ export async function act(
   },
 ): Promise<Acted[]> {
   const acted: Acted[] = [];
+  // A decline before Matt has said anything is intake's (the kind first reply).
+  const firstReply = !ctx.state.mattEngaged && !ctx.state.intakeDone;
   if (live.has('intake') && deps.drafts) {
-    // A decline before Matt has said anything is intake's (the kind first reply).
-    const firstReply = !ctx.state.mattEngaged && !ctx.state.intakeDone;
     const r = ctx.routes.find(
       (x) => x.route === 'intake' || x.route === 'ct-routing' || (x.route === 'decline' && firstReply),
     );
@@ -98,6 +108,13 @@ export async function act(
       acted.push({ route: r.route, outcome: o.kind, ...(o.kind === 'drafted' ? {} : { reason: o.reason }) });
     }
   }
+  if (live.has('referral') && deps.drafts && !firstReply) {
+    const r = ctx.routes.find((x) => x.route === 'decline');
+    if (r) {
+      const o = await processRoutedReferral(deps.drafts, phone, routedReferral(ctx.read, ctx.thread, ctx.referrals, ctx.burstFromMs));
+      acted.push({ route: r.route, outcome: o.kind, ...(o.kind === 'drafted' ? {} : { reason: o.reason }) });
+    }
+  }
   if (live.has('quote')) {
     const r = ctx.routes.find((x) => x.route === 'quote' || x.route === 'quote-gate');
     if (r) {
@@ -106,6 +123,36 @@ export async function act(
     }
   }
   return acted;
+}
+
+/** Thread lines the referral reply reads (Quo auto-replies dropped). */
+const REFERRAL_THREAD_LINES = 16;
+
+/** The conversation as the referral drafter needs it. */
+export function routedReferral(read: InboundRead, thread: Thread, referrals: Map<string, Referral>, burstFromMs: number): RoutedReferral {
+  const inBurst = (at: string) => new Date(at).getTime() >= burstFromMs;
+  const msgs = thread.messages
+    .filter((m) => (m.text ?? '').trim() || m.media?.length)
+    .filter((m) => m.direction === 'incoming' || !AUTO_RE.test(m.text ?? ''))
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+  const lines = msgs.map((m) => {
+    const who = m.direction === 'incoming' ? 'CUSTOMER' : 'MATT';
+    const photos = m.media?.length ? `[${m.media.length} photo(s)]` : '';
+    return `${who}: ${[(m.text ?? '').replace(/\s+/g, ' ').trim(), photos].filter(Boolean).join(' ')}`;
+  });
+  const voicemails = thread.calls
+    .filter((c) => c.direction === 'incoming' && inBurst(c.createdAt) && thread.voicemails.has(c.id))
+    .map((c) => `CUSTOMER: [voicemail] ${thread.voicemails.get(c.id)}`);
+  const photoNotes = msgs
+    .filter((m) => m.direction === 'incoming' && inBurst(m.createdAt))
+    .flatMap((m) => (m.media ?? []).map((_, i) => read.photos[`${m.id}:${i}`]))
+    .filter((d): d is string => !!d);
+  return {
+    reason: read.canHelp.reason,
+    referrals: referralNames(read, referrals),
+    conversation: [...lines.slice(-REFERRAL_THREAD_LINES), ...voicemails],
+    photoNotes,
+  };
 }
 
 /** The quote loop's job for this burst. */

@@ -188,6 +188,12 @@ export const keys = {
   /** Dedup/claim hash: phone → iso | skipped:* | pending:iso. */
   messageDraftIntakeDone: 'message-drafts:intake-done' as const,
 
+  /**
+   * Hash: phone → iso of the last referral / can't-help note posted mid-
+   * conversation by the inbound router (one per phone per REFERRAL_REPEAT_H).
+   */
+  messageDraftReferralDone: 'message-drafts:referral-done' as const,
+
   /** Hash: phone → failed findContact attempts (Quo contact not synced yet). */
   messageDraftNoteAttempts: 'message-drafts:note-attempts' as const,
 

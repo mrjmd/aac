@@ -315,6 +315,7 @@ export async function processRoutedIntake(deps: DraftDeps, phone: string, r: Rou
     record: {
       type: r.route === 'ct-routing' ? 'ct-routing' : 'intake', via: 'router', phone, outcome: 'drafted',
       fallback: gateFail ?? null, draft, verdict: r.route === 'ct-routing' ? null : r.route === 'decline' ? 'cant-help' : r.verdict,
+      ...(r.route === 'decline' ? { reason: r.reason, referrals: r.referrals } : {}),
     },
   });
 }

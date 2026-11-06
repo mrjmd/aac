@@ -37,6 +37,8 @@ export const FOLLOWUP_LOOKBACK_H = 36;
 export const VOICEMAIL_GRACE_MIN = 15;
 /** Photos the intake reply looks at (matches the quote drafter's MAX_PHOTOS). */
 export const INTAKE_MAX_PHOTOS = 6;
+/** A later can't-help burst inside this window gets no second referral note (Matt has the first). */
+export const REFERRAL_REPEAT_H = 24;
 /** ~80 min of retries waiting for a Quo contact to exist. */
 export const MAX_NOTE_ATTEMPTS = 8;
 export const MAX_DRAFTS_PER_RUN = 6;

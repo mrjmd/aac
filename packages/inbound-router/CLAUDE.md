@@ -26,7 +26,10 @@ live route posts the same draft notes the old path did.
   (`enqueueRoutedQuote`: T1 photos, T3 Matt's promise in the burst, T4 scope
   change on an open quote, no gate call); the quote tick drafts it under its
   own lock and modes, and stops judging customer texts, photos and
-  voicemails itself. `referral` is not wired yet.
+  voicemails itself. `referral`: a decline once Matt is talking to them goes
+  to message-drafts `processRoutedReferral` (continues the thread, names the
+  referral, one note per phone per 24 h); a first-reply decline stays
+  intake's.
 - Mode: Redis `inbound-router:mode`. Unset/`off` clears settled bursts unread
   (no Gemini); `shadow` reads and logs. Tuning is done by replaying past leads
   (`tools/src/scratch`), not by running shadow in production.

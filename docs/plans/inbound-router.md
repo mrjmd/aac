@@ -164,7 +164,21 @@ Each phase is its own commit set and its own push, with your approval.
    or need-info burst no longer gets a quote draft. The drafter still reads
    the photos itself (its area pre-pass grounds prices in past quotes; the
    router's one-line photo descriptions don't replace it), so this step
-   saves the T4 gate call, not the photo read. Referral next.
+   saves the T4 gate call, not the photo read.
+   Built (referral): with `referral` live a decline once Matt is already
+   talking to them (the customer adds work on the can't-help list
+   mid-thread) goes to message-drafts `processRoutedReferral`: one draft-only
+   call that reads the last 16 lines of the thread, continues it (no
+   greeting), declines only the part we don't do and names the first
+   referral; gated (names the referral, no contact ask, no price) with a
+   skeleton fallback. One note per phone per 24 h
+   (`message-drafts:referral-done`). A first-reply decline stays intake's.
+   Nothing drafted these before (the old quote trigger's decline note only
+   fired when photos or a promise ran a quote), so no old path turns off.
+   Replay: 1 mid-thread decline in ~67 leads (a sunken slab after Matt asked
+   for photos → Ram Jack); thanks-only bursts after Matt's own decline route
+   to nothing. The command center's Referrals page lists every decline and
+   referral note from the drafts runlog.
 5. **Scheduling** (after cleanup step 4 moves stub/hold dispatch into
    `@aac/scheduling`).
 

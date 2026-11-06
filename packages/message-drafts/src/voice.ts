@@ -224,6 +224,73 @@ export function intakeFallback(mediaCount: number, verdict: IntakeVerdict = 'can
   return `Hello, thanks for reaching out! We can definitely help get this taken care of. ${photoLine}To get a quote together for you, I will just need the following information: your full name, the address of the property, and an email address where I can send the quote. Then, once I send that over, we can go over the details and any questions that you may have. Thanks!\n\n-- Matt at Attack A Crack`;
 }
 
+// ── referral / can't-help, mid-conversation ──────────────────────
+
+/** Matt's own decline lines (analysis/02-strategy/decline-patterns-2026-11.md), for voice. */
+const DECLINE_LINES = [
+  'We do bulkhead repairs but not full replacements.',
+  'We are a repair company and only do concrete and foundation repairs but not fresh installs or pours.',
+  "That's not a problem we solve. What that situation usually calls for is a basement waterproofing company that installs an interior drain and sump pump.",
+  'Henry over at Best Bulkheads does a great job. Tell him that Matt from Attack A Crack sent you, and he will take good care of you.',
+];
+
+/**
+ * A kind decline in the middle of a conversation (inbound router phase 4c):
+ * the read judged the customer's latest messages as work on the can't-help
+ * list. Reads the thread so far, so it picks up where Matt left off instead
+ * of greeting a stranger.
+ */
+export async function draftReferralReply(
+  gemini: GeminiClient,
+  args: {
+    /** The conversation, oldest first, as "CUSTOMER: ..." / "MATT: ..." lines. */
+    conversation: string[];
+    /** The read's description of the photos in this burst. */
+    photoNotes: string[];
+    reason: string;
+    /** "Name (phone)" for each referral that fits, best first. */
+    referrals: string[];
+  },
+): Promise<string | null> {
+  const prompt = `${VOICE_RULES}
+
+Lines Matt has used to turn down work we don't do (voice only, do not copy):
+${DECLINE_LINES.map((l) => `- ${l}`).join('\n')}
+
+The conversation so far on the business line (oldest first):
+${args.conversation.join('\n')}
+${args.photoNotes.length ? `[the customer's latest photos show:]\n${args.photoNotes.map((n) => `- ${n}`).join('\n')}` : ''}
+
+VERDICT (already decided; do not second-guess it): what they are now asking for is work we can't help with. Why: ${args.reason}
+${args.referrals.length ? `Referrals that fit (recommend the first, by name with the number): ${args.referrals.join('; ')}` : 'No referral fits: a straight, kind decline.'}
+
+Draft Matt's next text in this conversation. It continues the thread (no fresh greeting or introduction, no signature line). Kindly and briefly say this part isn't something we're able to help with and why, in plain words. If a referral fits, recommend them by name with their number. If the conversation also covers work we DO (a crack, a quote already in progress), keep that open and decline only this part. Do NOT ask for name, address, email, or more photos. Keep it short and warm.`;
+  try {
+    const out = await gemini.generateContent(prompt, { maxOutputTokens: 4096 });
+    return out.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export function gateReferral(draft: string, referrals: string[]): string | null {
+  if (draft.length < 60 || draft.length > 900) return `length ${draft.length}`;
+  if (/full name|address of the property|email address/i.test(draft)) return 'asks for contact details';
+  if (/definitely help|we can help with (this|that)/i.test(draft)) return "can't-help draft promises help";
+  if (/\$\s?\d/.test(draft)) return 'contains a price';
+  // The first referral's name has to make it into the text.
+  const words = (referrals[0]?.split(' (')[0] ?? '').toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length >= 4);
+  if (words.length && !words.some((w) => draft.toLowerCase().includes(w))) return 'referral not named';
+  return null;
+}
+
+export function referralFallback(referrals: string[]): string {
+  const ref = referrals[0];
+  return ref
+    ? `Thanks for sending that over. Unfortunately that part isn't something we're able to help with, but ${ref} would be a great call for it. Tell them Matt from Attack A Crack sent you.`
+    : `Thanks for sending that over. Unfortunately that part isn't something we're able to help with, and I don't want to waste your time. Sorry I couldn't be more help, and best of luck getting it taken care of!`;
+}
+
 // ── CT→Luc routing ───────────────────────────────────────────────
 
 export async function draftCtRouting(
