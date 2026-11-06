@@ -8,8 +8,11 @@ https://claude.ai/artifact/UpDmcyToXtJ5wK6Hm2bTUS
 
 ### Why
 
-Every automation follows the same path: shadow, then draft, then live. The
-docs have always said each one moves up when it has earned it
+Two stages, from Matt's side (11/06: shadow vs draft is no real difference
+to him): **drafts for you** (it suggests; you send, edit or ignore) and
+**does it itself** (it acts; you can undo). A "shadow" that only logs is
+just drafting nobody looks at, so it is not a stage on the page. The docs
+have always said each automation moves up when it has earned it
 (`docs/projects/apps-agent.md` autonomy ladder; `docs/projects/agent-vision.md`
 Layer 5; command center README §12 "per-automation acceptance rate"). What we
 have today is the crawl part only. Drafts get made, but almost nothing records
@@ -44,7 +47,7 @@ Two grading bugs found in the quote numbers:
    automations (inbound router): reversals. One Redis record per draft, keys
    in `@aac/shared-utils/redis`. No customer-facing change.
 2. **The page.** System gets a Health | Automations switch. One card per
-   automation: stage ladder, meter toward its bar, last 20 outcomes, since
+   automation: stage (drafts for you / does it itself), meter toward its bar, last 20 outcomes, since
    date. Drill-in: weekly outcomes chart, the bar as a checklist, what it
    learned, recent drafts with what it wrote vs what Matt sent.
 3. **Lessons (weekly).** An LLM pass over the week's changed drafts groups
@@ -56,7 +59,7 @@ Two grading bugs found in the quote numbers:
 4. **Graduation.** When every line of an automation's bar is met, it raises
    one item on Today offering the switch. Turning on and off is per
    automation and always Matt's. A live automation that gets reversed twice
-   in a week drops back to Draft and says why.
+   in a week goes back to drafting and says why.
 
 ### The bar (Matt's call; starting proposal)
 
