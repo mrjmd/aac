@@ -11,6 +11,7 @@ import {
 import { Freshness } from "../components/freshness";
 import { NeedsAttention } from "../components/items";
 import { PageHeader, Tile } from "../components/layout-parts";
+import { SystemTabs } from "./system-tabs";
 
 export const dynamic = "force-dynamic";
 
@@ -88,7 +89,7 @@ function overview(h: SystemHealth, now: number): Array<[string, Level, string]> 
 }
 
 export default async function HealthPage() {
-  const header = <PageHeader eyebrow="Area" title="System" sub="Only shows up on Today when something breaks" />;
+  const header = <PageHeader eyebrow="Area" title="System" sub="Only shows up on Today when something breaks" right={<SystemTabs on="health" />} />;
   let h: SystemHealth;
   try {
     h = await readSystemHealth();

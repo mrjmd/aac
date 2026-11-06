@@ -86,6 +86,9 @@ importers:
       '@aac/customers':
         specifier: workspace:*
         version: link:../../packages/customers
+      '@aac/grader':
+        specifier: workspace:*
+        version: link:../../packages/grader
       '@aac/items':
         specifier: workspace:*
         version: link:../../packages/items

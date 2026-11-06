@@ -391,6 +391,8 @@ export const keys = {
 
   /** HASH: draft id → JSON GradedDraft (what the bot drafted, what Matt did with it, the grade). No TTL; the runlogs it copies from are trimmed. */
   graderDrafts: 'grader:drafts' as const,
+  /** HASH: draft id → JSON HandGrade ({grade, at}). Matt's own grades from the command center; override the grader's. Separate so a grader run can never overwrite one. */
+  graderHand: 'grader:hand' as const,
   /** 'off' | 'dry' | 'live'. Unset = off. Gates the worker's /api/grader cron; dry grades without writing records. */
   graderMode: 'grader:mode' as const,
   /** STRING: JSON summary of the last completed worker run ({day, mode, counts}). The once-a-day guard. */

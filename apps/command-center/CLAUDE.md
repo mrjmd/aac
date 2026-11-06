@@ -44,6 +44,20 @@ Nothing here texts or emails. Jobs not invoiced and a red CI float to Today
 constants in `lib/system-rules.ts`: 3+ distinct jobs skipped in 7 days;
 main red 2+ settled runs in a row or for 24h.
 
+## Automations (`/health/automations`)
+
+System's second tab (Health | Automations, approved mockup
+UpDmcyToXtJ5wK6Hm2bTUS). Server-rendered from Redis only
+(`lib/automations.ts`): the grader's records `grader:drafts` (written daily
+by the worker, `@aac/grader`) and Matt's hand grades `grader:hand`, which
+override the grader's; `summarize` in `@aac/grader` does the bar math
+(Wilson lower bound, raw, hurt in the last 50, per kind of case). One card
+per automation, a drill-in per `?a=<id>`: weekly chart, the bar, the kinds
+table (display text for each kind lives in `AUTOMATIONS`), and recent
+drafts with a word diff (`lib/word-diff.ts`) and the hand-grade buttons
+(`POST /api/automations/grade` {id, grade | null}, the only write). The
+auto-send toggles stay disabled until graduation is built.
+
 ## Day-One Features (Phase 1)
 
 1. **Middleware Heartbeat Monitor** — Green/red status based on Redis timestamp.

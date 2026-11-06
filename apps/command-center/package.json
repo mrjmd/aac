@@ -14,6 +14,7 @@
   "dependencies": {
     "@aac/api-clients": "workspace:*",
     "@aac/customers": "workspace:*",
+    "@aac/grader": "workspace:*",
     "@aac/items": "workspace:*",
     "@aac/metrics": "workspace:*",
     "@aac/quoting": "workspace:*",
