@@ -180,7 +180,14 @@ Each phase is its own commit set and its own push, with your approval.
    to nothing. The command center's Referrals page lists every decline and
    referral note from the drafts runlog.
 5. **Scheduling** (after cleanup step 4 moves stub/hold dispatch into
-   `@aac/scheduling`).
+   `@aac/scheduling`). Status 2026-11-06: NOT STARTED; whether to start
+   now is the owner's open call. The
+   prerequisite is done (dispatch lives in `@aac/scheduling`), and the
+   webhook already runs scheduling dispatch after the ack, so the 10/19
+   timeout risk is closed without this phase. What it would add: act once
+   per settled burst instead of per message. First step when picked up: a
+   read-only replay of recent scheduling replies to count how often a
+   burst actually produced a wrong or duplicate hold/stub.
 
 Expected end state: about 3 Gemini calls per lead (read, intake draft, quote
 draft), photos read once, one note set per burst.

@@ -1,6 +1,11 @@
 # Triage → cloud worker (cleanup step 3b)
 
-Status: BUILT, not live (2026-11-05). Follows 3a (stale quotes in
+Status: LIVE since 2026-11-06 (`triage:mode=live`; store seeded, worker
+dry run 197s, launchd `com.aac.triage` booted out with its plist kept, so
+`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.aac.triage.plist`
+reverts). First live publish 2026-11-07 08:05 ET. Still open: the
+bot-draft label filter (cloud triage skips it until the label harvest
+reads the Redis runlog). History below. Follows 3a (stale quotes in
 `@aac/stale-quotes`). `packages/triage`, `TriageStore`, the Quo transcript
 and voicemail methods, the thin CLIs, `seed-store.ts`, `dismiss.ts` and
 `apps/worker/api/triage.ts` (cron 13:05 UTC, `triage:mode` unset = off) are
