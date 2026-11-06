@@ -336,7 +336,32 @@ export async function writePendingDirective<
     );
   }
   await Promise.all(writes);
-  await redis.ltrim(targetList, 0, 499);
+  await trimPendingList(redis, targetList);
+}
+
+/** How many directive ids each pending list keeps (LTRIM 0..499). */
+export const PENDING_LIST_CAP = 500;
+
+/**
+ * LTRIM a pending list to PENDING_LIST_CAP and DEL the blobs of the ids
+ * that fell off, so blobs don't outlive the only lists the command center
+ * and triage read them from. An id still on either list (a directive
+ * rewritten under the same id) keeps its blob. A concurrent LPUSH only
+ * shifts more ids past the cap; their blobs are left behind, never one
+ * that stays listed. The estimate reverse index is left alone: it still
+ * stops an edit to an old Accepted estimate from making a second directive.
+ */
+async function trimPendingList(redis: Redis, list: string): Promise<void> {
+  const overflow = await redis.lrange<string>(list, PENDING_LIST_CAP, -1);
+  await redis.ltrim(list, 0, PENDING_LIST_CAP - 1);
+  if (overflow.length === 0) return;
+  const [main, review] = await Promise.all([
+    redis.lrange<string>(keys.schedulingPendingList, 0, -1),
+    redis.lrange<string>(keys.schedulingPendingReviewList, 0, -1),
+  ]);
+  const listed = new Set([...main, ...review]);
+  const dropped = [...new Set(overflow)].filter((id) => !listed.has(id));
+  if (dropped.length) await redis.del(...dropped.map((id) => keys.schedulingPending(id)));
 }
 
 /**
