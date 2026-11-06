@@ -9,7 +9,7 @@
  *   npx tsx tools/src/triage/push-items.ts [--dry-run]
  *
  * Besides findings[], it carries the three sections that live in their own
- * files (sections.ts): quotes awaiting Matt's reply, the stale-quote
+ * places (sections.ts): quotes awaiting Matt's reply, the stale-quote
  * follow-up queue and its flags, and the 7-day bot quote drafts.
  */
 
@@ -28,17 +28,17 @@ import {
   type ItemCandidate,
 } from '@aac/items';
 import type { FindingsFile } from './analyze.ts';
-import { botDraftRows, loadAwaiting, loadDraftLabels, loadFollowupQueue } from './sections.ts';
+import { botDraftRows, loadAwaiting, loadDraftLabels, loadStaleQuoteLists, type StaleQuoteLists } from './sections.ts';
 import { loadEnv } from '../lib/env';
 
 /** Every item a triage run implies. Later duplicates of a key win (newest bot-draft row). */
-export function triageCandidates(data: FindingsFile): ItemCandidate[] {
-  const queue = loadFollowupQueue();
+export function triageCandidates(data: FindingsFile, stale: StaleQuoteLists): ItemCandidate[] {
+  const queue = stale.queue;
   const labels = loadDraftLabels();
   const external = (p: { phone: string }) => !isInternalPhone(p.phone);
   const all: Array<ItemCandidate | null> = [
     ...data.findings.map(fromTriageFinding),
-    ...(loadAwaiting(data.booked ?? [])?.entries ?? []).filter(external).map(fromAwaitingQuote),
+    ...(loadAwaiting(data.booked ?? [], stale.awaiting)?.entries ?? []).filter(external).map(fromAwaitingQuote),
     ...(queue?.toSend ?? []).map((d) => fromFollowupDraft(d, false)),
     ...(queue?.waiting ?? []).map((d) => fromFollowupDraft(d, true)),
     ...(queue?.flags ?? []).map(fromFunnelFlag),
@@ -65,7 +65,7 @@ function withCluster(c: ItemCandidate, clusters: Record<string, string>): ItemCa
 
 /** Publish to keys.itemCandidates. Needs UPSTASH_REDIS_REST_URL/TOKEN in env. */
 export async function pushItems(data: FindingsFile, opts: { dryRun?: boolean } = {}): Promise<void> {
-  const candidates = triageCandidates(data);
+  const candidates = triageCandidates(data, await loadStaleQuoteLists());
   const byDetector = candidates.reduce<Record<string, number>>((acc, c) => ({ ...acc, [c.detector]: (acc[c.detector] ?? 0) + 1 }), {});
   console.log(`${candidates.length} item candidates from triage run ${data.generatedAt}`, byDetector);
   if (opts.dryRun) return;

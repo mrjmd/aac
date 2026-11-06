@@ -12,7 +12,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { TodoItem } from '@aac/shared-utils/types';
 import type { Finding, FindingsFile, Section } from './analyze.ts';
-import { botDraftRows, loadAwaiting, loadDraftLabels, loadFollowupQueue, type FupDraft, type FupQueue } from './sections.ts';
+import { botDraftRows, loadAwaiting, loadDraftLabels, loadStaleQuoteLists, type FupDraft, type FupQueue, type StaleQuoteLists } from './sections.ts';
+import { loadEnv } from '../lib/env';
 
 const ET = 'America/New_York';
 
@@ -49,13 +50,12 @@ ${cards || '<p class="empty">✓ No trigger activity this week.</p>'}
 }
 
 /**
- * Quote follow-ups section (stale-quote funnel Phase 1): reads the draft
- * queue written by tools/src/stale-quotes/run.ts. Empty-safe when absent.
+ * Quote follow-ups section (stale-quote funnel): the draft queue the
+ * @aac/stale-quotes runner saves in Redis. Empty-safe when absent.
  * Shows drafts to send today, drafts queued earlier but never sent, and
  * action flags (booked→flip, recommend-close, capacity-hold, needs-call).
  */
-function quoteFollowupsSection(): string {
-  const q = loadFollowupQueue();
+function quoteFollowupsSection(q: FupQueue | null): string {
   if (!q) return '';
   const ageDaysQueue = Math.floor((Date.now() - new Date(q.generatedAt).getTime()) / 86_400_000);
   const stale = ageDaysQueue > 3;
@@ -86,11 +86,11 @@ ${held.length ? `<p class="detail" style="margin-top:14px">Capacity-hold (large 
 /**
  * Pending quotes where the CUSTOMER spoke last and never got an answer — the
  * follow-up bot stays out of these by design, which makes this the hottest
- * human to-do list in the funnel. Reads awaiting-human.json, refreshed by
- * every full scan of tools/src/stale-quotes/run.ts (dry or live). Empty-safe.
+ * human to-do list in the funnel. The list in Redis is refreshed by every
+ * full stale-quote scan (dry or live). Empty-safe.
  */
-function awaitingHumanSection(booked: NonNullable<FindingsFile['booked']>): string {
-  const data = loadAwaiting(booked);
+function awaitingHumanSection(booked: NonNullable<FindingsFile['booked']>, saved: StaleQuoteLists['awaiting']): string {
+  const data = loadAwaiting(booked, saved);
   if (!data) return '';
   const hiddenBooked = data.hiddenBooked;
   const ageDays = Math.floor((Date.now() - new Date(data.generatedAt).getTime()) / 86_400_000);
@@ -315,7 +315,9 @@ const SECTIONS: SectionDef[] = [
   },
 ];
 
-function main(): void {
+async function main(): Promise<void> {
+  loadEnv();
+  const stale = await loadStaleQuoteLists();
   const dataDir = path.resolve(process.cwd(), 'analysis/data/triage');
   const data = JSON.parse(fs.readFileSync(path.join(dataDir, 'findings.json'), 'utf8')) as FindingsFile;
   const { findings, pulse } = data;
@@ -437,8 +439,8 @@ ${pulseTiles}
 ${yourListSection()}
 ${sectionsHtml}
 ${hiddenBookedSection(data.suppressed ?? [])}
-${awaitingHumanSection(data.booked ?? [])}
-${quoteFollowupsSection()}
+${awaitingHumanSection(data.booked ?? [], stale.awaiting)}
+${quoteFollowupsSection(stale.queue)}
 ${botDraftsSection(data.quoteDrafterRunlog ?? [])}
 <footer>
   Snapshot ${esc(data.snapshotAt)} · ${esc(String(data.stats.threads ?? 0))} threads + ${esc(String(data.stats.emailThreads ?? 0))} email threads swept, ${esc(String(data.stats.llmThreads ?? 0))} LLM-triaged (${esc(String(data.stats.llmErrors ?? 0))} errors) ·
@@ -501,4 +503,7 @@ document.querySelectorAll('th[data-sort]').forEach(function (th) {
   console.log(`Wrote ${outPath} (${(html.length / 1024).toFixed(0)}KB)`);
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

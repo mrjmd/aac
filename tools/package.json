@@ -14,6 +14,7 @@
     "@aac/quoting": "workspace:*",
     "@aac/scheduling": "workspace:*",
     "@aac/shared-utils": "workspace:*",
+    "@aac/stale-quotes": "workspace:*",
     "@upstash/redis": "^1.38.0",
     "@vercel/blob": "^0.27.3",
     "googleapis": "^171.4.0"

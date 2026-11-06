@@ -18,6 +18,7 @@
     "@aac/quote-drafter": "workspace:*",
     "@aac/quoting": "workspace:*",
     "@aac/shared-utils": "workspace:*",
+    "@aac/stale-quotes": "workspace:*",
     "@aac/watchdog": "workspace:*",
     "@upstash/redis": "^1.38.0",
     "@vercel/functions": "^3.10.2",

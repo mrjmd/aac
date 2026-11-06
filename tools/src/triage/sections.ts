@@ -3,11 +3,14 @@
  * awaiting Matt's reply, the stale-quote follow-up queue, and the 7-day bot
  * quote drafts. render.ts draws them; tools/src/triage/push-items.ts turns
  * them into command-center items. One reader each, so both show the same rows.
- * Paths are relative to the repo root (cwd). Every loader is empty-safe.
+ * The stale-quote lists come from Redis (@aac/stale-quotes); file paths are
+ * relative to the repo root (cwd). Every loader is empty-safe.
  */
 
 import fs from 'node:fs';
+import { RedisStaleQuoteStore } from '@aac/stale-quotes';
 import type { FindingsFile } from './analyze.ts';
+import { redisFromEnv } from '../lib/env';
 
 type Booked = NonNullable<FindingsFile['booked']>;
 
@@ -29,22 +32,27 @@ export interface Awaiting {
   hiddenBooked: Array<{ entry: AwaitingEntry; event: string }>;
 }
 
+/** The stale-quote runner's saved lists: its draft queue and quotes awaiting Matt's reply. */
+export interface StaleQuoteLists {
+  queue: FupQueue | null;
+  awaiting: { generatedAt: string; entries: AwaitingEntry[] } | null;
+}
+
+/** Read both lists once from Redis (needs UPSTASH_REDIS_REST_URL/TOKEN). */
+export async function loadStaleQuoteLists(): Promise<StaleQuoteLists> {
+  const store = new RedisStaleQuoteStore(redisFromEnv());
+  const [queue, awaiting] = await Promise.all([store.loadQueue(), store.loadAwaiting()]);
+  return { queue, awaiting };
+}
+
 /**
  * Pending quotes where the CUSTOMER spoke last and never got an answer.
  * Applies the same booked-customer cross-reference analyze.ts uses for
  * findings: an upcoming green job booked on/after (their last inbound − 7d)
  * is closed business, not a quote waiting on a reply.
  */
-export function loadAwaiting(booked: Booked): Awaiting | null {
-  const awaitingPath = 'analysis/data/stale-quotes/awaiting-human.json';
-  if (!fs.existsSync(awaitingPath)) return null;
-  let data: { generatedAt: string; entries: AwaitingEntry[] };
-  try {
-    data = JSON.parse(fs.readFileSync(awaitingPath, 'utf8')) as typeof data;
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(data.entries)) return null;
+export function loadAwaiting(booked: Booked, data: StaleQuoteLists['awaiting']): Awaiting | null {
+  if (!data || !Array.isArray(data.entries)) return null;
   const bookedFor = (a: AwaitingEntry): Booked[number] | undefined =>
     booked.find(
       (b) =>
@@ -80,17 +88,6 @@ export interface FupQueue {
   toSend: FupDraft[];
   waiting: FupDraft[];
   flags: Array<{ kind: string; doc: string; customer: string; amount: number; detail: string }>;
-}
-
-/** The draft queue written by tools/src/stale-quotes/run.ts. */
-export function loadFollowupQueue(): FupQueue | null {
-  const queuePath = 'analysis/data/stale-quotes/draft-queue.json';
-  if (!fs.existsSync(queuePath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(queuePath, 'utf8')) as FupQueue;
-  } catch {
-    return null;
-  }
 }
 
 export interface BotDraftRow {

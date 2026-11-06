@@ -312,6 +312,23 @@ export const keys = {
   /** STRING: JSON summary of the last run (counts, mode, errors). Read by health checks. */
   adsConversionsLastSummary: 'ads-conversions:last-summary' as const,
 
+  // ── Stale-quote follow-up (@aac/stale-quotes) ───────────────────────
+
+  /** HASH: QBO estimate id → JSON EstimateState (variant, suspends, extraction cache, touches). Entries pruned once the quote leaves Pending. */
+  staleQuotesState: 'stale-quotes:state' as const,
+  /** STRING: JSON QueueFile from the last live run (drafts to send, waiting, flags, skipped). */
+  staleQuotesQueue: 'stale-quotes:queue' as const,
+  /** STRING: JSON {generatedAt, entries} of Pending quotes where the customer spoke last. Refreshed by every full scan, dry or live. */
+  staleQuotesAwaiting: 'stale-quotes:awaiting' as const,
+  /** LIST: JSON runlog rows (skipped / drafted), newest first. LTRIM 5000. */
+  staleQuotesRunlog: 'stale-quotes:runlog' as const,
+  /** 'off' | 'dry' | 'live'. Unset = off. Gates the worker's /api/stale-quotes cron. */
+  staleQuotesMode: 'stale-quotes:mode' as const,
+  /** STRING: JSON summary of the last completed worker run ({at, mode, counts}). The once-a-day guard and health check. */
+  staleQuotesLastRun: 'stale-quotes:last-run' as const,
+  /** NX lock (TTL 900s) so a slow scan and the next cron slot never overlap. */
+  staleQuotesRunLock: 'stale-quotes:run-lock' as const,
+
   /** HASH: person id → JSON Person (agenda topics, past conversations, tagged items, facts). No TTL. */
   ccPeople: 'cc:people' as const,
 

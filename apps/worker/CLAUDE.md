@@ -48,6 +48,13 @@ Plain Vercel Serverless Functions (no framework) that run the
   live, `/api/quote-tick` drops the customer's texts, photos and voicemails
   and drafts the router's routed jobs instead (Matt's texts, emails, call
   transcripts and debriefs still trigger as before).
+- `api/stale-quotes.ts` — daily stale-quote follow-up (`@aac/stale-quotes`),
+  cron every 20 min through the 12:00 UTC hour: the first slot scans every
+  Pending quote and drafts due follow-ups as `📋 STALE-QUOTE FOLLOW-UP` Quo
+  notes (never sends); later slots finish a scan its 600s budget cut short,
+  then skip until tomorrow. Gated by Redis `stale-quotes:mode`
+  (off | dry | live, unset = off); dry refreshes only the awaiting-reply
+  list. Needs the Google env (calendar + Gmail are hard gates).
 - `api/health.ts` — liveness.
 
 ## Rules
