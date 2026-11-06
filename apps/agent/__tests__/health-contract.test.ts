@@ -72,6 +72,7 @@ describe('health:errors written by the shared logHealthError', () => {
       });
       expect(Number.isNaN(Date.parse(entry.timestamp))).toBe(false);
       expect(formatErrorSms(entry)).toContain('src: worker:sweep');
+      expect(formatErrorSms(entry).startsWith('[worker error]')).toBe(true);
     }
   });
 });

@@ -101,7 +101,8 @@ export function formatErrorSms(entry: HealthErrorEntry): string {
     entry.details && typeof entry.details === 'object'
       ? `\nctx: ${JSON.stringify(entry.details).slice(0, 200)}`
       : '';
-  return `[middleware error]\nsrc: ${entry.source}\nat: ${ts}\n${msg}${details}`;
+  const app = entry.source.startsWith('worker:') ? 'worker' : 'middleware';
+  return `[${app} error]\nsrc: ${entry.source}\nat: ${ts}\n${msg}${details}`;
 }
 
 /**
