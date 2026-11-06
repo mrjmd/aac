@@ -32,6 +32,7 @@ vi.mock('../lib/cron.js', async () => {
 
 vi.mock('../lib/redis.js', () => ({
   markCronAction: (...args: unknown[]) => mockMarkCronAction(...args),
+  releaseCronAction: vi.fn().mockResolvedValue(undefined),
   trackCronRun: vi.fn().mockResolvedValue(undefined),
   logHealthError: vi.fn().mockResolvedValue(undefined),
 }));
@@ -58,6 +59,9 @@ vi.mock('@aac/api-clients/pipedrive', () => ({
 }));
 
 import handler from '../api/cron/job-followups.js';
+import { VendorHttpError } from '@aac/api-clients/errors';
+import { logHealthError, releaseCronAction } from '../lib/redis.js';
+import { recordVariant } from '../lib/followup.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -181,5 +185,57 @@ describe('job-followups multi-day guard', () => {
 
     expect(mockListEvents).toHaveBeenCalledTimes(1);
     expect(res.json.mock.calls[0][0].summary.totalEvents).toBe(0);
+  });
+});
+
+describe('job-followups: marker on a failed send (owner policy 2026-11-05)', () => {
+  beforeEach(() => {
+    mockListEvents.mockResolvedValueOnce([dayOne]).mockResolvedValueOnce([]);
+  });
+
+  it('Quo answers 500: marker released so the next run retries', async () => {
+    mockSendMessage.mockRejectedValueOnce(new VendorHttpError('quo', 500, 'Quo API error: 500 - boom'));
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockMarkCronAction).toHaveBeenCalledWith('followup', 'evt-day1');
+    expect(releaseCronAction).toHaveBeenCalledWith('followup', 'evt-day1');
+    expect(recordVariant).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('error');
+    expect(logHealthError).toHaveBeenCalledWith(
+      'cron:job-followups',
+      expect.stringContaining('marker released, next run retries'),
+    );
+  });
+
+  it('network error: marker kept, health error logged', async () => {
+    mockSendMessage.mockRejectedValueOnce(new TypeError('fetch failed'));
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(releaseCronAction).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('error');
+    expect(logHealthError).toHaveBeenCalledWith(
+      'cron:job-followups',
+      expect.stringContaining('marker kept, NOT retried'),
+    );
+  });
+
+  it('a Redis failure after a successful send does not release the marker', async () => {
+    (recordVariant as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockSendMessage).toHaveBeenCalledOnce();
+    expect(releaseCronAction).not.toHaveBeenCalled();
+  });
+
+  it('success: marker kept', async () => {
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockSendMessage).toHaveBeenCalledOnce();
+    expect(releaseCronAction).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('sent');
   });
 });

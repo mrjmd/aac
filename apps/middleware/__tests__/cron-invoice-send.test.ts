@@ -41,11 +41,14 @@ vi.mock('../lib/cron.js', async () => {
 
 vi.mock('../lib/redis.js', () => ({
   markCronAction: vi.fn().mockResolvedValue(true),
+  releaseCronAction: vi.fn().mockResolvedValue(undefined),
   trackCronRun: vi.fn().mockResolvedValue(undefined),
   logHealthError: vi.fn().mockResolvedValue(undefined),
 }));
 
 import handler from '../api/cron/invoice-send.js';
+import { VendorHttpError } from '@aac/api-clients/errors';
+import { logHealthError, markCronAction, releaseCronAction } from '../lib/redis.js';
 
 function makeReq(query: Record<string, string> = {}) {
   return { method: 'GET', query, headers: { authorization: 'Bearer test-secret' } } as any;
@@ -172,5 +175,54 @@ describe('cron/invoice-send', () => {
     const res = makeRes();
     await handler(makeReq({ dry: 'true', delay: '3' }), res);
     expect(res.json.mock.calls[0][0].delayDays).toBe(3);
+  });
+});
+
+describe('cron/invoice-send: marker on a failed send (owner policy 2026-11-05)', () => {
+  beforeEach(() => {
+    mockListEvents.mockResolvedValue([event]);
+    mockSearchPersonByName.mockResolvedValue({ id: 1 });
+    mockGetPerson.mockResolvedValue(person);
+    mockSearchCustomerByEmail.mockResolvedValue(customer);
+    mockGetInvoicesByCustomer.mockResolvedValue([
+      { Id: 'inv-1', Balance: 1500, EmailStatus: 'NeedToSend' },
+    ]);
+  });
+
+  it('QuickBooks answers 500: marker released so the next run retries', async () => {
+    mockSendInvoice.mockRejectedValueOnce(
+      new VendorHttpError('quickbooks', 500, 'QuickBooks API error: 500 - boom'),
+    );
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(markCronAction).toHaveBeenCalledWith('invoice-send', 'evt-1');
+    expect(releaseCronAction).toHaveBeenCalledWith('invoice-send', 'evt-1');
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('error');
+    expect(logHealthError).toHaveBeenCalledWith(
+      'cron:invoice-send',
+      expect.stringContaining('marker released, next run retries'),
+    );
+  });
+
+  it('network error: marker kept, health error logged', async () => {
+    mockSendInvoice.mockRejectedValueOnce(new TypeError('fetch failed'));
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(releaseCronAction).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('error');
+    expect(logHealthError).toHaveBeenCalledWith(
+      'cron:invoice-send',
+      expect.stringContaining('marker kept, NOT retried'),
+    );
+  });
+
+  it('success: marker kept', async () => {
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(releaseCronAction).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('sent');
   });
 });

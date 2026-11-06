@@ -33,6 +33,7 @@ import {
   isoDateDaysAgo,
 } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
+import { settleFailedSend } from '../../lib/cron-send.js';
 import { matchEventToDealAndPerson, matchPersonToQBCustomer } from '@aac/customers';
 import type { QBEstimate } from '@aac/api-clients/quickbooks';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
@@ -248,7 +249,14 @@ async function processEvent(
       };
     }
 
-    const invoice = await qb.createInvoiceFromEstimate(estimate.Id);
+    // On failure the marker is released only if QuickBooks definitively
+    // rejected the create (lib/cron-send.ts).
+    let invoice: Awaited<ReturnType<typeof qb.createInvoiceFromEstimate>>;
+    try {
+      invoice = await qb.createInvoiceFromEstimate(estimate.Id);
+    } catch (createErr) {
+      throw await settleFailedSend('invoice-create', event.id, createErr);
+    }
 
     log.info('Invoice created', {
       eventId: event.id,

@@ -482,9 +482,18 @@ export async function markCronAction(
   ttlSeconds: number = 7 * 86_400 // 7 days default
 ): Promise<boolean> {
   const redis = getRedis();
-  const key = `cron:${action}:${entityId}`;
+  const key = keys.cronAction(action, entityId);
   const result = await redis.set(key, new Date().toISOString(), { nx: true, ex: ttlSeconds });
   return result === 'OK';
+}
+
+/**
+ * Delete a markCronAction marker so the next cron run retries the action.
+ * Only for a send the vendor definitively rejected (see lib/cron-send.ts).
+ */
+export async function releaseCronAction(action: string, entityId: string): Promise<void> {
+  const redis = getRedis();
+  await redis.del(keys.cronAction(action, entityId));
 }
 
 /**

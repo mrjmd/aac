@@ -31,6 +31,7 @@ import {
   getDayRangeEastern,
 } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
+import { settleFailedSend } from '../../lib/cron-send.js';
 import { renderTemplate } from '../../lib/templates.js';
 import {
   classifyService,
@@ -271,8 +272,14 @@ async function processFollowUp(
       };
     }
 
+    // On send failure the marker is released only if Quo definitively
+    // rejected it (lib/cron-send.ts).
     const quo = getQuo();
-    await quo.sendMessage(primaryPhone, message);
+    try {
+      await quo.sendMessage(primaryPhone, message);
+    } catch (sendErr) {
+      throw await settleFailedSend('followup', event.id, sendErr);
+    }
     await recordVariant(event.id, variant);
 
     log.info('Follow-up sent', {

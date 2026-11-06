@@ -31,6 +31,7 @@ import {
   isoDateDaysAgo,
 } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
+import { settleFailedSend } from '../../lib/cron-send.js';
 import { matchEventToPerson, matchPersonToQBCustomer } from '@aac/customers';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
@@ -178,7 +179,13 @@ async function processEvent(
       return { ...base, personName: person.name, qbCustomerId: customer.Id, invoiceId: invoice.Id, status: 'sent', reason: 'dry-run' };
     }
 
-    await qb.sendInvoice(invoice.Id);
+    // On failure the marker is released only if QuickBooks definitively
+    // rejected the send (lib/cron-send.ts).
+    try {
+      await qb.sendInvoice(invoice.Id);
+    } catch (sendErr) {
+      throw await settleFailedSend('invoice-send', event.id, sendErr);
+    }
 
     log.info('Invoice sent', {
       eventId: event.id,

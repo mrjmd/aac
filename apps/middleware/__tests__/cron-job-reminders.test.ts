@@ -35,11 +35,14 @@ vi.mock('../lib/cron.js', async () => {
 
 vi.mock('../lib/redis.js', () => ({
   markCronAction: vi.fn().mockResolvedValue(true),
+  releaseCronAction: vi.fn().mockResolvedValue(undefined),
   trackCronRun: vi.fn().mockResolvedValue(undefined),
   logHealthError: vi.fn().mockResolvedValue(undefined),
 }));
 
 import handler from '../api/cron/job-reminders.js';
+import { VendorHttpError } from '@aac/api-clients/errors';
+import { logHealthError, markCronAction, releaseCronAction } from '../lib/redis.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -255,6 +258,50 @@ describe('cron/job-reminders', () => {
 
     expect(mockGetPerson).toHaveBeenCalledWith(999);
     expect(mockSearchPersonByName).toHaveBeenCalledWith('John Smith');
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('sent');
+  });
+});
+
+describe('cron/job-reminders: marker on a failed send (owner policy 2026-11-05)', () => {
+  beforeEach(() => {
+    mockListEvents.mockResolvedValue([sampleEvent]);
+    mockSearchPersonByName.mockResolvedValue(samplePerson);
+    mockGetPerson.mockResolvedValue(samplePerson);
+  });
+
+  it('Quo answers 500: marker released so the next run retries', async () => {
+    mockSendMessage.mockRejectedValueOnce(new VendorHttpError('quo', 500, 'Quo API error: 500 - boom'));
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(markCronAction).toHaveBeenCalledWith('reminder', 'evt-1');
+    expect(releaseCronAction).toHaveBeenCalledWith('reminder', 'evt-1');
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('error');
+    expect(logHealthError).toHaveBeenCalledWith(
+      'cron:job-reminders',
+      expect.stringContaining('marker released, next run retries'),
+    );
+  });
+
+  it('network error: marker kept, health error logged', async () => {
+    mockSendMessage.mockRejectedValueOnce(new TypeError('fetch failed'));
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(releaseCronAction).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('error');
+    expect(logHealthError).toHaveBeenCalledWith(
+      'cron:job-reminders',
+      expect.stringContaining('marker kept, NOT retried'),
+    );
+  });
+
+  it('success: marker kept', async () => {
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockSendMessage).toHaveBeenCalledOnce();
+    expect(releaseCronAction).not.toHaveBeenCalled();
     expect(res.json.mock.calls[0][0].results[0].status).toBe('sent');
   });
 });

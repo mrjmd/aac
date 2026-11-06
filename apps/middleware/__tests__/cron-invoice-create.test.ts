@@ -49,11 +49,14 @@ vi.mock('../lib/cron.js', async () => {
 
 vi.mock('../lib/redis.js', () => ({
   markCronAction: vi.fn().mockResolvedValue(true),
+  releaseCronAction: vi.fn().mockResolvedValue(undefined),
   trackCronRun: vi.fn().mockResolvedValue(undefined),
   logHealthError: vi.fn().mockResolvedValue(undefined),
 }));
 
 import handler from '../api/cron/invoice-create.js';
+import { VendorHttpError } from '@aac/api-clients/errors';
+import { logHealthError, markCronAction, releaseCronAction } from '../lib/redis.js';
 
 function makeReq(query: Record<string, string> = {}) {
   return { method: 'GET', query, headers: { authorization: 'Bearer test-secret' } } as any;
@@ -297,5 +300,63 @@ describe('cron/invoice-create', () => {
       expect(body.results[0].estimateId).toBe('qb-e-7');
       expect(mockGetEstimatesByCustomer).toHaveBeenCalled();
     });
+  });
+});
+
+describe('cron/invoice-create: marker on a failed create (owner policy 2026-11-05)', () => {
+  beforeEach(() => {
+    mockListEvents.mockResolvedValue([event]);
+    mockSearchPersonByName.mockResolvedValue({ id: 1 });
+    mockGetPerson.mockResolvedValue(person);
+    mockSearchCustomerByEmail.mockResolvedValue(customer);
+    mockGetEstimatesByCustomer.mockResolvedValue([{ Id: 'qb-e-7', TotalAmt: 1500 }]);
+  });
+
+  it('QuickBooks answers 500: marker released so the next run retries', async () => {
+    mockCreateInvoiceFromEstimate.mockRejectedValueOnce(
+      new VendorHttpError('quickbooks', 500, 'QuickBooks API error: 500 - boom'),
+    );
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(markCronAction).toHaveBeenCalledWith('invoice-create', 'evt-1');
+    expect(releaseCronAction).toHaveBeenCalledWith('invoice-create', 'evt-1');
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('error');
+    expect(logHealthError).toHaveBeenCalledWith(
+      'cron:invoice-create',
+      expect.stringContaining('marker released, next run retries'),
+    );
+  });
+
+  it('network error: marker kept, health error logged', async () => {
+    mockCreateInvoiceFromEstimate.mockRejectedValueOnce(new TypeError('fetch failed'));
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(releaseCronAction).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('error');
+    expect(logHealthError).toHaveBeenCalledWith(
+      'cron:invoice-create',
+      expect.stringContaining('marker kept, NOT retried'),
+    );
+  });
+
+  it('a failure before the create (lookup) does not release the marker', async () => {
+    mockGetEstimatesByCustomer.mockRejectedValueOnce(
+      new VendorHttpError('quickbooks', 500, 'QuickBooks API error: 500 - boom'),
+    );
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockCreateInvoiceFromEstimate).not.toHaveBeenCalled();
+    expect(releaseCronAction).not.toHaveBeenCalled();
+  });
+
+  it('success: marker kept', async () => {
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(releaseCronAction).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('created');
   });
 });

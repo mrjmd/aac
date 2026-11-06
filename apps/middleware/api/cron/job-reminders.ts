@@ -29,6 +29,7 @@ import { getCalendar, getPipedrive, getQuo } from '../../lib/clients.js';
 import { getEnv } from '../../lib/env.js';
 import { verifyCronAuth, REMINDER_COLOR_IDS, extractFirstName, getDayRangeEastern } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
+import { settleFailedSend } from '../../lib/cron-send.js';
 import { renderTemplate } from '../../lib/templates.js';
 import { matchEventToPerson } from '@aac/customers';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
@@ -294,9 +295,14 @@ async function processReminder(
       };
     }
 
-    // Send the SMS
+    // Send the SMS. On failure the marker is released only if Quo
+    // definitively rejected it (lib/cron-send.ts).
     const quo = getQuo();
-    await quo.sendMessage(primaryPhone, message);
+    try {
+      await quo.sendMessage(primaryPhone, message);
+    } catch (sendErr) {
+      throw await settleFailedSend('reminder', event.id, sendErr);
+    }
 
     log.info('Reminder sent', {
       eventId: event.id,
