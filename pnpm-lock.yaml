@@ -325,6 +325,9 @@ importers:
       '@aac/stale-quotes':
         specifier: workspace:*
         version: link:../../packages/stale-quotes
+      '@aac/triage':
+        specifier: workspace:*
+        version: link:../../packages/triage
       '@aac/watchdog':
         specifier: workspace:*
         version: link:../../packages/watchdog

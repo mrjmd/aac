@@ -46,6 +46,11 @@ const workerRedis = vi.hoisted(() => {
     }),
     get: vi.fn(async (k: string) => kv.get(k) ?? null),
     del: vi.fn(async (k: string) => kv.delete(k)),
+    eval: vi.fn(async (_script: string, ks: string[], args: string[]) => {
+      if (kv.get(ks[0]) !== args[0]) return 0;
+      kv.delete(ks[0]);
+      return 1;
+    }),
   };
 });
 const getWorkerDeps = vi.hoisted(() =>
@@ -105,6 +110,29 @@ const adsRun = vi.hoisted(() => vi.fn(async (): Promise<Record<string, unknown>>
 vi.mock('@aac/ads-conversions', () => ({ runAdsConversions: adsRun }));
 vi.mock('../lib/ads-deps.js', () => ({ getAdsDeps: () => ({}), adsMode: () => 'dry' }));
 
+const triage = vi.hoisted(() => ({
+  collect: vi.fn(async () => ({})),
+  analyze: vi.fn(async (): Promise<Record<string, unknown>> => ({
+    generatedAt: '2026-11-05T13:05:00.000Z',
+    findings: [{ section: 'conversation' }],
+    stats: { llmErrors: 0, emailSweepOk: 1, geminiCanaryOk: 1 },
+  })),
+  triageCandidates: vi.fn(() => [{ key: 'a', detector: 'L1' }]),
+  publishTriageItems: vi.fn(async () => undefined),
+}));
+const triageMode = vi.hoisted(() => vi.fn(async () => 'dry'));
+vi.mock('@aac/triage', () => triage);
+vi.mock('../lib/triage-deps.js', () => ({
+  missingTriageEnv: () => null,
+  triageMode,
+  getTriageDeps: () => ({
+    redis: workerRedis,
+    collect: { now: () => Date.now() },
+    analyze: { now: () => Date.now() },
+    loadStaleLists: async () => ({ queue: null, awaiting: null }),
+  }),
+}));
+
 const watchdogTick = vi.hoisted(() => vi.fn(async () => ({ down: [], texted: [], recovered: [] })));
 vi.mock('@aac/watchdog', () => ({ runWatchdogTick: watchdogTick }));
 vi.mock('../lib/watchdog-deps.js', () => ({ getWatchdogDeps: () => ({}) }));
@@ -116,6 +144,7 @@ import { GET as quoteTick } from '../api/quote-tick.js';
 import { POST as quoteDraft } from '../api/quote-draft.js';
 import { GET as quoteEmailTick } from '../api/quote-email-tick.js';
 import { GET as staleQuotes } from '../api/stale-quotes.js';
+import { GET as triageRoute } from '../api/triage.js';
 import { GET as adsConversions } from '../api/ads-conversions.js';
 import { POST as draftFollowup } from '../api/draft-followup.js';
 import { GET as watchdog } from '../api/watchdog.js';
@@ -168,6 +197,7 @@ describe('top-level failures land in health:errors as worker:<route>', () => {
     ['quote-draft', () => drafter.prepareRun.mockRejectedValueOnce(new Error('qbo 503')), () => quoteDraft(post({ phone: '+15085551234' }))],
     ['quote-email-tick', () => drafter.pollQuoteEmails.mockRejectedValueOnce(new Error('qbo 503')), () => quoteEmailTick(cron())],
     ['stale-quotes', () => staleRun.mockRejectedValueOnce(new Error('qbo 503')), () => staleQuotes(cron())],
+    ['triage', () => triage.collect.mockRejectedValueOnce(new Error('qbo 503')), () => triageRoute(cron())],
     ['ads-conversions', () => adsRun.mockRejectedValueOnce(new Error('qbo 503')), () => adsConversions(cron())],
     ['draft-followup', () => drafts.processFollowupById.mockRejectedValueOnce(new Error('qbo 503')), () => draftFollowup(post({ estimateId: '9', sync: true }))],
     ['watchdog', () => watchdogTick.mockRejectedValueOnce(new Error('qbo 503')), () => watchdog(cron())],
@@ -204,6 +234,13 @@ describe('top-level failures land in health:errors as worker:<route>', () => {
     expect(res.status).toBe(500);
     expect(await res.json()).toMatchObject({ status: 'error', message: 'upstash 500' });
     expect(errors()[0]).toMatchObject({ source: 'worker:stale-quotes', message: 'stale-quotes failed: upstash 500' });
+  });
+
+  it('triage: a Redis read before its try is guarded, recorded and answered 500 JSON', async () => {
+    triageMode.mockRejectedValueOnce(new Error('upstash 500'));
+    const res = await triageRoute(cron());
+    expect(res.status).toBe(500);
+    expect(errors()[0]).toMatchObject({ source: 'worker:triage', message: 'triage failed: upstash 500' });
   });
 
   it('draft-followup: a deferred (async) failure is recorded too', async () => {
@@ -280,6 +317,17 @@ describe('failures packages swallow into a result', () => {
     });
   });
 
+  it('triage: a run that finished blind (LLM errors, Gemini canary)', async () => {
+    triage.analyze.mockResolvedValueOnce({
+      generatedAt: '2026-11-05T13:05:00.000Z',
+      findings: [],
+      stats: { llmErrors: 2, emailSweepOk: 1, geminiCanaryOk: 0 },
+    });
+    expect((await triageRoute(cron())).status).toBe(200);
+    expect(errors()[0]).toMatchObject({ source: 'worker:triage', message: 'triage run degraded: 2 LLM errors, Gemini canary failed' });
+    expect(result('triage')).toEqual({ sent: 0, skipped: 0, errors: 2 });
+  });
+
   it('a clean run records nothing', async () => {
     await tick(cron());
     await quoteTick(cron());
@@ -290,17 +338,19 @@ describe('failures packages swallow into a result', () => {
 });
 
 describe('last-run stamps (routes without a heartbeat)', () => {
-  it('sweep, inbound-tick, quote-email-tick and stale-quotes stamp cron:<route>:last-run with counts', async () => {
+  it('sweep, inbound-tick, quote-email-tick, stale-quotes and triage stamp cron:<route>:last-run with counts', async () => {
     await sweep(cron());
     await inboundTick(cron());
     await quoteEmailTick(cron());
     await staleQuotes(cron());
-    for (const route of ['sweep', 'inbound-tick', 'quote-email-tick', 'stale-quotes']) {
+    await triageRoute(cron());
+    for (const route of ['sweep', 'inbound-tick', 'quote-email-tick', 'stale-quotes', 'triage']) {
       expect(Number.isNaN(Date.parse(lastRun(route) ?? '')), route).toBe(false);
     }
     expect(result('sweep')).toEqual({ sent: 1, skipped: 1, errors: 0 });
     expect(result('quote-email-tick')).toEqual({ sent: 1, skipped: 4, errors: 0 });
     expect(result('stale-quotes')).toEqual({ sent: 1, skipped: 1, errors: 0 });
+    expect(result('triage')).toEqual({ sent: 0, skipped: 0, errors: 0 });
   });
 
   it('a failed or skipped run does not stamp', async () => {
@@ -308,6 +358,9 @@ describe('last-run stamps (routes without a heartbeat)', () => {
     await sweep(cron());
     staleMode.mockResolvedValueOnce('off');
     await staleQuotes(cron());
+    triageMode.mockResolvedValueOnce('off');
+    await triageRoute(cron());
+    expect(lastRun('triage')).toBeNull();
     expect(lastRun('sweep')).toBeNull();
     expect(lastRun('stale-quotes')).toBeNull();
   });

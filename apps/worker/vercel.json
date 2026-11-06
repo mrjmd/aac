@@ -22,6 +22,10 @@
       "maxDuration": 800,
       "memory": 512
     },
+    "api/triage.ts": {
+      "maxDuration": 800,
+      "memory": 1024
+    },
     "api/**/*.ts": {
       "maxDuration": 300,
       "memory": 256
@@ -59,6 +63,10 @@
     {
       "path": "/api/stale-quotes",
       "schedule": "0,20,40 12 * * *"
+    },
+    {
+      "path": "/api/triage",
+      "schedule": "5 13 * * *"
     }
   ]
 }

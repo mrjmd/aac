@@ -51,6 +51,8 @@ const NOT_WATCHED: Record<string, string> = {
   'worker:/api/inbound-tick': 'TODO',
   // TODO: daily stale-quote scan (mode off by default); writes keys.cronLastRun('stale-quotes') after a scan, not read.
   'worker:/api/stale-quotes': 'TODO',
+  // TODO: daily triage run (mode off by default); writes keys.cronLastRun('triage') after a run, not read.
+  'worker:/api/triage': 'TODO',
 };
 
 function watched(): Set<string> {
