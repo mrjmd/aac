@@ -118,6 +118,7 @@ Answer:
    new_lead = first contact about an issue (no earlier work or conversation with Matt about it); quote_request = asks for a price or quote; photos_sent = sent photos of the issue; scope_change = changes or adds to work already quoted; scheduling_reply = picks, confirms, moves or cancels a visit or job date, or asks to book one; question = any other question for Matt; other = thanks, sign-offs, reviews, "ok", or anything that needs nothing from Matt. Thanks or "have a good weekend" is "other" even in a thread about scheduling.
 5. canHelp, judged from the text AND the photos against the rules above:
    verdict "cant-help" (what they need is on the can't-help list), "need-info" (it could go either way and ONE fact decides it), or "can-help" (plausibly crack repair or concrete work we do).
+   A camera photo OF a screen or of printed pages (an inspection report on a monitor, glare, moiré, a photo of a photo) is too poor to judge or quote from; a clean screenshot where the crack is clear is fine. For the poor kind, unless the thread already settles it, the verdict is need-info and the question asks for the original photos texted directly, or the full report emailed to matt@attackacrack.com.
    A CASE BY CASE rule is never cant-help: when one applies, the verdict is need-info, the question is what Matt would need to decide (often whether he can come take a look), the reason starts with "Case by case:", and its ruleIds and referralIds are filled in as usual.
    A rule with a threshold or a scale (bowing over 1 inch, actively leaking, below the trip minimum, standalone painting) is cant-help only when the thread or photos SHOW that condition. "Starting to bulge", a customer asking whether it is structural, or a leak with no crack found yet is need-info (ask the deciding fact) or can-help, never cant-help. Targeted repointing or patching is work we do; chipped or peeling steps are resurfacing, not painting. A rule declines only the thing it names: a crack in poured concrete (a bulkhead stairwell wall, steps, a slab) is ours even when doors, wood or paint are nearby.
    ruleIds: the bracketed ids of the rules that decided it ([] for can-help). referralIds: bracketed ids of referrals that fit, best first ([] when none fits).
@@ -220,8 +221,9 @@ export async function readInbound(deps: RouterDeps, phone: string, loaded?: Thre
   let out: string;
   try {
     out = await deps.gemini.generateContent(prompt, {
-      // Thinking shares the output budget; 4096 truncated a CT thread's JSON in the live replay.
-      maxOutputTokens: 8192,
+      // Thinking shares the output budget and can run long; 4096 truncated a
+      // CT thread's JSON in the live replay, and the drafter overran 8192.
+      maxOutputTokens: 16384,
       imageParts,
       retries: 2,
       timeoutMs: 120_000,
