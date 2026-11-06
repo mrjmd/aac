@@ -3,8 +3,8 @@ import type { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
 import type { OpenQuoteEntry } from '@aac/shared-utils/types';
 import { classify, routerOwnsEvent, type TriggerEvent, type DrafterDeps } from '../src/types.js';
-import { draftOne, type DraftOneOptions, type RunContext } from '../src/drafter.js';
-import { enqueueRoutedQuote, runTick, resolveVisitCustomers } from '../src/trigger.js';
+import { confirmNextDocNumber, draftOne, type DraftOneOptions, type RunContext } from '../src/drafter.js';
+import { enqueueRoutedQuote, releaseRunLock, runTick, resolveVisitCustomers, RUN_LOCK_TTL_MS } from '../src/trigger.js';
 import { loadAssets, clearAssetCache } from '../src/assets.js';
 import { parseGateVerdict, buildScopeGatePrompt } from '../src/gate.js';
 import {
@@ -33,6 +33,13 @@ class MiniRedis {
   }
   async del(key: string): Promise<number> {
     return this.kv.delete(key) ? 1 : 0;
+  }
+  /** Only the run lock's compare-and-delete script is supported. */
+  async eval(script: string, keys: string[], args: string[]): Promise<number> {
+    if (!script.includes('redis.call("get", KEYS[1]) == ARGV[1]')) throw new Error('unsupported script');
+    if (this.kv.get(keys[0]) !== args[0]) return 0;
+    this.kv.delete(keys[0]);
+    return 1;
   }
   async rpop<T>(key: string): Promise<T | null> {
     const list = this.lists.get(key) ?? [];
@@ -385,6 +392,44 @@ describe('runTick', () => {
     await redis.set(keys.quoteDrafterRunLock, 'held');
     const summary = await runTick(deps, 'live');
     expect(summary.skipped).toBe('locked');
+    // and does not release the other run's lock
+    expect(await redis.get(keys.quoteDrafterRunLock)).toBe('held');
+  });
+
+  it('takes the lock with a unique token and a TTL longer than quote-tick maxDuration (800s)', async () => {
+    const { deps, redis } = makeDeps();
+    const setSpy = vi.spyOn(redis, 'set');
+    await runTick(deps, 'live');
+    await runTick(deps, 'live');
+    const lockCalls = setSpy.mock.calls.filter(([k]) => k === keys.quoteDrafterRunLock);
+    expect(lockCalls).toHaveLength(2);
+    expect(lockCalls[0][2]).toMatchObject({ nx: true, px: RUN_LOCK_TTL_MS });
+    expect(RUN_LOCK_TTL_MS).toBeGreaterThanOrEqual(900_000);
+    expect(lockCalls[0][1]).not.toBe(lockCalls[1][1]);
+  });
+
+  it("does not release a later run's lock when its own expired mid-run", async () => {
+    const { deps, redis } = makeDeps();
+    // Mid-run, our lock expires and the next tick takes it.
+    const realZrange = redis.zrange.bind(redis);
+    vi.spyOn(redis, 'zrange').mockImplementation(async <T,>(key: string, min: number, max: number, opts: { byScore: true }) => {
+      redis.kv.set(keys.quoteDrafterRunLock, 'next-tick-token');
+      return realZrange<T>(key, min, max, opts);
+    });
+    await runTick(deps, 'live');
+    expect(await redis.get(keys.quoteDrafterRunLock)).toBe('next-tick-token');
+  });
+
+  it('releaseRunLock deletes only on a token match and never throws', async () => {
+    const { deps, redis } = makeDeps();
+    await redis.set(keys.quoteDrafterRunLock, 'mine');
+    expect(await releaseRunLock(deps, 'not-mine')).toBe(false);
+    expect(await redis.get(keys.quoteDrafterRunLock)).toBe('mine');
+    expect(await releaseRunLock(deps, 'mine')).toBe(true);
+    expect(await redis.get(keys.quoteDrafterRunLock)).toBeNull();
+
+    vi.spyOn(redis, 'eval').mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    await expect(releaseRunLock(deps, 'mine')).resolves.toBe(false);
   });
 
   it('buffers events per phone and leaves them settling until the window closes', async () => {
@@ -994,5 +1039,38 @@ describe('open-quote index helpers', () => {
     expect((await getOpenQuote(redis, '+15083611747'))?.docNumber).toBe('1576');
     const all = await listOpenQuotes(redis);
     expect(all.size).toBe(1);
+  });
+});
+
+// ── doc number re-check before create ─────────────────────────────────
+
+describe('confirmNextDocNumber', () => {
+  it('keeps the planned number when QBO has not used it', async () => {
+    const { deps } = makeDeps();
+    (deps.qb.listRecentEstimates as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { Id: '1', DocNumber: '1599' },
+      { Id: '2', DocNumber: 'abc' },
+    ]);
+    const run = { ...RUN, nextDocNumber: 1600 };
+    expect(await confirmNextDocNumber(deps, run)).toBe(1600);
+    expect(run.nextDocNumber).toBe(1600);
+  });
+
+  it('does not reuse a number taken since the run snapshot; continues past the max', async () => {
+    const { deps, logs } = makeDeps();
+    (deps.qb.listRecentEstimates as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { Id: '1', DocNumber: '1600' }, // the concurrent run's draft
+      { Id: '2', DocNumber: '1601' }, // and a human quote after it
+    ]);
+    const run = { ...RUN, nextDocNumber: 1600 };
+    expect(await confirmNextDocNumber(deps, run)).toBe(1602);
+    expect(run.nextDocNumber).toBe(1602);
+    expect(logs.some((l) => l.includes('#1600 already taken'))).toBe(true);
+  });
+
+  it('throws (draft recorded as failed) when QBO cannot be read, rather than guess', async () => {
+    const { deps } = makeDeps();
+    (deps.qb.listRecentEstimates as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('QBO 503'));
+    await expect(confirmNextDocNumber(deps, { ...RUN })).rejects.toThrow('QBO 503');
   });
 });

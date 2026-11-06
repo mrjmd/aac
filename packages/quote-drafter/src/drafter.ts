@@ -87,6 +87,27 @@ export async function prepareRun(deps: DrafterDeps): Promise<RunContext> {
 }
 
 /**
+ * Re-check the run's next DocNumber against QBO right before a create.
+ * prepareRun computed it from a snapshot; since then another drafter (a
+ * tick past an expired lock, the manual CLI, /api/quote-draft) or a human
+ * may have used it. When taken, continue the sequence past QBO's current
+ * max and record that on the run. Throws when QBO can't be read: the draft
+ * then fails and is recorded, rather than risking a duplicate number.
+ */
+export async function confirmNextDocNumber(deps: DrafterDeps, run: RunContext): Promise<number> {
+  const latest = await deps.qb.listRecentEstimates();
+  const maxTaken = Math.max(
+    0,
+    ...latest.map((e) => Number(e.DocNumber)).filter((n) => Number.isFinite(n) && n > 0),
+  );
+  if (maxTaken >= run.nextDocNumber) {
+    deps.log(`  ~ doc number #${run.nextDocNumber} already taken in QBO (max #${maxTaken}) — using #${maxTaken + 1}`);
+    run.nextDocNumber = maxTaken + 1;
+  }
+  return run.nextDocNumber;
+}
+
+/**
  * Post a conversation-panel note on the customer's Quo contact announcing
  * the draft (owner request 2026-10-18). Fire-safe: note failures never
  * affect the draft outcome.
@@ -525,6 +546,7 @@ export async function draftOne(deps: DrafterDeps, opts: DraftOneOptions): Promis
     }
   }
 
+  await confirmNextDocNumber(deps, run);
   const estimate = await qb.createEstimate({
     customerId,
     lines,

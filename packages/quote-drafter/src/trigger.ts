@@ -8,6 +8,7 @@
  * runs (doc numbers must not race). All state is in Redis so the cloud
  * worker and any manual CLI run share one view.
  */
+import { randomUUID } from 'node:crypto';
 import { keys } from '@aac/shared-utils/redis';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import { lastFirstTokens } from '@aac/customers';
@@ -41,7 +42,32 @@ import {
   type TriggerRunlogEntry,
 } from './types.js';
 
-const RUN_LOCK_TTL_MS = 10 * 60 * 1000;
+/**
+ * Must outlive the worker's quote-tick function (maxDuration 800s): a lock
+ * that expires mid-run lets the next tick in, and both pick the same next
+ * DocNumber. 15 min > 800s.
+ */
+export const RUN_LOCK_TTL_MS = 15 * 60 * 1000;
+
+/** Compare-and-delete: release the run lock only if this run still owns it. */
+const RELEASE_LOCK_LUA =
+  'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end';
+
+/**
+ * Release the run lock iff it still holds `token`. If the lock expired and
+ * another run took it, that run's lock is left alone (the old plain DEL
+ * deleted it). Never throws: the TTL is the backstop.
+ */
+export async function releaseRunLock(deps: DrafterDeps, token: string): Promise<boolean> {
+  try {
+    const released = await deps.redis.eval(RELEASE_LOCK_LUA, [keys.quoteDrafterRunLock], [token]);
+    if (released !== 1) deps.log('run lock no longer ours at release (expired or taken) — left alone');
+    return released === 1;
+  } catch (err) {
+    deps.log(`run lock release failed (TTL will expire it): ${(err as Error).message.slice(0, 120)}`);
+    return false;
+  }
+}
 const RUNLOG_MAX = 500;
 
 export interface TickSummary {
@@ -484,7 +510,9 @@ export async function runTick(deps: DrafterDeps, envMode: DrafterMode, opts: Tic
     return summary;
   }
 
-  const locked = await deps.redis.set(keys.quoteDrafterRunLock, deps.now(), {
+  // Unique per run, so release can tell our lock from a later run's.
+  const lockToken = `${deps.now()}:${randomUUID()}`;
+  const locked = await deps.redis.set(keys.quoteDrafterRunLock, lockToken, {
     nx: true,
     px: RUN_LOCK_TTL_MS,
   });
@@ -638,6 +666,6 @@ export async function runTick(deps: DrafterDeps, envMode: DrafterMode, opts: Tic
 
     return summary;
   } finally {
-    await deps.redis.del(keys.quoteDrafterRunLock);
+    await releaseRunLock(deps, lockToken);
   }
 }
