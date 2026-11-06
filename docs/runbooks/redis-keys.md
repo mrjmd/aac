@@ -185,11 +185,11 @@ fields with stale ones, so the two hashes are pruned instead, the same way
 4. **`triage:transcript:*` / `triage:voicemail:*`** (783 keys, no TTL by
    design: fetched once ever). If the size ever matters, a 1-year TTL
    would only cost a refetch for calls older than any triage lookback.
-5. **Legacy keys from the old apps**: `cache:searchbug-raw` (hash, 636
-   fields), `cache:verified-clean`, `ever-messaged` (set), `settings:global`,
-   about 13 `campaign:campaign-first-*test*` keys. Nothing here uses them.
-   Safe to delete if you don't need the old campaign data; keep
-   `optouts:phones` and `suppression:*`.
+5. **Legacy keys from the old apps**: deleted 11/06 (`cache:searchbug-raw`,
+   `cache:verified-clean`, `ever-messaged`, `settings:global`, 11
+   `campaign:campaign-*test*` keys). Values backed up locally in
+   `analysis/data/redis-backups/legacy-keys-2026-11-06.json`. Kept:
+   `optouts:phones`, `suppression:*`, `campaigns:active`, `campaign:drafts`.
 
 ## Other findings
 
