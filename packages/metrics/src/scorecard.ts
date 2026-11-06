@@ -34,7 +34,13 @@ export interface ScoreRow {
   fmt: RowFormat;
   /** 1 = higher is better, -1 = lower is better. */
   dir: 1 | -1;
+  /** Flat goal, or for a seasonal row the average week's goal. */
   goal: number | null;
+  /** Volume rows: each week is judged against goal × that month's seasonal index. */
+  seasonal?: boolean;
+  /** One per `Scorecard.weeks`: the goal that week is judged against (null = no goal). */
+  targets: Array<number | null>;
+  lastYearTarget: number | null;
   /** Source, definition and which date it counts by (the ⓘ). */
   info: string;
   /** One per `Scorecard.weeks`; null = no data for that week. */
@@ -57,21 +63,51 @@ export const CLOSED_WEEKS = 13;
 const BOOKED_HORIZON_WEEKS = 8;
 
 /**
- * First-draft goals (11/06), for Matt to edit (README decision 3): Aug-Oct
- * 2026 baselines, the tech #2 gate (booked 2+ weeks), the charter's $50k
- * a month floor (about $11.5k a week). Assessments have no goal (most
- * quotes come from photos), nor Ads spend (the budget moves with the season).
+ * First-draft goals (11/06), for Matt to edit (README decision 3). Volume
+ * rows are average-week goals, scaled each week by SEASONAL_INDEX (round-2
+ * §4 hybrid): the Aug-Oct 2026 baselines divided by those months' mean
+ * index. Rates and speeds are flat, as is Payments in: the charter's $50k
+ * a month floor (about $11.5k a week) holds in winter too. Assessments have
+ * no goal (most quotes come from photos), nor Ads spend (the budget moves
+ * with the season).
  */
 export const SCORECARD_GOALS: Record<string, number> = {
-  leads: 30,
+  leads: 27,
   reply: 2,
-  quotes: 10,
-  quoted: 20,
+  quotes: 9,
+  quoted: 18,
   close: 55,
   booked: 2,
-  jobs: 6,
+  jobs: 5,
   collected: 11.5,
 };
+
+/**
+ * Month index Jan..Dec (1 = an average month), from the funnel study
+ * (analysis/02-strategy/funnel-baseline-2026-11.md §6): two seasons of data,
+ * shrunk halfway toward 1. Re-fit each January.
+ */
+export const SEASONAL_INDEX = {
+  leads: [0.71, 0.67, 1.03, 0.93, 1.36, 1.23, 1.45, 1.3, 0.88, 1.16, 0.61, 0.63],
+  quotes: [0.76, 0.71, 1.19, 0.93, 1.33, 1.24, 1.3, 1.31, 0.89, 1.13, 0.7, 0.66],
+  invoiced: [0.63, 0.81, 1.24, 0.9, 1.11, 1.46, 0.91, 1.31, 0.92, 1.34, 0.91, 0.71],
+} as const;
+
+/** Which index scales each seasonal row; rows not listed keep a flat goal. */
+const SEASONAL_ROWS: Record<string, keyof typeof SEASONAL_INDEX> = {
+  leads: 'leads',
+  quotes: 'quotes',
+  quoted: 'quotes',
+  jobs: 'invoiced',
+};
+
+/** A week's target: the goal scaled by the index of the month its Thursday falls in. */
+export function weekTarget(key: string, goal: number | null, monday: string, fmt: RowFormat): number | null {
+  const series = SEASONAL_ROWS[key];
+  if (goal == null || !series) return goal;
+  const t = goal * SEASONAL_INDEX[series][Number(addDays(monday, 3).slice(5, 7)) - 1]!;
+  return fmt === 'int' ? Math.round(t) : round(t, 1);
+}
 
 export interface ScorecardInput {
   now: Date;
@@ -133,7 +169,7 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
   const sent = input.estimates.map((e) => ({ e, day: quoteSentDay(e) })).filter((q): q is { e: QBEstimate; day: string } => !!q.day);
   const past = input.events.filter((e) => !e.summary.startsWith(HOLD_TITLE_PREFIX) && Date.parse(e.start.length === 10 ? `${e.start}T12:00:00Z` : e.start) <= nowMs);
 
-  const fns: Array<Omit<ScoreRow, 'values' | 'lastYear'> & { week: (m: string) => number | null }> = [
+  const fns: Array<Omit<ScoreRow, 'values' | 'lastYear' | 'targets' | 'lastYearTarget'> & { week: (m: string) => number | null }> = [
     {
       key: 'leads',
       name: 'New contacts in',
@@ -245,12 +281,18 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
     weeks,
     builtAt: input.now.toISOString(),
     gaps: [...(input.gaps ?? []), ...(input.spend ? [] : ['Google Ads spend (Ads not configured)'])],
-    rows: fns.map(({ week, ...row }) => ({
-      ...row,
-      goal: SCORECARD_GOALS[row.key] ?? row.goal,
-      values: weeks.map(week),
-      lastYear: week(lastYear),
-    })),
+    rows: fns.map(({ week, ...row }) => {
+      const goal = SCORECARD_GOALS[row.key] ?? row.goal;
+      return {
+        ...row,
+        goal,
+        ...(row.key in SEASONAL_ROWS && goal != null ? { seasonal: true } : {}),
+        targets: weeks.map((m) => weekTarget(row.key, goal, m, row.fmt)),
+        values: weeks.map(week),
+        lastYear: week(lastYear),
+        lastYearTarget: weekTarget(row.key, goal, lastYear, row.fmt),
+      };
+    }),
   };
 }
 

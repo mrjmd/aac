@@ -13,5 +13,7 @@ export {
   SCORECARD_GOALS,
   scorecardFrom,
   scorecardWeeks,
+  SEASONAL_INDEX,
+  weekTarget,
 } from './scorecard.js';
 export type { LeadFact, LeadRedis, ScorecardRedis, RowFormat, ScoreRow, Scorecard, ScorecardInput } from './scorecard.js';

@@ -197,6 +197,9 @@ tr:last-child td { border-bottom: 0; }
 .score th, .score td { text-align: center; padding: 5px 6px; }
 .score td.name, .score th.name { text-align: left; position: sticky; left: 0; background: var(--surface); z-index: 1; font-weight: 600; }
 .score td.goal { color: var(--muted); }
+.score tr.has-target td { padding-bottom: 1px; }
+.score tr.target td { padding-top: 0; font-size: 11px; color: var(--muted); }
+.score tr.target td.name { font-weight: 400; padding-left: 14px; }
 .cell { display: inline-flex; align-items: center; gap: 3px; border-radius: 6px; padding: 2px 5px; font-variant-numeric: tabular-nums; font-weight: 600; }
 .cell.ok { background: var(--green-soft); color: var(--green); }
 .cell.off { background: var(--red-soft); color: var(--red); }

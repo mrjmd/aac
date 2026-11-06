@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 import type { QBEstimate } from '@aac/api-clients/quickbooks';
 import type { QuoCall, QuoMessage } from '@aac/api-clients/quo';
-import { buildScorecard, leadFactOf, quoteSentDay, quoteWon, refreshLeadFacts, scorecardWeeks, type LeadFact } from '../src/index.js';
+import { buildScorecard, leadFactOf, quoteSentDay, quoteWon, refreshLeadFacts, SCORECARD_GOALS, scorecardWeeks, weekTarget, type LeadFact } from '../src/index.js';
 
 // Friday 11/6/2026, 3pm Eastern. Closed weeks run 8/3 .. 10/26, this week is 11/2.
 const now = new Date('2026-11-06T20:00:00Z');
@@ -26,6 +26,27 @@ describe('scorecard weeks', () => {
     expect(weeks[12]).toBe('2026-10-26');
     expect(weeks[13]).toBe('2026-11-02');
     expect(lastYear).toBe('2025-10-27');
+  });
+});
+
+describe('seasonal targets', () => {
+  it('scales volume goals by the month the week falls in and keeps rates flat', () => {
+    // Week of 10/26: its Thursday is 10/29, an October week. Week of 11/2 is November.
+    expect(weekTarget('leads', 27, '2026-10-26', 'int')).toBe(31);
+    expect(weekTarget('leads', 27, '2026-11-02', 'int')).toBe(16);
+    expect(weekTarget('quoted', 18, '2026-11-02', 'usdk')).toBe(12.6);
+    expect(weekTarget('close', 55, '2026-11-02', 'pct')).toBe(55);
+    expect(weekTarget('assessments', null, '2026-11-02', 'int')).toBeNull();
+  });
+
+  it('gives each seasonal row a target per week and for last year, and leaves payments flat', () => {
+    const sc = buildScorecard(base);
+    const leads = row(sc, 'leads');
+    expect(leads.seasonal).toBe(true);
+    expect(leads.targets[12]).toBe(31);
+    expect(leads.lastYearTarget).toBe(31);
+    expect(row(sc, 'collected').seasonal).toBeUndefined();
+    expect(row(sc, 'collected').targets.every((t) => t === SCORECARD_GOALS.collected)).toBe(true);
   });
 });
 

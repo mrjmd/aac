@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type { RowFormat, ScoreRow, Scorecard } from "@aac/metrics";
 
 const fmtDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
@@ -18,11 +19,11 @@ function show(v: number, fmt: RowFormat): string {
   }
 }
 
-/** One cell: green ✓ or red ✕ against the goal, plain when there's no goal or the week isn't over. */
-function Cell({ row, v, judge }: { row: ScoreRow; v: number | null; judge: boolean }) {
+/** One cell: green ✓ or red ✕ against that week's target, plain when there's no goal or the week isn't over. */
+function Cell({ row, v, target, judge }: { row: ScoreRow; v: number | null; target: number | null; judge: boolean }) {
   if (v == null) return <span className="cell na">n/a</span>;
-  if (row.goal == null || !judge) return <span className="cell">{show(v, row.fmt)}</span>;
-  const ok = row.dir > 0 ? v >= row.goal : v <= row.goal;
+  if (target == null || !judge) return <span className="cell">{show(v, row.fmt)}</span>;
+  const ok = row.dir > 0 ? v >= target : v <= target;
   return (
     <span className={`cell ${ok ? "ok" : "off"}`}>
       <span className="m">{ok ? "✓" : "✕"}</span>
@@ -65,28 +66,51 @@ export function ScorecardCard({ card }: { card: Scorecard | null }) {
             </tr>
           </thead>
           <tbody>
-            {card.rows.map((r) => (
-              <tr key={r.key}>
-                <td className="name" title={r.info}>
-                  {r.name}
-                </td>
-                <td className="goal num">{r.goal == null ? "" : `${r.dir > 0 ? "≥" : "≤"} ${show(r.goal, r.fmt)}`}</td>
-                {r.values.map((v, k) => (
-                  <td key={card.weeks[k]} className={k === last - 1 ? "cur" : ""}>
-                    <Cell row={r} v={v} judge={k < last} />
-                  </td>
-                ))}
-                <td>
-                  <Cell row={r} v={r.lastYear} judge={false} />
-                </td>
-              </tr>
-            ))}
+            {card.rows.map((r) => {
+              // Snapshots saved before seasonal targets have no `targets`: judge against the flat goal.
+              const target = (k: number) => r.targets?.[k] ?? r.goal;
+              const sign = r.dir > 0 ? "≥" : "≤";
+              return (
+                <Fragment key={r.key}>
+                  <tr className={r.seasonal ? "has-target" : ""}>
+                    <td className="name" title={r.info}>
+                      {r.name}
+                    </td>
+                    <td className="goal num" title={r.seasonal ? "Average week; each week's target follows the season" : undefined}>
+                      {r.goal == null ? "" : `${sign} ${show(r.goal, r.fmt)}${r.seasonal ? " avg" : ""}`}
+                    </td>
+                    {r.values.map((v, k) => (
+                      <td key={card.weeks[k]} className={k === last - 1 ? "cur" : ""}>
+                        <Cell row={r} v={v} target={target(k)} judge={k < last} />
+                      </td>
+                    ))}
+                    <td>
+                      <Cell row={r} v={r.lastYear} target={null} judge={false} />
+                    </td>
+                  </tr>
+                  {r.seasonal && (
+                    <tr className="target">
+                      <td className="name">Target, seasonal</td>
+                      <td />
+                      {card.weeks.map((w, k) => (
+                        <td key={w} className={k === last - 1 ? "cur" : ""}>
+                          {target(k) == null ? "" : show(target(k)!, r.fmt)}
+                        </td>
+                      ))}
+                      <td>{r.lastYearTarget == null ? "" : show(r.lastYearTarget, r.fmt)}</td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
       <div className="note">
-        The highlighted column is the week that just closed. This week so far isn&apos;t judged until it ends. Goals are a
-        first draft from the Aug-Oct baselines; tell me what to change.
+        The highlighted column is the week that just closed. This week so far isn&apos;t judged until it ends. Volume rows
+        are judged against a seasonal target: the average week&apos;s goal times that month&apos;s index from the funnel study
+        (re-fit each January). Rates, speeds and payments in keep one goal all year. Goals are a first draft from the Aug-Oct
+        baselines; tell me what to change.
       </div>
       <details className="fold">
         <summary>How each row is counted</summary>
