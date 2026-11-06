@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { logHealthErrorRedisDown, trackWebhookProcessedRedisDown } from './helpers/redis-down.js';
 import crypto from 'crypto';
 
 const VERIFIER = 'test-verifier-token';
@@ -309,7 +310,7 @@ describe('QB webhook — Redis outage (10/19 auto-disable pattern)', () => {
 
   it('acks 200 when trackWebhookProcessed throws', async () => {
     mockQb.getEstimate.mockResolvedValueOnce(makeAcceptedEstimate());
-    (trackWebhookProcessed as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(redisDown());
+    (trackWebhookProcessed as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(trackWebhookProcessedRedisDown);
     const res = await POST(makeRequest({ events: [makeEvent()] }));
     expect(res.status).toBe(200);
     expect(writePendingDirective).toHaveBeenCalledTimes(1);
@@ -318,7 +319,7 @@ describe('QB webhook — Redis outage (10/19 auto-disable pattern)', () => {
   it('acks 200 when processing fails and the catch-path health write throws', async () => {
     const { logHealthError } = await import('../lib/redis.js');
     mockQb.getEstimate.mockRejectedValueOnce(new Error('QB down'));
-    (logHealthError as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(redisDown());
+    (logHealthError as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(logHealthErrorRedisDown);
     const res = await POST(makeRequest({ events: [makeEvent()] }));
     expect(res.status).toBe(200);
     expect(logHealthError).toHaveBeenCalledTimes(1);

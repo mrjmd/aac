@@ -27,7 +27,6 @@ import {
   scheduleInboundSettle,
 } from '../../lib/redis.js';
 import { defer } from '../../lib/defer.js';
-import { bestEffort } from '../../lib/best-effort.js';
 import { getEnv } from '../../lib/env.js';
 import type { QuoEventType, QuoWebhookPayload } from '../../lib/quo-webhook/types.js';
 import { extractRemotePhone } from '../../lib/quo-webhook/event-content.js';
@@ -213,11 +212,9 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     log.error('Webhook processing failed', error as Error, { eventId: event.id });
 
-    // Redis may be the thing that failed (dedup included): never let the
-    // health write turn this ack into a 5xx (2026-10-19 auto-disable).
-    await bestEffort('logHealthError', () =>
-      logHealthError('quo', (error as Error).message, { eventId: event.id }),
-    );
+    // Redis may be the thing that failed (dedup included); logHealthError
+    // never throws, so this ack never turns into a 5xx (2026-10-19 auto-disable).
+    await logHealthError('quo', (error as Error).message, { eventId: event.id });
 
     return json({
       status: 'error',

@@ -43,7 +43,6 @@ import {
 import { bookedEventFor, listUpcomingEvents } from '../lib/booked-events.js';
 import { maybePostSuggestionNote } from '../lib/suggestion-note.js';
 import { notifyWorkerFollowup } from '../lib/worker-notify.js';
-import { bestEffort } from '../lib/best-effort.js';
 
 const log = createLogger('qb-webhook');
 
@@ -162,7 +161,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const results = await Promise.allSettled(events.map((evt) => processEvent(evt)));
-  await bestEffort('trackWebhookProcessed', () => trackWebhookProcessed('qb'));
+  await trackWebhookProcessed('qb'); // never throws
 
   const counts = results.reduce(
     (acc, r) => {
@@ -324,9 +323,7 @@ async function processEvent(evt: QbCloudEvent): Promise<ProcessOutcome> {
       eventId: evt.id,
       entityId: evt.intuitentityid,
     });
-    await bestEffort('logHealthError', () =>
-      logHealthError('qb', (err as Error).message, { eventId: evt.id }),
-    );
+    await logHealthError('qb', (err as Error).message, { eventId: evt.id }); // never throws
     return 'ignored';
   }
 }

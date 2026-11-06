@@ -7,9 +7,16 @@
  * /api/health (and the command center through it), the agent's
  * error-surface cron, @aac/watchdog and tools/src/triage. Change a shape
  * here only together with every reader.
+ *
+ * Never throws. These are observability, never the reason a webhook or
+ * cron fails: with Redis down the write is logged (console, via the
+ * shared logger) and the caller carries on.
  */
 
+import { createLogger } from './logger.js';
 import { keys, ttl } from './redis.js';
+
+const log = createLogger('health');
 
 /** The Redis calls health bookkeeping needs. */
 export interface HealthRedis {
@@ -44,12 +51,16 @@ export async function trackWebhookProcessed(redis: HealthRedis, source: string):
   const now = new Date().toISOString();
   const today = now.split('T')[0];
 
-  await Promise.all([
-    redis.incr(keys.webhookCount(source, today)),
-    redis.set(keys.webhookLast(source), now),
-  ]);
-  // Set TTL on the count key so it auto-cleans
-  await redis.expire(keys.webhookCount(source, today), ttl.webhookCount);
+  try {
+    await Promise.all([
+      redis.incr(keys.webhookCount(source, today)),
+      redis.set(keys.webhookLast(source), now),
+    ]);
+    // Set TTL on the count key so it auto-cleans
+    await redis.expire(keys.webhookCount(source, today), ttl.webhookCount);
+  } catch (err) {
+    log.error('trackWebhookProcessed failed (swallowed)', err, { source });
+  }
 }
 
 /** Push one entry onto `health:errors` (newest first, capped at HEALTH_ERRORS_CAP). */
@@ -71,13 +82,22 @@ export async function logHealthError(
     timestamp: new Date().toISOString(),
   });
 
-  await redis.lpush(keys.healthErrors, error);
-  await redis.ltrim(keys.healthErrors, 0, HEALTH_ERRORS_CAP - 1);
+  try {
+    await redis.lpush(keys.healthErrors, error);
+    await redis.ltrim(keys.healthErrors, 0, HEALTH_ERRORS_CAP - 1);
+  } catch (err) {
+    // The original error goes to the log so it isn't lost with Redis down.
+    log.error('logHealthError failed (swallowed)', err, { source, healthMessage: message, details });
+  }
 }
 
 /** Stamp `health:{app}:ts` with the current ISO time. */
 export async function writeHeartbeat(redis: HealthRedis, app: string): Promise<void> {
-  await redis.set(keys.heartbeat(app), new Date().toISOString());
+  try {
+    await redis.set(keys.heartbeat(app), new Date().toISOString());
+  } catch (err) {
+    log.error('writeHeartbeat failed (swallowed)', err, { app });
+  }
 }
 
 /** Stamp a cron's last-run time and store today's (UTC) result counts. */
@@ -85,8 +105,12 @@ export async function trackCronRun(redis: HealthRedis, jobName: string, result: 
   const now = new Date().toISOString();
   const today = now.split('T')[0];
 
-  await Promise.all([
-    redis.set(keys.cronLastRun(jobName), now),
-    redis.set(keys.cronResult(jobName, today), JSON.stringify(result), { ex: ttl.cronResult }),
-  ]);
+  try {
+    await Promise.all([
+      redis.set(keys.cronLastRun(jobName), now),
+      redis.set(keys.cronResult(jobName, today), JSON.stringify(result), { ex: ttl.cronResult }),
+    ]);
+  } catch (err) {
+    log.error('trackCronRun failed (swallowed)', err, { jobName, result });
+  }
 }

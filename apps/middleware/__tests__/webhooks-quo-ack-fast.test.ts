@@ -5,6 +5,7 @@
  * and a first inbound must arm the 10-min intake window.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { logHealthErrorRedisDown, trackWebhookProcessedRedisDown } from './helpers/redis-down.js';
 
 vi.mock('@aac/shared-utils/webhook-signature', () => ({
   verifyOpenPhoneWebhookSignature: vi.fn(() => true),
@@ -279,7 +280,7 @@ describe('Redis outage (10/19 auto-disable pattern)', () => {
 
   it('acks 200 and drops the event when the dedup check throws and the health write throws too', async () => {
     redisMocks.markEventProcessed.mockRejectedValueOnce(redisDown());
-    redisMocks.logHealthError.mockRejectedValueOnce(redisDown());
+    redisMocks.logHealthError.mockImplementationOnce(logHealthErrorRedisDown);
     const res = await POST(req(makeMessageEvent()));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ status: 'error' });
@@ -288,14 +289,15 @@ describe('Redis outage (10/19 auto-disable pattern)', () => {
     expect(redisMocks.logHealthError).toHaveBeenCalledTimes(1);
   });
 
-  it('acks 200 when an in-handler Redis write throws and the health write throws too', async () => {
-    redisMocks.trackWebhookProcessed.mockRejectedValueOnce(redisDown());
-    redisMocks.logHealthError.mockRejectedValueOnce(redisDown());
+  it('acks 200 and carries on when the in-handler webhook counter hits the outage (it never throws)', async () => {
+    redisMocks.trackWebhookProcessed.mockImplementationOnce(trackWebhookProcessedRedisDown);
     // Internal number path calls trackWebhookProcessed inside the try.
     const evt = makeMessageEvent({ direction: 'incoming', from: '+18573126761', to: '+16176681677' });
     const res = await POST(req(evt));
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ status: 'error' });
+    expect(await res.json()).toMatchObject({ status: 'skipped' });
+    expect(redisMocks.trackWebhookProcessed).toHaveBeenCalledWith('quo');
+    expect(redisMocks.logHealthError).not.toHaveBeenCalled();
   });
 
   it('still answers 401 on a bad signature', async () => {

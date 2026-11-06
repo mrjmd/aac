@@ -122,3 +122,37 @@ describe('trackCronRun', () => {
     expect(f.ttls.get('cron:job-reminders:2026-11-05:result')).toBe(30 * 86_400);
   });
 });
+
+describe('never throws', () => {
+  const down = () => Promise.reject(new Error('ECONNREFUSED redis'));
+  const deadRedis: HealthRedis = { set: down, incr: down, expire: down, lpush: down, ltrim: down };
+
+  it('swallows a Redis outage in every health write and logs it', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(trackWebhookProcessed(deadRedis, 'quo')).resolves.toBeUndefined();
+      await expect(logHealthError(deadRedis, 'quo', 'pipedrive 503', { eventId: 'e1' })).resolves.toBeUndefined();
+      await expect(writeHeartbeat(deadRedis, 'middleware')).resolves.toBeUndefined();
+      await expect(trackCronRun(deadRedis, 'job-reminders', { sent: 0, skipped: 0, errors: 1 })).resolves.toBeUndefined();
+      expect(errSpy).toHaveBeenCalledTimes(4);
+      // The health error that couldn't be stored still reaches the log.
+      const logged = JSON.parse(errSpy.mock.calls[1][0] as string) as Record<string, unknown>;
+      expect(logged).toMatchObject({ module: 'health', source: 'quo', healthMessage: 'pipedrive 503', error: 'ECONNREFUSED redis' });
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it('swallows a synchronous throw from the client too', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const boom = (): never => {
+      throw new Error('client not configured');
+    };
+    try {
+      await expect(writeHeartbeat({ ...deadRedis, set: boom }, 'agent')).resolves.toBeUndefined();
+      expect(errSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+});

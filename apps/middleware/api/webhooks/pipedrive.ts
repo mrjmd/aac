@@ -18,7 +18,6 @@ import {
 } from '../../lib/redis.js';
 import { getPipedrive, getQuo, getQuickBooks } from '../../lib/clients.js';
 import { getEnv } from '../../lib/env.js';
-import { bestEffort } from '../../lib/best-effort.js';
 import type { PersonSyncContext, PipedriveWebhookPayload } from '../../lib/pipedrive-webhook/types.js';
 import { verifyPdWebhookAuth } from '../../lib/pipedrive-webhook/auth.js';
 import { extractPrimaryPhone, loadPersonSyncData } from '../../lib/pipedrive-webhook/person-data.js';
@@ -165,12 +164,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (error) {
     log.error('Webhook processing failed', error as Error, { eventId });
 
-    // Log error for health dashboard. Best-effort: Redis may be the thing
-    // that failed (dedup included), and a throw here would turn the ack
-    // into a 5xx.
-    await bestEffort('logHealthError', () =>
-      logHealthError('pipedrive', (error as Error).message, { eventId }),
-    );
+    // Log error for health dashboard. Never throws (Redis may be the thing
+    // that failed, dedup included), so the ack stays 200.
+    await logHealthError('pipedrive', (error as Error).message, { eventId });
 
     // Return 200 to acknowledge receipt (prevent retries that could cause issues)
     // The error is logged for investigation

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logHealthErrorRedisDown } from './helpers/redis-down.js';
 
 // Mock dependencies
 vi.mock('../lib/redis.js', () => ({
@@ -211,7 +212,7 @@ describe('google-ads webhook — Redis outage (10/19 auto-disable pattern)', () 
   it('acks 200 and drops the lead when the dedup check throws and the health write throws too', async () => {
     const redis = await import('../lib/redis.js');
     (markEventProcessed as any).mockRejectedValueOnce(new Error('ECONNREFUSED redis'));
-    (redis.logHealthError as any).mockRejectedValueOnce(new Error('ECONNREFUSED redis'));
+    (redis.logHealthError as any).mockImplementationOnce(logHealthErrorRedisDown);
     const res = makeRes();
 
     await expect(handler(makeReq(makePayload()), res)).resolves.not.toThrow();
@@ -225,7 +226,7 @@ describe('google-ads webhook — Redis outage (10/19 auto-disable pattern)', () 
   it('acks 200 when processing fails and the catch-path health write throws', async () => {
     const redis = await import('../lib/redis.js');
     mockPipedrive.searchPersonByPhone.mockRejectedValueOnce(new Error('PD down'));
-    (redis.logHealthError as any).mockRejectedValueOnce(new Error('ECONNREFUSED redis'));
+    (redis.logHealthError as any).mockImplementationOnce(logHealthErrorRedisDown);
     const res = makeRes();
 
     await handler(makeReq(makePayload()), res);

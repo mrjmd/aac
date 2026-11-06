@@ -141,6 +141,15 @@ describe('health endpoint', () => {
     expect(mockRedis.set).toHaveBeenCalledWith('health:middleware:ts', expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
   });
 
+  it('still answers 200 when only the heartbeat write fails (writeHeartbeat never throws)', async () => {
+    mockRedis.set.mockRejectedValueOnce(new Error('READONLY'));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = makeRes();
+    await handler(makeReq(), res);
+    errSpy.mockRestore();
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
   it('handles Redis failure gracefully', async () => {
     mockRedis.get.mockRejectedValue(new Error('Redis down'));
 
