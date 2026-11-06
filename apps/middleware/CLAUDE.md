@@ -39,6 +39,17 @@ drafting quotes, creating calendar placeholders.
   `schedulingStore.countCondition`). They show on the command center System
   health page; they never text.
 
+## Daily customer crons
+
+invoice-create, job-reminders and job-followups each run twice a day, an
+hour apart (`vercel.json`). The once-per-event marker (`markCronAction`) is
+claimed before the send; `lib/cron-send.ts` releases it whenever nothing
+reached the customer or QuickBooks (a lookup threw, no person or phone, or
+the vendor rejected the send), so the second run retries only that. An
+ambiguous send failure keeps the marker (no duplicate texts). A second run
+that found everything done skips `trackCronRun`, so the day's result keeps
+the first run's counts.
+
 ## What Does NOT Belong Here
 
 - SMS campaign management (→ `apps/marketing/`)

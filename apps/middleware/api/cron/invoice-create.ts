@@ -4,7 +4,8 @@
  * Accepted estimate. Does NOT send the invoice; the field app's Not Yet Paid
  * branch emails it at job completion.
  *
- * Schedule (when enabled in vercel.json): daily ~7am ET.
+ * Schedule (vercel.json): daily ~7am ET (11:00 UTC), plus a 12:00 UTC second
+ * run that retries only what the first left undone (lib/cron-send.ts).
  * Supports dry run: GET /api/cron/invoice-create?dry=true
  * Date override:    GET /api/cron/invoice-create?date=2026-05-18
  *
@@ -34,7 +35,7 @@ import {
   isoDateDaysAgo,
 } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError, countCondition } from '../../lib/redis.js';
-import { settleFailedSend } from '../../lib/cron-send.js';
+import { isBackstopNoop, releaseUnsent, settleFailedSend } from '../../lib/cron-send.js';
 import { matchEventToDealAndPerson, matchPersonToQBCustomer } from '@aac/customers';
 import type { QBEstimate } from '@aac/api-clients/quickbooks';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
@@ -105,7 +106,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       else errors++;
     }
 
-    if (!isDryRun) {
+    if (!isDryRun && !isBackstopNoop(results, created, errors)) {
       // trackCronRun expects { sent, skipped, errors } — map "created" → "sent"
       await trackCronRun('invoice-create', { sent: created, skipped, errors });
     }
@@ -153,6 +154,12 @@ async function processEvent(
           entity: { id: event.id, label: [personName ?? event.summary, event.location, base.jobDate].filter(Boolean).join(' · ') },
         });
 
+  // Set once this run owns the marker / once the create has started: a
+  // lookup that throws in between releases the marker (lib/cron-send.ts).
+  // Skips keep it: they are counted for the System health page, and the
+  // multi-estimate skip texts Matt.
+  let claimed = false;
+  let createStarted = false;
   try {
     // Dedupe by event id — one invoice per scheduled job
     if (!isDryRun) {
@@ -160,6 +167,7 @@ async function processEvent(
       if (!isNew) {
         return { ...base, personName: null, qbCustomerId: null, estimateId: null, invoiceId: null, amount: null, status: 'skipped_dedup' };
       }
+      claimed = true;
     }
 
     const { deal, person } = await matchEventToDealAndPerson(event, pipedrive);
@@ -265,6 +273,7 @@ async function processEvent(
     // On failure the marker is released only if QuickBooks definitively
     // rejected the create (lib/cron-send.ts).
     let invoice: Awaited<ReturnType<typeof qb.createInvoiceFromEstimate>>;
+    createStarted = true;
     try {
       invoice = await qb.createInvoiceFromEstimate(estimate.Id);
     } catch (createErr) {
@@ -296,7 +305,8 @@ async function processEvent(
       error: (error as Error).message,
     });
     if (!isDryRun) {
-      await logHealthError('cron:invoice-create', `Failed for ${event.summary}: ${(error as Error).message}`);
+      const released = claimed && !createStarted ? await releaseUnsent('invoice-create', event.id) : '';
+      await logHealthError('cron:invoice-create', `Failed for ${event.summary}: ${(error as Error).message}${released}`);
     }
     return {
       ...base,

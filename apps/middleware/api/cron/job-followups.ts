@@ -1,7 +1,8 @@
 /**
  * Post-Job Follow-Up Cron — Send follow-up SMS after completed jobs.
  *
- * Runs daily at 9 AM Eastern (13:00 UTC) via Vercel Cron.
+ * Runs daily at 9 AM Eastern (13:00 UTC) via Vercel Cron, plus a 14:00 UTC
+ * second run that retries only what the first left unsent (lib/cron-send.ts).
  * Queries Google Calendar for jobs completed N days ago (default 2),
  * matches to Pipedrive contacts, sends follow-up SMS with Google review link.
  *
@@ -31,7 +32,7 @@ import {
   getDayRangeEastern,
 } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError, countCondition } from '../../lib/redis.js';
-import { settleFailedSend } from '../../lib/cron-send.js';
+import { isBackstopNoop, releaseUnsent, settleFailedSend } from '../../lib/cron-send.js';
 import { renderTemplate } from '../../lib/templates.js';
 import {
   classifyService,
@@ -157,7 +158,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       else errors++;
     }
 
-    if (!isDryRun) {
+    if (!isDryRun && !isBackstopNoop(results, sent, errors)) {
       await trackCronRun('job-followups', { sent, skipped, errors });
     }
 
@@ -195,6 +196,10 @@ async function processFollowUp(
     location: event.location || '',
   };
 
+  // Set once this run owns the marker / once the send has started: a
+  // failure or skip in between released the marker (lib/cron-send.ts).
+  let claimed = false;
+  let sendStarted = false;
   try {
     // Check dedup — did we already send a follow-up for this event?
     if (!isDryRun) {
@@ -210,6 +215,7 @@ async function processFollowUp(
           status: 'skipped_dedup',
         };
       }
+      claimed = true;
     }
 
     const person = await matchEventToPerson(event, pipedrive);
@@ -220,6 +226,7 @@ async function processFollowUp(
         summary: event.summary,
       });
       if (!isDryRun) await countCondition('followups.no_person');
+      if (claimed) await releaseUnsent('followup', event.id);
       return {
         ...baseResult,
         personName: null,
@@ -238,6 +245,7 @@ async function processFollowUp(
         personId: person.id,
       });
       if (!isDryRun) await countCondition('followups.no_phone');
+      if (claimed) await releaseUnsent('followup', event.id);
       return {
         ...baseResult,
         personName: person.name,
@@ -277,6 +285,7 @@ async function processFollowUp(
     // On send failure the marker is released only if Quo definitively
     // rejected it (lib/cron-send.ts).
     const quo = getQuo();
+    sendStarted = true;
     try {
       await quo.sendMessage(primaryPhone, message);
     } catch (sendErr) {
@@ -310,7 +319,8 @@ async function processFollowUp(
     });
 
     if (!isDryRun) {
-      await logHealthError('cron:job-followups', `Failed for ${event.summary}: ${(error as Error).message}`);
+      const released = claimed && !sendStarted ? await releaseUnsent('followup', event.id) : '';
+      await logHealthError('cron:job-followups', `Failed for ${event.summary}: ${(error as Error).message}${released}`);
     }
 
     return {

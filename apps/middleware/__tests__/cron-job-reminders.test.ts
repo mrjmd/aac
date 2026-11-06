@@ -43,7 +43,7 @@ vi.mock('../lib/redis.js', () => ({
 
 import handler from '../api/cron/job-reminders.js';
 import { VendorHttpError } from '@aac/api-clients/errors';
-import { countCondition, logHealthError, markCronAction, releaseCronAction } from '../lib/redis.js';
+import { countCondition, logHealthError, markCronAction, releaseCronAction, trackCronRun } from '../lib/redis.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -318,5 +318,51 @@ describe('cron/job-reminders: marker on a failed send (owner policy 2026-11-05)'
     expect(mockSendMessage).toHaveBeenCalledOnce();
     expect(releaseCronAction).not.toHaveBeenCalled();
     expect(res.json.mock.calls[0][0].results[0].status).toBe('sent');
+  });
+});
+
+describe('cron/job-reminders: nothing sent releases the marker (owner policy 2026-11-06)', () => {
+  beforeEach(() => {
+    mockListEvents.mockResolvedValue([sampleEvent]);
+    mockSearchPersonByName.mockResolvedValue(samplePerson);
+    mockGetPerson.mockResolvedValue(samplePerson);
+  });
+
+  it('a lookup that throws before the send releases the marker', async () => {
+    mockSearchPersonByName.mockRejectedValueOnce(new Error('Pipedrive API error: 502'));
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(releaseCronAction).toHaveBeenCalledWith('reminder', 'evt-1');
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('error');
+    expect(logHealthError).toHaveBeenCalledWith(
+      'cron:job-reminders',
+      expect.stringContaining('nothing sent; marker released, next run retries'),
+    );
+  });
+
+  it('no phone: marker released so a fixed contact gets the reminder on the second run', async () => {
+    mockGetPerson.mockResolvedValue({ ...samplePerson, phone: [] });
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('skipped_no_phone');
+    expect(releaseCronAction).toHaveBeenCalledWith('reminder', 'evt-1');
+  });
+
+  it('already marked: nothing released, and a run that found everything done is not recorded', async () => {
+    vi.mocked(markCronAction).mockResolvedValueOnce(false);
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('skipped_dedup');
+    expect(releaseCronAction).not.toHaveBeenCalled();
+    expect(trackCronRun).not.toHaveBeenCalled();
+  });
+
+  it('a run that sent something is recorded', async () => {
+    await handler(makeReq(), makeRes());
+    expect(trackCronRun).toHaveBeenCalledWith('job-reminders', { sent: 1, skipped: 0, errors: 0 });
   });
 });

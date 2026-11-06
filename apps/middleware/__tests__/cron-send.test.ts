@@ -18,7 +18,7 @@ vi.mock('../lib/env.js', () => ({
 
 import { VendorHttpError } from '@aac/api-clients/errors';
 import { markCronAction, releaseCronAction } from '../lib/redis.js';
-import { settleFailedSend } from '../lib/cron-send.js';
+import { isBackstopNoop, releaseUnsent, settleFailedSend } from '../lib/cron-send.js';
 
 beforeEach(() => {
   redisSet.mockReset().mockResolvedValue('OK');
@@ -63,5 +63,28 @@ describe('settleFailedSend', () => {
       new VendorHttpError('quickbooks', 500, 'QuickBooks API error: 500 - x'),
     );
     expect(err.message).toContain('marker release FAILED, not retried');
+  });
+});
+
+describe('isBackstopNoop', () => {
+  it('is true only when nothing was sent, nothing failed, and something was already marked', () => {
+    const dedup = [{ status: 'skipped_dedup' }, { status: 'skipped_no_phone' }];
+    expect(isBackstopNoop(dedup, 0, 0)).toBe(true);
+    expect(isBackstopNoop(dedup, 1, 0)).toBe(false);
+    expect(isBackstopNoop(dedup, 0, 1)).toBe(false);
+    expect(isBackstopNoop([{ status: 'skipped_no_phone' }], 0, 0)).toBe(false);
+    expect(isBackstopNoop([], 0, 0)).toBe(false);
+  });
+});
+
+describe('releaseUnsent', () => {
+  it('releases the marker and says so', async () => {
+    await expect(releaseUnsent('reminder', 'evt-9')).resolves.toContain('marker released, next run retries');
+    expect(redisDel).toHaveBeenCalledWith('cron:reminder:evt-9');
+  });
+
+  it('never throws when the release fails', async () => {
+    redisDel.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    await expect(releaseUnsent('reminder', 'evt-9')).resolves.toContain('marker release FAILED');
   });
 });

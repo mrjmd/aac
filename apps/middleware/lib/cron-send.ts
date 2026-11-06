@@ -55,3 +55,35 @@ export async function settleFailedSend(
   log.error('Ambiguous send failure; marker kept, NOT retried', err as Error, { action, entityId });
   return new Error(`${message} [ambiguous failure, may have gone through; marker kept, NOT retried, check manually]`);
 }
+
+/**
+ * True for the second daily run (vercel.json) when it found everything
+ * already done: nothing sent, no errors, at least one event already marked.
+ * The caller then skips trackCronRun so the day's result keeps the first
+ * run's counts. A second run that retried something records its own.
+ */
+export function isBackstopNoop(
+  results: ReadonlyArray<{ status: string }>,
+  sent: number,
+  errors: number,
+): boolean {
+  return sent === 0 && errors === 0 && results.some((r) => r.status === 'skipped_dedup');
+}
+
+/**
+ * Release a marker this run claimed when nothing reached the customer or
+ * QuickBooks: a lookup threw before the send, or the run skipped for a
+ * reason someone can fix (no Pipedrive person, no phone). Each cron runs
+ * twice a day (vercel.json), so the second run tries again. Returns the
+ * suffix for the caller's health error. Never throws.
+ */
+export async function releaseUnsent(action: string, entityId: string): Promise<string> {
+  try {
+    await releaseCronAction(action, entityId);
+    log.info('Nothing sent; marker released, next run retries', { action, entityId });
+    return ' [nothing sent; marker released, next run retries]';
+  } catch (releaseErr) {
+    log.error('Nothing sent but marker release failed; NOT retried', releaseErr as Error, { action, entityId });
+    return ' [nothing sent; marker release FAILED, not retried]';
+  }
+}

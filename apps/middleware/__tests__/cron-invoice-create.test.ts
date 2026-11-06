@@ -391,14 +391,26 @@ describe('cron/invoice-create: marker on a failed create (owner policy 2026-11-0
     );
   });
 
-  it('a failure before the create (lookup) does not release the marker', async () => {
-    mockGetEstimatesByCustomer.mockRejectedValueOnce(
-      new VendorHttpError('quickbooks', 500, 'QuickBooks API error: 500 - boom'),
-    );
+  it('a failure before the create (lookup) releases the marker so the second run retries (owner 2026-11-06)', async () => {
+    mockGetEstimatesByCustomer.mockRejectedValueOnce(new TypeError('fetch failed'));
     const res = makeRes();
     await handler(makeReq(), res);
 
     expect(mockCreateInvoiceFromEstimate).not.toHaveBeenCalled();
+    expect(releaseCronAction).toHaveBeenCalledWith('invoice-create', 'evt-1');
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('error');
+    expect(logHealthError).toHaveBeenCalledWith(
+      'cron:invoice-create',
+      expect.stringContaining('nothing sent; marker released, next run retries'),
+    );
+  });
+
+  it('a skip keeps the marker (no repeat alert or count on the second run)', async () => {
+    mockGetEstimatesByCustomer.mockResolvedValueOnce([]);
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('skipped_no_accepted_estimate');
     expect(releaseCronAction).not.toHaveBeenCalled();
   });
 

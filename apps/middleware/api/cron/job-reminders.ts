@@ -1,7 +1,8 @@
 /**
  * Job Reminders Cron — Send SMS reminders for tomorrow's jobs.
  *
- * Runs daily at 8 AM Eastern (12:00 UTC) via Vercel Cron.
+ * Runs daily at 8 AM Eastern (12:00 UTC) via Vercel Cron, plus a 13:00 UTC
+ * second run that retries only what the first left unsent (lib/cron-send.ts).
  * Queries Google Calendar for tomorrow's events, matches to Pipedrive
  * contacts, sends reminder SMS via Quo/OpenPhone.
  *
@@ -29,7 +30,7 @@ import { getCalendar, getPipedrive, getQuo } from '../../lib/clients.js';
 import { getEnv } from '../../lib/env.js';
 import { verifyCronAuth, REMINDER_COLOR_IDS, extractFirstName, getDayRangeEastern } from '../../lib/cron.js';
 import { markCronAction, trackCronRun, logHealthError, countCondition } from '../../lib/redis.js';
-import { settleFailedSend } from '../../lib/cron-send.js';
+import { isBackstopNoop, releaseUnsent, settleFailedSend } from '../../lib/cron-send.js';
 import { renderTemplate } from '../../lib/templates.js';
 import { matchEventToPerson } from '@aac/customers';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
@@ -203,7 +204,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Track the cron run
-    if (!isDryRun) {
+    if (!isDryRun && !isBackstopNoop(results, sent, errors)) {
       await trackCronRun('job-reminders', { sent, skipped, errors });
     }
 
@@ -242,6 +243,10 @@ async function processReminder(
     location: event.location || '',
   };
 
+  // Set once this run owns the marker / once the send has started: a
+  // failure or skip in between released the marker (lib/cron-send.ts).
+  let claimed = false;
+  let sendStarted = false;
   try {
     // Check dedup — did we already send a reminder for this event?
     if (!isDryRun) {
@@ -249,6 +254,7 @@ async function processReminder(
       if (!isNew) {
         return { ...baseResult, personName: null, phone: null, status: 'skipped_dedup' };
       }
+      claimed = true;
     }
 
     const person = await matchEventToPerson(event, pipedrive);
@@ -259,6 +265,7 @@ async function processReminder(
         summary: event.summary,
       });
       if (!isDryRun) await countCondition('reminders.no_person');
+      if (claimed) await releaseUnsent('reminder', event.id);
       return { ...baseResult, personName: null, phone: null, status: 'skipped_no_person' };
     }
 
@@ -271,6 +278,7 @@ async function processReminder(
         personName: person.name,
       });
       if (!isDryRun) await countCondition('reminders.no_phone');
+      if (claimed) await releaseUnsent('reminder', event.id);
       return {
         ...baseResult,
         personName: person.name,
@@ -300,6 +308,7 @@ async function processReminder(
     // Send the SMS. On failure the marker is released only if Quo
     // definitively rejected it (lib/cron-send.ts).
     const quo = getQuo();
+    sendStarted = true;
     try {
       await quo.sendMessage(primaryPhone, message);
     } catch (sendErr) {
@@ -326,7 +335,8 @@ async function processReminder(
     });
 
     if (!isDryRun) {
-      await logHealthError('cron:job-reminders', `Failed for ${event.summary}: ${(error as Error).message}`);
+      const released = claimed && !sendStarted ? await releaseUnsent('reminder', event.id) : '';
+      await logHealthError('cron:job-reminders', `Failed for ${event.summary}: ${(error as Error).message}${released}`);
     }
 
     return {

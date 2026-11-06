@@ -256,3 +256,42 @@ describe('job-followups condition counts', () => {
     expect(countCondition).toHaveBeenCalledWith('followups.no_person');
   });
 });
+
+describe('job-followups: nothing sent releases the marker (owner policy 2026-11-06)', () => {
+  it('a lookup that throws before the send releases the marker', async () => {
+    const { matchEventToPerson } = await import('@aac/customers');
+    vi.mocked(matchEventToPerson).mockRejectedValueOnce(new Error('Pipedrive API error: 502'));
+    mockListEvents.mockResolvedValueOnce([dayOne]).mockResolvedValueOnce([]);
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(releaseCronAction).toHaveBeenCalledWith('followup', 'evt-day1');
+    expect(logHealthError).toHaveBeenCalledWith(
+      'cron:job-followups',
+      expect.stringContaining('nothing sent; marker released, next run retries'),
+    );
+  });
+
+  it('no person: marker released', async () => {
+    const { matchEventToPerson } = await import('@aac/customers');
+    vi.mocked(matchEventToPerson).mockResolvedValueOnce(null);
+    mockListEvents.mockResolvedValueOnce([dayOne]).mockResolvedValueOnce([]);
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('skipped_no_person');
+    expect(releaseCronAction).toHaveBeenCalledWith('followup', 'evt-day1');
+  });
+
+  it('already marked: the run is not recorded over the first run', async () => {
+    const { trackCronRun } = await import('../lib/redis.js');
+    mockMarkCronAction.mockResolvedValueOnce(false);
+    mockListEvents.mockResolvedValueOnce([dayOne]).mockResolvedValueOnce([]);
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('skipped_dedup');
+    expect(trackCronRun).not.toHaveBeenCalled();
+  });
+});
