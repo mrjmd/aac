@@ -20,6 +20,8 @@ import { getCalendar, technicianEmails } from "./calendar";
 import { getGmail, getQuo } from "./customers";
 import { getQuickBooks } from "./quickbooks";
 import { readSnapshot, refreshSnapshot, snapshot, type Snapshot } from "./snapshots";
+import { CI_CARD, CI_MAX_AGE_MS, fetchCiStatus } from "./system-health";
+import type { CiStatus } from "./system-rules";
 
 const MIN = 60_000;
 
@@ -75,6 +77,12 @@ export const cards = {
     name: "money:nudges",
     maxAgeMs: 30 * MIN,
     fetch: fetchNudges,
+  }),
+  /** CI on main (GitHub Actions "CI" / "check"). Read only by refresh and the warm cron, never on page load. */
+  ci: (): Card<CiStatus> => ({
+    name: CI_CARD,
+    maxAgeMs: CI_MAX_AGE_MS,
+    fetch: fetchCiStatus,
   }),
   customerQbo: (id: string): Card<QboPart | null> => ({
     name: `customer:${id}:qbo`,
@@ -175,7 +183,7 @@ export async function loadSafe<T>(card: Card<T>): Promise<{ snap: Snapshot<T> | 
 
 /** Resolve a snapshot name from the refresh button back to its card. */
 export function cardByName(name: string): Card<unknown> | null {
-  const fixed = [cards.cash(), cards.techWeeks(), cards.customerIndex(), cards.calendarIndex(), cards.nudges()].find(
+  const fixed = [cards.cash(), cards.techWeeks(), cards.customerIndex(), cards.calendarIndex(), cards.nudges(), cards.ci()].find(
     (c) => c.name === name,
   );
   if (fixed) return fixed as Card<unknown>;

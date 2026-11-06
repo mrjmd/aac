@@ -27,6 +27,23 @@ Shows system health, webhook audit trails, campaign stats, and provides
 - **Import key schema from `@aac/shared-utils/redis`** to read the same keys
   that other apps write.
 
+## System health (`/health`)
+
+Server-rendered from Redis only (`lib/system-health.ts`): `watchdog:state`
+open conditions, heartbeats and `cron:*:last-run` per app (`SIGNALS`),
+today's `cron:*:result`, today's and 7-day `health:conditions:*` silent-skip
+counts, jobs not invoiced (`invoice-create.*` entities), the head of
+`health:errors`, and the middleware card (webhook counts, errors; it no
+longer calls the middleware's `/api/health`). CI on main is a saved card
+(`cards.ci`, `system:ci`, GitHub via `GitHubClient`, refreshed by the warm
+cron or the card's ↻, never on page load); env `GITHUB_TOKEN` (Actions
+read-only on mrjmd/aac), without it the card says so.
+
+Nothing here texts or emails. Jobs not invoiced and a red CI float to Today
+(`loadCandidates` → `loadSystemCandidates`) only when ongoing, per the
+constants in `lib/system-rules.ts`: 3+ distinct jobs skipped in 7 days;
+main red 2+ settled runs in a row or for 24h.
+
 ## Day-One Features (Phase 1)
 
 1. **Middleware Heartbeat Monitor** — Green/red status based on Redis timestamp.

@@ -17,6 +17,7 @@ import { getCanHelpStore } from "./can-help";
 import { getRedis } from "./redis";
 import { readSnapshot } from "./snapshots";
 import { loadTodos } from "./todos";
+import { loadSystemCandidates } from "./system-health";
 import { easternDate } from "@aac/shared-utils/eastern";
 
 export function getItemStore(): ItemStore {
@@ -25,21 +26,23 @@ export function getItemStore(): ItemStore {
 
 /**
  * Everything that can be an item right now: the latest detector run, the
- * saved invoice nudge ladder, Matt's pending to-dos, and owner policies
- * whose review date has arrived.
+ * saved invoice nudge ladder, Matt's pending to-dos, owner policies whose
+ * review date has arrived, and System problems that became ongoing.
  */
 export async function loadCandidates(now = new Date()): Promise<{
   candidates: ItemCandidate[];
   detectedAt: string | null;
   source: string | null;
 }> {
-  const [snapshot, todos, nudges, rules] = await Promise.all([
+  const [snapshot, todos, nudges, rules, system] = await Promise.all([
     getItemStore().getCandidates(),
     loadTodos(),
     readSnapshot<NudgeRow[]>(cards.nudges().name),
     getCanHelpStore()
       .rules()
       .catch(() => []),
+    // Jobs not invoiced / CI red, only once ongoing (lib/system-rules.ts). Redis + saved CI snapshot.
+    loadSystemCandidates(now),
   ]);
   const today = easternDate(now);
   // The saved nudge ladder replaces triage's plain overdue items (same d3:
@@ -55,6 +58,7 @@ export async function loadCandidates(now = new Date()): Promise<{
         const c = fromRuleReview({ id: r.id, label: r.short ?? r.id, text: r.text, reviewBy: r.reviewBy, ...(r.untilWhen ? { untilWhen: r.untilWhen } : {}) }, today);
         return c ? [c] : [];
       }),
+      ...system,
     ],
     detectedAt: snapshot?.at ?? null,
     source: snapshot?.source ?? null,
