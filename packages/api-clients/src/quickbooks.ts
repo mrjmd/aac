@@ -232,10 +232,62 @@ export interface QBDeposit {
 
 // ── Client ───────────────────────────────────────────────────────────
 
+/** Intuit's token endpoint response (authorization_code and refresh_token grants). */
+export interface QBTokenResponse {
+  access_token: string;
+  refresh_token: string;
+  /** Seconds until the access token expires (typically 3600). */
+  expires_in: number;
+  /** Seconds until the refresh token expires (typically 8726400 = 101 days). */
+  x_refresh_token_expires_in: number;
+  token_type: string;
+}
+
+/**
+ * Result of exchangeAuthorizationCode. A non-2xx answer from Intuit comes back
+ * as `ok: false` with the status and raw body (for logs only: it can carry
+ * token material, never echo it to a page). Network and JSON errors throw.
+ */
+export type QBCodeExchangeResult =
+  | { ok: true; tokens: QBTokenResponse }
+  | { ok: false; status: number; body: string };
+
+const QBO_TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
+
 export class QuickBooksClient {
   constructor(private config: QuickBooksConfig) {}
 
   // ── OAuth token management ──────────────────────────────────────
+
+  /**
+   * OAuth callback step: trade the authorization code for tokens, using the
+   * configured client credentials and redirect URI. Does not store anything;
+   * the caller validates the realm and saves the tokens.
+   */
+  async exchangeAuthorizationCode(code: string): Promise<QBCodeExchangeResult> {
+    const credentials = Buffer.from(
+      `${this.config.clientId}:${this.config.clientSecret}`
+    ).toString('base64');
+
+    const response = await fetch(QBO_TOKEN_URL, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${credentials}`,
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: this.config.redirectUri,
+      }),
+    });
+
+    if (!response.ok) {
+      return { ok: false, status: response.status, body: await response.text() };
+    }
+    return { ok: true, tokens: (await response.json()) as QBTokenResponse };
+  }
 
   private async refreshAccessToken(tokens: QBOAuthTokens): Promise<QBOAuthTokens> {
     log.info('Refreshing QuickBooks access token');
@@ -244,7 +296,7 @@ export class QuickBooksClient {
       `${this.config.clientId}:${this.config.clientSecret}`
     ).toString('base64');
 
-    const response = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
+    const response = await fetch(QBO_TOKEN_URL, {
       method: 'POST',
       headers: {
         'Accept': 'application/json',

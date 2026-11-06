@@ -8,6 +8,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
 import { getEnv } from '../../../lib/env.js';
+import { getQuickBooks } from '../../../lib/clients.js';
 import { qboTokenStore } from '@aac/shared-utils/qbo-tokens';
 import { getRedis } from '../../../lib/redis.js';
 import { keys } from '@aac/shared-utils/redis';
@@ -16,14 +17,6 @@ const log = createLogger('quickbooks-oauth-callback');
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-}
-
-interface TokenResponse {
-  access_token: string;
-  refresh_token: string;
-  expires_in: number; // seconds until access token expires (typically 3600 = 1 hour)
-  x_refresh_token_expires_in: number; // seconds until refresh token expires (typically 8726400 = 101 days)
-  token_type: string;
 }
 
 export default async function handler(
@@ -81,39 +74,20 @@ export default async function handler(
 
   try {
     // Exchange code for tokens
-    const tokenUrl = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
+    const exchange = await getQuickBooks().exchangeAuthorizationCode(code);
 
-    const credentials = Buffer.from(
-      `${env.quickbooks.clientId}:${env.quickbooks.clientSecret}`
-    ).toString('base64');
-
-    const tokenResponse = await fetch(tokenUrl, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: `Basic ${credentials}`,
-      },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: env.quickbooks.redirectUri,
-      }),
-    });
-
-    if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      log.error('Token exchange failed', new Error(errorText), {
-        status: tokenResponse.status,
+    if (!exchange.ok) {
+      log.error('Token exchange failed', new Error(exchange.body), {
+        status: exchange.status,
       });
       res.status(500).send(`
         <h1>Token Exchange Failed</h1>
-        <p>Status: ${tokenResponse.status}. Details are in the middleware logs.</p>
+        <p>Status: ${exchange.status}. Details are in the middleware logs.</p>
       `);
       return;
     }
 
-    const tokens = (await tokenResponse.json()) as TokenResponse;
+    const { tokens } = exchange;
 
     // Calculate expiration timestamp
     const now = Date.now();

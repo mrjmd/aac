@@ -40,6 +40,51 @@ beforeEach(() => {
 });
 
 describe('QuickBooksClient', () => {
+  describe('exchangeAuthorizationCode', () => {
+    const tokenBody = {
+      access_token: 'AT',
+      refresh_token: 'RT',
+      expires_in: 3600,
+      x_refresh_token_expires_in: 8726400,
+      token_type: 'bearer',
+    };
+
+    it('POSTs the authorization_code grant to Intuit with Basic client credentials', async () => {
+      mockFetch.mockReturnValueOnce(mockResponse(tokenBody));
+      const result = await makeClient().exchangeAuthorizationCode('auth-code');
+      expect(result).toEqual({ ok: true, tokens: tokenBody });
+
+      expect(mockFetch).toHaveBeenCalledOnce();
+      const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer');
+      expect(init.method).toBe('POST');
+      expect(init.headers).toEqual({
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${Buffer.from('test-client-id:test-client-secret').toString('base64')}`,
+      });
+      const body = init.body as URLSearchParams;
+      expect(Object.fromEntries(body)).toEqual({
+        grant_type: 'authorization_code',
+        code: 'auth-code',
+        redirect_uri: 'http://localhost/callback',
+      });
+    });
+
+    it('returns status and raw body on a non-2xx answer, without saving tokens', async () => {
+      mockFetch.mockReturnValueOnce(
+        Promise.resolve({ ok: false, status: 400, text: () => Promise.resolve('invalid_grant') }),
+      );
+      const client = makeClient();
+      expect(await client.exchangeAuthorizationCode('bad')).toEqual({ ok: false, status: 400, body: 'invalid_grant' });
+    });
+
+    it('throws on a network error', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('ECONNRESET'));
+      await expect(makeClient().exchangeAuthorizationCode('x')).rejects.toThrow('ECONNRESET');
+    });
+  });
+
   describe('listOpenInvoices', () => {
     it('filters on Balance > 0 server-side', async () => {
       const client = makeClient();

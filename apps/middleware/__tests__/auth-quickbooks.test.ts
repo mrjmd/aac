@@ -200,6 +200,50 @@ describe('GET /api/auth/quickbooks/callback', () => {
     expect(out.statusCode).toBe(500);
     expect(out.body).not.toContain('leak');
     expect(out.body).not.toContain('refresh_token');
+    expect(out.body).toContain('Token Exchange Failed');
+    expect(out.body).toContain('Status: 400');
+    expect(saveTokens).not.toHaveBeenCalled();
+  });
+
+  it('exchanges the code with Intuit exactly as configured', async () => {
+    const { res } = makeRes();
+    await callback(makeReq(good), res);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer');
+    expect(init.method).toBe('POST');
+    expect(init.headers).toEqual({
+      Accept: 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: `Basic ${Buffer.from('qb-client:qb-secret').toString('base64')}`,
+    });
+    expect(Object.fromEntries(init.body as URLSearchParams)).toEqual({
+      grant_type: 'authorization_code',
+      code: 'auth-code',
+      redirect_uri: env.quickbooks.redirectUri,
+    });
+  });
+
+  it('saves expiresAt from expires_in and reports both lifetimes', async () => {
+    const before = Date.now();
+    const { res, out } = makeRes();
+    await callback(makeReq(good), res);
+    const after = Date.now();
+    expect(saveTokens).toHaveBeenCalledOnce();
+    const saved = saveTokens.mock.calls[0][0];
+    expect(saved).toMatchObject({ accessToken: 'AT-secret', refreshToken: 'RT-secret', realmId: '9130000000000001' });
+    expect(saved.expiresAt).toBeGreaterThanOrEqual(before + 3600 * 1000);
+    expect(saved.expiresAt).toBeLessThanOrEqual(after + 3600 * 1000);
+    expect(out.body).toContain('Access token expires in: 60 minutes');
+    expect(out.body).toContain('Refresh token expires in: 101 days');
+  });
+
+  it('answers the generic 500 when the exchange itself throws', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNRESET'));
+    const { res, out } = makeRes();
+    await callback(makeReq(good), res);
+    expect(out.statusCode).toBe(500);
+    expect(out.body).toContain('Authorization Error');
+    expect(out.body).not.toContain('ECONNRESET');
     expect(saveTokens).not.toHaveBeenCalled();
   });
 });
