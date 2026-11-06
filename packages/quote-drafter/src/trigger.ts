@@ -152,16 +152,16 @@ export async function enqueueRoutedQuote(
 async function drainQueue(
   deps: DrafterDeps,
   routerOwnsInbound: boolean,
-): Promise<{ drained: number; debriefAt: string | null }> {
+): Promise<{ drained: number; debrief: TriggerEvent | null }> {
   let drained = 0;
-  let debriefAt: string | null = null;
+  let debrief: TriggerEvent | null = null;
   for (;;) {
     const raw = await deps.redis.rpop<string | TriggerEvent>(keys.quoteTriggerQueue);
     if (raw === null || raw === undefined) break;
     const ev: TriggerEvent = typeof raw === 'string' ? JSON.parse(raw) : raw;
     drained++;
     if (ev.kind === 'mike-debrief') {
-      debriefAt = ev.at;
+      debrief = ev;
       continue;
     }
     if (INTERNAL.has(ev.phone)) continue;
@@ -177,7 +177,7 @@ async function drainQueue(
     await deps.redis.zadd(keys.quoteTriggerDue, { gt: true }, { score: dueAt, member: ev.phone });
     if (drained >= MAX_DRAIN_PER_RUN) break;
   }
-  return { drained, debriefAt };
+  return { drained, debrief };
 }
 
 interface DraftExecution {
@@ -189,6 +189,60 @@ interface DraftExecution {
   customer: string | null;
   /** Inbound channel(s) for scope-flag notes when the draft turns out human-owned. */
   channel: string;
+  /** T4 only: the estimate whose T4 dedupe marker this job set. */
+  t4EstimateId?: string;
+}
+
+/** What a due phone's consumption took off its Redis state, kept so a skipped tick can restore it. */
+interface ConsumedPhone {
+  events: TriggerEvent[];
+  routed: RoutedQuoteJob | null;
+}
+
+/**
+ * Put back everything the tick consumed to build `jobs` (used when there
+ * is no asset manifest to draft with). Due phones get their buffer, any
+ * routed decision and a due-now entry back; T2/T4 jobs lose the dedupe
+ * markers set this tick (else the retry would be deduped away); a T2 job
+ * re-pushes the debrief event on the RPOP end so the next drain sees it
+ * first.
+ */
+async function requeueJobs(
+  deps: DrafterDeps,
+  jobs: DraftExecution[],
+  consumed: Map<string, ConsumedPhone>,
+  debrief: TriggerEvent | null,
+  now: number,
+): Promise<void> {
+  let t2 = false;
+  for (const job of jobs) {
+    if (job.trigger === 'T2') {
+      t2 = true;
+      await deps.redis.hdel(keys.quoteTriggerT2Done, job.phone);
+      continue;
+    }
+    if (job.t4EstimateId) await deps.redis.hdel(keys.quoteTriggerT4Done, job.t4EstimateId);
+    const c = consumed.get(job.phone);
+    if (!c) continue;
+    if (c.events.length) {
+      // Merge, never overwrite: the buffer is oldest-first, so the consumed
+      // events go ahead of anything buffered since.
+      const since = (await deps.redis.hget<TriggerEvent[]>(keys.quoteTriggerPending, job.phone)) ?? [];
+      await deps.redis.hset(keys.quoteTriggerPending, { [job.phone]: JSON.stringify([...c.events, ...since]) });
+    }
+    if (c.routed) {
+      // A routed job the router handed over since is newer: keep it.
+      const raw = await deps.redis.hget<RoutedQuoteJob | string>(keys.quoteTriggerRouted, job.phone);
+      const current: RoutedQuoteJob | null = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : null;
+      if (!current || new Date(current.at).getTime() < new Date(c.routed.at).getTime()) {
+        await deps.redis.hset(keys.quoteTriggerRouted, { [job.phone]: JSON.stringify(c.routed) });
+      }
+    }
+    // LT: the job was already due, so it is due now, but an earlier due
+    // time set since is never pushed later.
+    await deps.redis.zadd(keys.quoteTriggerDue, { lt: true }, { score: now, member: job.phone });
+  }
+  if (t2 && debrief) await deps.redis.rpush(keys.quoteTriggerQueue, JSON.stringify(debrief));
 }
 
 /** Human-readable channel label for one trigger event. */
@@ -379,6 +433,7 @@ async function actOnScopeChange(
       hasNewInbound: true,
       customer: open.customer,
       channel,
+      t4EstimateId: open.estimateId,
     };
   }
 
@@ -538,7 +593,8 @@ export async function runTick(deps: DrafterDeps, envMode: DrafterMode, opts: Tic
 
   try {
     const t4Mode = await resolveT4Mode(deps, mode);
-    const { drained, debriefAt } = await drainQueue(deps, opts.routerOwnsInbound ?? false);
+    const { drained, debrief } = await drainQueue(deps, opts.routerOwnsInbound ?? false);
+    const debriefAt = debrief?.at ?? null;
     summary.drained = drained;
 
     const now = deps.now();
@@ -549,18 +605,21 @@ export async function runTick(deps: DrafterDeps, envMode: DrafterMode, opts: Tic
     summary.settling = Math.max(0, (await deps.redis.zcard(keys.quoteTriggerDue)) - duePhones.length);
 
     const jobs: DraftExecution[] = [];
+    const consumed = new Map<string, ConsumedPhone>();
     for (const phone of duePhones) {
       if (jobs.length >= MAX_DRAFTS_PER_RUN) break; // rest stays armed for next tick
       const events = (await deps.redis.hget<TriggerEvent[]>(keys.quoteTriggerPending, phone)) ?? [];
       // consume BEFORE drafting (a wedged draft must not loop forever)
       await deps.redis.zrem(keys.quoteTriggerDue, phone);
       await deps.redis.hdel(keys.quoteTriggerPending, phone);
+      consumed.set(phone, { events, routed: null });
       const rawRouted = await deps.redis.hget<RoutedQuoteJob | string>(keys.quoteTriggerRouted, phone);
       if (rawRouted) {
         // The router judged this burst; any buffered events (Matt's own
         // texts) ride along in the same draft.
         await deps.redis.hdel(keys.quoteTriggerRouted, phone);
         const routed: RoutedQuoteJob = typeof rawRouted === 'string' ? JSON.parse(rawRouted) : rawRouted;
+        consumed.set(phone, { events, routed });
         if (routed.trigger === 'T4') {
           if (t4Mode === 'off') {
             await appendRunlog(deps, { at: new Date(now).toISOString(), mode, phone, trigger: 'none', why: 'router T4, T4 off', events: events.length + 1 });
@@ -649,14 +708,24 @@ export async function runTick(deps: DrafterDeps, envMode: DrafterMode, opts: Tic
     }
 
     if (jobs.length > 0 && (mode === 'shadow' || mode === 'live')) {
-      const assets = await loadAssets(deps.redis);
-      if (!assets) {
-        deps.log('no asset manifest in Redis — cannot draft (run sync-assets)');
+      // The jobs' due entries, buffers and dedupe markers are already
+      // consumed: if drafting can't start (no manifest, or the asset/QBO
+      // setup throws), put them back so they draft on a later tick.
+      let setup: { assets: DrafterAssets; run: RunContext; fieldChannel: FieldChannel | null } | null = null;
+      try {
+        const loaded = await loadAssets(deps.redis);
+        if (loaded) setup = { assets: loaded, run: await prepareRun(deps), fieldChannel: await loadFieldChannel(deps) };
+      } catch (err) {
+        await requeueJobs(deps, jobs, consumed, debrief, now);
+        throw err;
+      }
+      if (!setup) {
+        await requeueJobs(deps, jobs, consumed, debrief, now);
+        deps.log(`no asset manifest in Redis, cannot draft: ${jobs.length} job(s) requeued (run sync-assets)`);
         summary.skipped = 'no-assets';
         return summary;
       }
-      const run = await prepareRun(deps);
-      const fieldChannel = await loadFieldChannel(deps);
+      const { assets, run, fieldChannel } = setup;
       for (const job of jobs) {
         const entry = await executeDraft(deps, mode, t4Mode, run, assets, fieldChannel, job);
         summary.records.push(entry);

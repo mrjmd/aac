@@ -45,6 +45,12 @@ class MiniRedis {
     const list = this.lists.get(key) ?? [];
     return (list.pop() as T) ?? null;
   }
+  async rpush(key: string, ...values: unknown[]): Promise<number> {
+    const list = this.lists.get(key) ?? [];
+    list.push(...values);
+    this.lists.set(key, list);
+    return list.length;
+  }
   async lpush(key: string, ...values: unknown[]): Promise<number> {
     const list = this.lists.get(key) ?? [];
     list.unshift(...values);
@@ -88,14 +94,17 @@ class MiniRedis {
   }
   async zadd(
     key: string,
-    optsOrMember: { gt?: boolean } | { score: number; member: string },
+    optsOrMember: { gt?: boolean; lt?: boolean } | { score: number; member: string },
     maybeMember?: { score: number; member: string },
   ): Promise<number> {
-    const opts: { gt?: boolean } = maybeMember ? optsOrMember : {};
+    const opts: { gt?: boolean; lt?: boolean } = maybeMember ? optsOrMember : {};
     const member = maybeMember ?? (optsOrMember as { score: number; member: string });
     const z = this.zsets.get(key) ?? new Map<string, number>();
     const prev = z.get(member.member);
-    if (opts.gt && prev !== undefined && prev >= member.score) {
+    if (
+      prev !== undefined &&
+      ((opts.gt && prev >= member.score) || (opts.lt && prev <= member.score))
+    ) {
       this.zsets.set(key, z);
       return 0;
     }
@@ -875,6 +884,160 @@ describe('runTick with the inbound router quote route live', () => {
     const log = (redis.lists.get(keys.quoteDrafterRunlog) ?? []).map((r) => JSON.parse(r as string));
     expect(log.map((l) => l.why)).toEqual(['router T4, T4 off', 'T4 deduped — #1576 actioned 2026-10-21T10:00:00Z']);
     expect(redis.lists.get(keys.quoteScopeFlags)).toBeUndefined();
+  });
+});
+
+describe('runTick with no asset manifest requeues its jobs', () => {
+  const PHONE = '+15083611747';
+
+  async function withManifest<T>(redis: MiniRedis, fn: () => Promise<T>): Promise<T> {
+    await redis.hset(keys.quoteDrafterAssets, { ruleset: 'https://blob.test/r.md', updatedAt: 'v1' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('SECTION 0')));
+    try {
+      return await fn();
+    } finally {
+      vi.unstubAllGlobals();
+      clearAssetCache();
+    }
+  }
+
+  it('puts a due T1 phone back (buffer + due now) and drafts it once the manifest is back', async () => {
+    const { deps, redis } = makeDeps();
+    const event = ev({ at: '2026-10-21T15:40:00Z', hasMedia: true });
+    await redis.lpush(keys.quoteTriggerQueue, JSON.stringify(event));
+    const summary = await runTick(deps, 'live');
+    expect(summary.skipped).toBe('no-assets');
+    expect(summary.due).toBe(1);
+    expect(summary.drafted).toBe(0);
+    expect(await redis.hget<TriggerEvent[]>(keys.quoteTriggerPending, PHONE)).toEqual([event]);
+    expect(redis.zsets.get(keys.quoteTriggerDue)?.get(PHONE)).toBe(deps.now());
+    // run lock still released
+    expect(await redis.get(keys.quoteDrafterRunLock)).toBeNull();
+
+    const next = await withManifest(redis, () => runTick(deps, 'live'));
+    expect(next.skipped).toBeUndefined();
+    expect(next.drafted).toBe(1);
+    expect(next.records[0]).toMatchObject({ phone: PHONE, trigger: 'T1', events: 1 });
+    expect(await redis.zcard(keys.quoteTriggerDue)).toBe(0);
+  });
+
+  it('merges with state written between consumption and requeue instead of clobbering it', async () => {
+    const { deps, redis } = makeDeps();
+    const consumedEvent = ev({ direction: 'outgoing', at: '2026-10-21T15:57:00Z', snippet: 'got them' });
+    const consumedJob = { trigger: 'T1' as const, why: 'T1 photos', channel: 'photos', at: '2026-10-21T15:58:00Z' };
+    const newerEvent = ev({ direction: 'outgoing', at: '2026-10-21T15:59:30Z', snippet: 'quote coming' });
+    const newerJob = { trigger: 'T3' as const, why: 'quote promised', channel: 'text', at: '2026-10-21T15:59:40Z' };
+    const earlierDue = deps.now() - 30_000;
+    await redis.lpush(keys.quoteTriggerQueue, JSON.stringify(consumedEvent));
+    await enqueueRoutedQuote(redis as unknown as Redis, PHONE, consumedJob);
+    // Simulate the router handing over a newer job (and a buffered event and
+    // an earlier due time landing) mid-tick, right before the asset check.
+    const realHgetall = redis.hgetall.bind(redis);
+    vi.spyOn(redis, 'hgetall').mockImplementation(async (key: string) => {
+      if (key === keys.quoteDrafterAssets) {
+        await redis.hset(keys.quoteTriggerPending, { [PHONE]: JSON.stringify([newerEvent]) });
+        await redis.hset(keys.quoteTriggerRouted, { [PHONE]: JSON.stringify(newerJob) });
+        await redis.zadd(keys.quoteTriggerDue, { score: earlierDue, member: PHONE });
+      }
+      return realHgetall(key);
+    });
+    const summary = await runTick(deps, 'live', { routerOwnsInbound: true });
+    expect(summary.skipped).toBe('no-assets');
+    expect(await redis.hget<TriggerEvent[]>(keys.quoteTriggerPending, PHONE)).toEqual([consumedEvent, newerEvent]);
+    expect(await redis.hget(keys.quoteTriggerRouted, PHONE)).toEqual(newerJob);
+    expect(redis.zsets.get(keys.quoteTriggerDue)?.get(PHONE)).toBe(earlierDue);
+  });
+
+  it('a requeue writes its routed job back over an older one', async () => {
+    const { deps, redis } = makeDeps();
+    const job = { trigger: 'T1' as const, why: 'T1 photos', channel: 'photos', at: '2026-10-21T15:58:00Z' };
+    await enqueueRoutedQuote(redis as unknown as Redis, PHONE, job);
+    const realHgetall = redis.hgetall.bind(redis);
+    vi.spyOn(redis, 'hgetall').mockImplementation(async (key: string) => {
+      if (key === keys.quoteDrafterAssets) {
+        await redis.hset(keys.quoteTriggerRouted, { [PHONE]: JSON.stringify({ ...job, at: '2026-10-21T15:00:00Z' }) });
+        await redis.zadd(keys.quoteTriggerDue, { score: deps.now() + 600_000, member: PHONE });
+      }
+      return realHgetall(key);
+    });
+    await runTick(deps, 'live', { routerOwnsInbound: true });
+    expect(await redis.hget(keys.quoteTriggerRouted, PHONE)).toEqual(job);
+    // a later due time is pulled in to now: the consumed job was already due
+    expect(redis.zsets.get(keys.quoteTriggerDue)?.get(PHONE)).toBe(deps.now());
+  });
+
+  it('restores a routed job alongside its buffered events', async () => {
+    const { deps, redis } = makeDeps();
+    const job = { trigger: 'T3' as const, why: 'quote promised', channel: 'text', at: '2026-10-21T15:58:00Z' };
+    await enqueueRoutedQuote(redis as unknown as Redis, PHONE, job);
+    const summary = await runTick(deps, 'live', { routerOwnsInbound: true });
+    expect(summary.skipped).toBe('no-assets');
+    expect(await redis.hget(keys.quoteTriggerRouted, PHONE)).toEqual(job);
+    expect(await redis.zcard(keys.quoteTriggerDue)).toBe(1);
+
+    const next = await withManifest(redis, () => runTick(deps, 'live', { routerOwnsInbound: true }));
+    expect(next.records[0]).toMatchObject({ trigger: 'T3', why: 'quote promised (inbound router)' });
+  });
+
+  it('clears the T4 dedupe marker it set so the bot-owned retry is not deduped away', async () => {
+    const { deps, redis } = makeDeps();
+    await upsertOpenQuote(redis as unknown as Redis, PHONE, openEntry({ botOwned: true }));
+    (deps.gemini.generateContent as ReturnType<typeof vi.fn>).mockResolvedValue(
+      '{"scopeRelevant": true, "reason": "finished basement"}',
+    );
+    await redis.lpush(keys.quoteTriggerQueue, JSON.stringify(ev({ at: '2026-10-21T15:40:00Z', snippet: 'the basement is finished' })));
+    const summary = await runTick(deps, 'live');
+    expect(summary.skipped).toBe('no-assets');
+    expect(await redis.hget(keys.quoteTriggerT4Done, '77')).toBeNull();
+    expect(await redis.hget(keys.quoteTriggerPending, PHONE)).not.toBeNull();
+
+    const next = await withManifest(redis, () => runTick(deps, 'live'));
+    expect(next.drafted).toBe(1);
+    expect(next.records[0]?.trigger).toBe('T4');
+  });
+
+  it('re-pushes the debrief and clears the T2 markers for its jobs', async () => {
+    const calendar = {
+      listEvents: vi.fn().mockResolvedValue([{ summary: 'Skinner crack assessment', start: '2026-10-21T13:00:00Z' }]),
+    };
+    const { deps, redis } = makeDeps({ calendar });
+    (deps.qb.listAllCustomers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { DisplayName: 'John Skinner', PrimaryPhone: { FreeFormNumber: '(508) 361-1747' } },
+    ]);
+    const debrief = ev({ kind: 'mike-debrief', phone: '+18573126761', at: '2026-10-21T15:59:00Z' });
+    await redis.lpush(keys.quoteTriggerQueue, JSON.stringify(debrief));
+    const summary = await runTick(deps, 'live');
+    expect(summary.skipped).toBe('no-assets');
+    expect(await redis.hget(keys.quoteTriggerT2Done, PHONE)).toBeNull();
+    const queue = redis.lists.get(keys.quoteTriggerQueue) ?? [];
+    expect(queue.map((r) => JSON.parse(r as string))).toEqual([debrief]);
+
+    const next = await withManifest(redis, () => runTick(deps, 'live'));
+    expect(next.records[0]).toMatchObject({ phone: PHONE, trigger: 'T2' });
+  });
+
+  it('requeues and rethrows when the asset load itself throws', async () => {
+    const { deps, redis } = makeDeps();
+    await redis.hset(keys.quoteDrafterAssets, { ruleset: 'https://blob.test/r.md', updatedAt: 'v-throw' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 503 })));
+    await redis.lpush(keys.quoteTriggerQueue, JSON.stringify(ev({ at: '2026-10-21T15:40:00Z', hasMedia: true })));
+    try {
+      await expect(runTick(deps, 'live')).rejects.toThrow('asset fetch failed');
+    } finally {
+      vi.unstubAllGlobals();
+      clearAssetCache();
+    }
+    expect(await redis.hget(keys.quoteTriggerPending, PHONE)).not.toBeNull();
+    expect(await redis.zcard(keys.quoteTriggerDue)).toBe(1);
+    expect(await redis.get(keys.quoteDrafterRunLock)).toBeNull();
+  });
+
+  it('does not skip a tick whose due phones need no draft', async () => {
+    const { deps, redis } = makeDeps();
+    await redis.lpush(keys.quoteTriggerQueue, JSON.stringify(ev({ at: '2026-10-21T15:40:00Z', snippet: 'ok thanks' })));
+    const summary = await runTick(deps, 'live');
+    expect(summary.skipped).toBeUndefined();
+    expect(await redis.zcard(keys.quoteTriggerDue)).toBe(0);
   });
 });
 
