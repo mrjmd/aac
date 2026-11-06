@@ -35,6 +35,7 @@ import { maybePostSuggestionNote } from '../../lib/suggestion-note.js';
 import {
   getBookingSyncOutcome,
   getDirectiveIdByEstimate,
+  countCondition,
   logHealthError,
   markEstimateHandled,
   setBookingSyncOutcome,
@@ -194,9 +195,11 @@ export default async function handler(
           upcomingEvents,
         );
         summary.errors += summary.bookingSync.errors;
+        if (summary.bookingSync.errors) await countCondition('booking-sync.error', { by: summary.bookingSync.errors });
       } catch (err) {
         summary.errors++;
         log.error('Booking sync failed', err as Error);
+        await countCondition('booking-sync.error');
         await logHealthError('qb-reconcile', `booking-sync: ${(err as Error).message}`);
       }
     }

@@ -57,3 +57,18 @@ describe('middleware health wrappers', () => {
     );
   });
 });
+
+describe('middleware countCondition wrapper', () => {
+  it('HINCRBYs today\'s Eastern health:conditions hash and never throws', async () => {
+    const hincrby = vi.fn(async () => 1);
+    Object.assign(client, { hincrby, hset: vi.fn(async () => 1), zadd: vi.fn(async () => 1), zremrangebyscore: vi.fn(async () => 0) });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-05T23:30:00.000Z'));
+    const { countCondition } = await import('../lib/redis.js');
+    await countCondition('reminders.no_phone');
+    expect(hincrby).toHaveBeenCalledWith('health:conditions:2026-11-05', 'reminders.no_phone', 1);
+    hincrby.mockRejectedValueOnce(new Error('down'));
+    await expect(countCondition('reminders.no_phone')).resolves.toBeUndefined();
+    vi.useRealTimers();
+  });
+});

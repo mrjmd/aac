@@ -12,6 +12,7 @@ vi.mock('../lib/redis.js', () => ({
   trackWebhookProcessed: vi.fn().mockResolvedValue(undefined),
   logHealthError: vi.fn().mockResolvedValue(undefined),
   tryAcquireContactCreateLock: vi.fn().mockResolvedValue(true),
+  countCondition: vi.fn().mockResolvedValue(undefined),
 }));
 
 const mockPipedrive = {
@@ -243,6 +244,37 @@ describe('pipedrive webhook', () => {
     expect(body.status).toBe('synced');
     expect(body.quoId).toBe('quo-from-other');
   }, 10000);
+
+  it('counts pd-webhook.lost_lock_no_contact when the lock wait finds no contact', async () => {
+    const redis = await import('../lib/redis.js');
+    (redis.tryAcquireContactCreateLock as any).mockResolvedValue(false);
+    mockQuo.findContactByExternalId.mockResolvedValue(null);
+
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+
+    expect(mockQuo.createContact).not.toHaveBeenCalled();
+    expect(redis.countCondition).toHaveBeenCalledWith('pd-webhook.lost_lock_no_contact', {
+      entity: { id: '100', label: 'PD 100 · +15551234567' },
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+  }, 10000);
+
+  it('counts pd-webhook.qb_disconnected when QuickBooks is not connected', async () => {
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+    const redis = await import('../lib/redis.js');
+    expect(redis.countCondition).toHaveBeenCalledWith('pd-webhook.qb_disconnected');
+    expect(redis.logHealthError).not.toHaveBeenCalled();
+  });
+
+  it('does not count qb_disconnected when QuickBooks is connected', async () => {
+    mockQuickBooks.isConnected.mockResolvedValue(true);
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+    const redis = await import('../lib/redis.js');
+    expect(redis.countCondition).not.toHaveBeenCalledWith('pd-webhook.qb_disconnected');
+  });
 
   it('returns 200 even when Quo sync fails (fail safe)', async () => {
     mockQuo.createContact.mockRejectedValue(new Error('API down'));

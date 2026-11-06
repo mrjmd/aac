@@ -49,7 +49,9 @@ const {
   mockLogHealthError,
   mockGetBookingSyncOutcome,
   mockSetBookingSyncOutcome,
+  mockCountCondition,
 } = vi.hoisted(() => ({
+  mockCountCondition: vi.fn(),
   mockGetBookingSyncOutcome: vi.fn(),
   mockSetBookingSyncOutcome: vi.fn(),
   mockGetDirectiveIdByEstimate: vi.fn(),
@@ -67,6 +69,7 @@ vi.mock('../lib/redis.js', () => ({
   logHealthError: mockLogHealthError,
   getBookingSyncOutcome: mockGetBookingSyncOutcome,
   setBookingSyncOutcome: mockSetBookingSyncOutcome,
+  countCondition: mockCountCondition,
 }));
 
 import handler from '../api/cron/qb-reconcile.js';
@@ -196,6 +199,21 @@ describe('qb-reconcile cron', () => {
       expect(mockWritePendingDirective).toHaveBeenCalledTimes(1);
       expect(res.json.mock.calls[0][0].summary.errors).toBe(1);
       expect(mockLogHealthError).toHaveBeenCalledWith('qb-reconcile', 'booking-sync: qbo 500');
+      expect(mockCountCondition).toHaveBeenCalledWith('booking-sync.error');
+    });
+
+    it('counts per-event booking-sync errors as booking-sync.error', async () => {
+      mockListEstimatesUpdatedSince.mockResolvedValue([]);
+      mockListEvents.mockResolvedValue([greenJob]);
+      mockGetBookingSyncOutcome.mockResolvedValue(null);
+      mockListAllCustomers.mockResolvedValue([makeCustomer()]);
+      mockGetEstimatesByCustomer.mockRejectedValue(new Error('qbo 503'));
+
+      const res = makeRes();
+      await handler(makeReq(), res);
+
+      expect(res.json.mock.calls[0][0].summary.bookingSync.errors).toBe(1);
+      expect(mockCountCondition).toHaveBeenCalledWith('booking-sync.error', { by: 1 });
     });
   });
 

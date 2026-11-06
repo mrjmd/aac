@@ -32,7 +32,7 @@ import {
   getDayRangeEastern,
   isoDateDaysAgo,
 } from '../../lib/cron.js';
-import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
+import { markCronAction, trackCronRun, logHealthError, countCondition } from '../../lib/redis.js';
 import { settleFailedSend } from '../../lib/cron-send.js';
 import { matchEventToDealAndPerson, matchPersonToQBCustomer } from '@aac/customers';
 import type { QBEstimate } from '@aac/api-clients/quickbooks';
@@ -143,6 +143,14 @@ async function processEvent(
     jobDate: event.start.split('T')[0],
     location: event.location || '',
   };
+  // A job that won't be invoiced: counted with the event for the System
+  // health page's jobs-not-invoiced list (never on a dry run).
+  const notInvoiced = (name: Parameters<typeof countCondition>[0], personName?: string) =>
+    isDryRun
+      ? Promise.resolve()
+      : countCondition(name, {
+          entity: { id: event.id, label: [personName ?? event.summary, event.location, base.jobDate].filter(Boolean).join(' · ') },
+        });
 
   try {
     // Dedupe by event id — one invoice per scheduled job
@@ -156,12 +164,14 @@ async function processEvent(
     const { deal, person } = await matchEventToDealAndPerson(event, pipedrive);
     if (!person) {
       log.warn('No Pipedrive person', { eventId: event.id, summary: event.summary });
+      await notInvoiced('invoice-create.no_person');
       return { ...base, personName: null, qbCustomerId: null, estimateId: null, invoiceId: null, amount: null, status: 'skipped_no_person' };
     }
 
     const customer = await matchPersonToQBCustomer(person, qb);
     if (!customer || !customer.Id) {
       log.warn('No QB customer match', { eventId: event.id, personId: person.id, personName: person.name });
+      await notInvoiced('invoice-create.no_qb_customer', person.name);
       return { ...base, personName: person.name, qbCustomerId: null, estimateId: null, invoiceId: null, amount: null, status: 'skipped_no_qb_customer' };
     }
 
@@ -202,11 +212,13 @@ async function processEvent(
     if (!estimate) {
       const accepted = await qb.getEstimatesByCustomer(customer.Id, 'Accepted');
       if (accepted.length === 0) {
+        await notInvoiced('invoice-create.no_accepted_estimate', person.name);
         return { ...base, personName: person.name, qbCustomerId: customer.Id, estimateId: null, invoiceId: null, amount: null, status: 'skipped_no_accepted_estimate' };
       }
 
       // Multi-estimate ambiguity → don't guess. Notify Matt; he handles manually.
       if (accepted.length > 1) {
+        await notInvoiced('invoice-create.multi_accepted_estimate', person.name);
         const lines = accepted
           .map((e) => `  • Est ${e.DocNumber ?? e.Id}: $${e.TotalAmt ?? '?'}`)
           .join('\n');

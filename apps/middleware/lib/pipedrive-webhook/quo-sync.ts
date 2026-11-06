@@ -9,6 +9,7 @@ import {
   storeIdMapping,
   getQuoIdFromPipedrive,
   tryAcquireContactCreateLock,
+  countCondition,
 } from '../redis.js';
 import type { PersonSyncContext } from './types.js';
 
@@ -118,6 +119,7 @@ export async function syncPersonToQuo(ctx: PersonSyncContext): Promise<string | 
             pipedriveId: data.id,
             phone: e164Phone,
           });
+          await countCondition('pd-webhook.lost_lock_no_contact', { entity: { id: String(data.id), label: `PD ${data.id} · ${e164Phone}` } });
         }
       } else {
         // We hold the lock — create the contact. Set externalId = E.164

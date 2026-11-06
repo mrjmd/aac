@@ -52,11 +52,12 @@ vi.mock('../lib/redis.js', () => ({
   releaseCronAction: vi.fn().mockResolvedValue(undefined),
   trackCronRun: vi.fn().mockResolvedValue(undefined),
   logHealthError: vi.fn().mockResolvedValue(undefined),
+  countCondition: vi.fn().mockResolvedValue(undefined),
 }));
 
 import handler from '../api/cron/invoice-create.js';
 import { VendorHttpError } from '@aac/api-clients/errors';
-import { logHealthError, markCronAction, releaseCronAction } from '../lib/redis.js';
+import { countCondition, logHealthError, markCronAction, releaseCronAction } from '../lib/redis.js';
 
 function makeReq(query: Record<string, string> = {}) {
   return { method: 'GET', query, headers: { authorization: 'Bearer test-secret' } } as any;
@@ -173,6 +174,55 @@ describe('cron/invoice-create', () => {
     const res = makeRes();
     await handler(makeReq({ dry: 'true' }), res);
     expect(res.json.mock.calls[0][0].results[0].status).toBe('skipped_no_accepted_estimate');
+  });
+
+  describe('jobs not invoiced are counted with the job (System health)', () => {
+    const entity = { id: 'evt-1', label: 'John Smith · 123 Main St, Boston, MA · 2026-05-18' };
+
+    it('no Pipedrive person → invoice-create.no_person (label falls back to the event title)', async () => {
+      mockListEvents.mockResolvedValue([event]);
+      await handler(makeReq(), makeRes());
+      expect(countCondition).toHaveBeenCalledWith('invoice-create.no_person', { entity });
+    });
+
+    it('no QB customer → invoice-create.no_qb_customer', async () => {
+      mockListEvents.mockResolvedValue([event]);
+      mockSearchPersonByName.mockResolvedValue({ id: 1 });
+      mockGetPerson.mockResolvedValue(person);
+      await handler(makeReq(), makeRes());
+      expect(countCondition).toHaveBeenCalledWith('invoice-create.no_qb_customer', { entity });
+    });
+
+    it('no accepted estimate → invoice-create.no_accepted_estimate', async () => {
+      mockListEvents.mockResolvedValue([event]);
+      mockSearchPersonByName.mockResolvedValue({ id: 1 });
+      mockGetPerson.mockResolvedValue(person);
+      mockSearchCustomerByEmail.mockResolvedValue(customer);
+      await handler(makeReq(), makeRes());
+      expect(countCondition).toHaveBeenCalledWith('invoice-create.no_accepted_estimate', { entity });
+    });
+
+    it('several accepted estimates → invoice-create.multi_accepted_estimate', async () => {
+      mockListEvents.mockResolvedValue([event]);
+      mockSearchPersonByName.mockResolvedValue({ id: 1 });
+      mockGetPerson.mockResolvedValue(person);
+      mockSearchCustomerByEmail.mockResolvedValue(customer);
+      mockGetEstimatesByCustomer.mockResolvedValue([{ Id: 'a' }, { Id: 'b' }]);
+      await handler(makeReq(), makeRes());
+      expect(countCondition).toHaveBeenCalledWith('invoice-create.multi_accepted_estimate', { entity });
+    });
+
+    it('a created invoice and a dry run count nothing', async () => {
+      mockListEvents.mockResolvedValue([event]);
+      mockSearchPersonByName.mockResolvedValue({ id: 1 });
+      mockGetPerson.mockResolvedValue(person);
+      mockSearchCustomerByEmail.mockResolvedValue(customer);
+      mockGetEstimatesByCustomer.mockResolvedValue([{ Id: 'qb-e-7', TotalAmt: 1500 }]);
+      await handler(makeReq(), makeRes());
+      mockGetEstimatesByCustomer.mockResolvedValue([]);
+      await handler(makeReq({ dry: 'true' }), makeRes());
+      expect(countCondition).not.toHaveBeenCalled();
+    });
   });
 
   it('skips + alerts Matt by SMS when multiple accepted estimates exist', async () => {

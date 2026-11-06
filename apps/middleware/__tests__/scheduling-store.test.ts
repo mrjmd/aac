@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const redisMocks = vi.hoisted(() => ({
   logHealthError: vi.fn().mockResolvedValue(undefined),
+  countCondition: vi.fn().mockResolvedValue(undefined),
   writePendingDirective: vi.fn(),
   getPendingDirective: vi.fn(),
   getDirectiveIdByEstimate: vi.fn(),
@@ -81,6 +82,11 @@ beforeEach(() => {
 });
 
 describe('schedulingStore', () => {
+  it('countCondition delegates to the middleware Redis helper', async () => {
+    await schedulingStore.countCondition?.('dispatch.stub_skipped');
+    expect(redisMocks.countCondition).toHaveBeenCalledWith('dispatch.stub_skipped');
+  });
+
   it('forwards every method to its lib/redis.ts helper with the same arguments', async () => {
     const d = { id: 'dir_1' } as unknown as SchedulingDirective;
     redisMocks.getPendingDirective.mockResolvedValueOnce(d);

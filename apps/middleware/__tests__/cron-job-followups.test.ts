@@ -35,6 +35,7 @@ vi.mock('../lib/redis.js', () => ({
   releaseCronAction: vi.fn().mockResolvedValue(undefined),
   trackCronRun: vi.fn().mockResolvedValue(undefined),
   logHealthError: vi.fn().mockResolvedValue(undefined),
+  countCondition: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../lib/followup.js', () => ({
@@ -237,5 +238,21 @@ describe('job-followups: marker on a failed send (owner policy 2026-11-05)', () 
     expect(mockSendMessage).toHaveBeenCalledOnce();
     expect(releaseCronAction).not.toHaveBeenCalled();
     expect(res.json.mock.calls[0][0].results[0].status).toBe('sent');
+  });
+});
+
+describe('job-followups condition counts', () => {
+  it('counts followups.no_person on a live run, never on a dry run', async () => {
+    const { matchEventToPerson } = await import('@aac/customers');
+    const { countCondition } = await import('../lib/redis.js');
+    vi.mocked(matchEventToPerson).mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    mockListEvents.mockResolvedValueOnce([dayOne]).mockResolvedValueOnce([]);
+    await handler(makeReq({ dry: 'true' }), makeRes());
+    expect(countCondition).not.toHaveBeenCalled();
+    mockListEvents.mockResolvedValueOnce([dayOne]).mockResolvedValueOnce([]);
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.json.mock.calls[0][0].results[0].status).toBe('skipped_no_person');
+    expect(countCondition).toHaveBeenCalledWith('followups.no_person');
   });
 });

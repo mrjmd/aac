@@ -28,7 +28,7 @@ import { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { getCalendar, getPipedrive, getQuo } from '../../lib/clients.js';
 import { getEnv } from '../../lib/env.js';
 import { verifyCronAuth, REMINDER_COLOR_IDS, extractFirstName, getDayRangeEastern } from '../../lib/cron.js';
-import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
+import { markCronAction, trackCronRun, logHealthError, countCondition } from '../../lib/redis.js';
 import { settleFailedSend } from '../../lib/cron-send.js';
 import { renderTemplate } from '../../lib/templates.js';
 import { matchEventToPerson } from '@aac/customers';
@@ -258,6 +258,7 @@ async function processReminder(
         eventId: event.id,
         summary: event.summary,
       });
+      if (!isDryRun) await countCondition('reminders.no_person');
       return { ...baseResult, personName: null, phone: null, status: 'skipped_no_person' };
     }
 
@@ -269,6 +270,7 @@ async function processReminder(
         personId: person.id,
         personName: person.name,
       });
+      if (!isDryRun) await countCondition('reminders.no_phone');
       return {
         ...baseResult,
         personName: person.name,

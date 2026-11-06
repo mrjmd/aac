@@ -1333,3 +1333,49 @@ describe('dispatchSchedulingIntent', () => {
     );
   });
 });
+
+// ── silent-skip counts (System health page) ──────────────────────
+
+describe('dispatchSchedulingIntent condition counts', () => {
+  const countCondition = vi.fn().mockResolvedValue(undefined);
+  const counted = (deps: Omit<SchedulingDispatchDeps, 'store'>, ctx: SchedulingDispatchContext) =>
+    dispatchWithStore({ store: { ...store, countCondition }, ...deps }, ctx);
+
+  it('counts dispatch.classifier_rejected once per rejected classifier call', async () => {
+    const gemini = makeGemini([new Error('gemini down')]);
+    await counted({ pd: makePd('Caller'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow }, ctxMsg());
+    expect(countCondition).toHaveBeenCalledTimes(1);
+    expect(countCondition).toHaveBeenCalledWith('dispatch.classifier_rejected');
+  });
+
+  it('counts dispatch.stub_skipped when an agreed slot produces no stub (slot in the past)', async () => {
+    const gemini = makeGemini([
+      makeClassification({
+        intent: 'manual_schedule',
+        score: 0.9,
+        confidence: 'high',
+        knownSlot: { startIso: '2026-05-20T14:00:00Z' },
+        eventClass: 'job',
+        slotCommitment: 'booked',
+        scopeSummary: 'crack injection',
+      }),
+    ]);
+    const cal = makeCal([]);
+    const summary = await counted(
+      { pd: makePd('John Smith'), cal, gemini, quo: makeQuo(), stub: { enabled: true, technicianEmails: [] }, now: fixedNow },
+      ctxMsg({ eventType: 'message.delivered', text: "I'm putting you down for Wednesday at 10" }),
+    );
+    expect(summary.directivesWritten).toBe(1);
+    expect(summary.stubsCreated).toBe(0);
+    expect(countCondition).toHaveBeenCalledWith('dispatch.stub_skipped');
+  });
+
+  it('works without a countCondition on the store (optional)', async () => {
+    const gemini = makeGemini([new Error('gemini down')]);
+    const summary = await dispatchSchedulingIntent(
+      { pd: makePd('Caller'), cal: makeCal([]), gemini, quo: makeQuo(), now: fixedNow },
+      ctxMsg(),
+    );
+    expect(summary.errors).toBe(1);
+  });
+});

@@ -123,6 +123,7 @@ export interface SchedulingDispatchDeps {
     | 'getQbCustomerIdFromPipedrive'
     | 'storePipedriveToQbMapping'
     | 'trackSchedulingClassification'
+    | 'countCondition'
   >;
   pd: PipedriveClient;
   cal: GoogleCalendarClient;
@@ -245,6 +246,7 @@ export async function dispatchSchedulingIntent(
   for (const result of settled) {
     if (result.status === 'rejected') {
       summary.errors++;
+      await deps.store.countCondition?.('dispatch.classifier_rejected');
       // Soft failure: classifier could not produce an intent (Gemini malformed
       // JSON, transient error, etc.). We degrade gracefully — no directive,
       // no caller-facing impact. Log for observability but do NOT page Matt
@@ -540,6 +542,7 @@ async function createStubForDirective(
       },
     );
     if (result.status !== 'created') {
+      await deps.store.countCondition?.('dispatch.stub_skipped');
       log.info('Stub creation skipped', {
         directiveId: directive.id,
         reason: result.reason,

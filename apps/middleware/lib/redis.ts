@@ -279,6 +279,21 @@ export async function logHealthError(
   await health.logHealthError(getRedis(), source, message, details);
 }
 
+/**
+ * Count a silent skip (System health page). Never throws, so it can sit on
+ * any skip path without changing what the caller returns.
+ */
+export async function countCondition(
+  name: health.ConditionName,
+  opts?: health.CountConditionOptions
+): Promise<void> {
+  try {
+    await health.countCondition(getRedis(), name, opts);
+  } catch (err) {
+    log.warn('countCondition failed (swallowed)', { condition: name, error: (err as Error).message });
+  }
+}
+
 // ── Scheduling Pipeline ─────────────────────────────────────────────
 // SCHEDULING_AUTO_PROPOSE_THRESHOLD lives in @aac/scheduling/constants so
 // the queue routing here and the dispatch's stub/hold gate share one value.

@@ -5,11 +5,14 @@
  * names a Redis key itself.
  */
 
+import type { ConditionName } from '@aac/shared-utils/health';
 import type { SchedulingDirective } from './types.js';
 
 export interface SchedulingStore {
   /** Append to the /api/health error list (surfaced to Matt by the agent). */
   logHealthError(source: string, message: string, details?: Record<string, unknown>): Promise<void>;
+  /** Count a silent skip for the System health page (@aac/shared-utils/health countCondition). Optional; never throws. */
+  countCondition?(name: ConditionName): Promise<void>;
   /** Write a directive to the shadow queue (pending or pending-review by confidence). */
   writePendingDirective(directive: SchedulingDirective): Promise<void>;
   /** Read a directive from the shadow queue. */

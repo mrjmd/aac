@@ -38,11 +38,12 @@ vi.mock('../lib/redis.js', () => ({
   releaseCronAction: vi.fn().mockResolvedValue(undefined),
   trackCronRun: vi.fn().mockResolvedValue(undefined),
   logHealthError: vi.fn().mockResolvedValue(undefined),
+  countCondition: vi.fn().mockResolvedValue(undefined),
 }));
 
 import handler from '../api/cron/job-reminders.js';
 import { VendorHttpError } from '@aac/api-clients/errors';
-import { logHealthError, markCronAction, releaseCronAction } from '../lib/redis.js';
+import { countCondition, logHealthError, markCronAction, releaseCronAction } from '../lib/redis.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -210,6 +211,20 @@ describe('cron/job-reminders', () => {
 
     const body = res.json.mock.calls[0][0];
     expect(body.results[0].status).toBe('skipped_no_phone');
+  });
+
+  it('counts reminders.no_person and reminders.no_phone on a live run, never on a dry run', async () => {
+    mockListEvents.mockResolvedValue([sampleEvent]);
+    mockSearchPersonByName.mockResolvedValue(null);
+    await handler(makeReq({ dry: 'true' }), makeRes());
+    expect(countCondition).not.toHaveBeenCalled();
+    await handler(makeReq(), makeRes());
+    expect(countCondition).toHaveBeenCalledWith('reminders.no_person');
+
+    mockSearchPersonByName.mockResolvedValue(samplePerson);
+    mockGetPerson.mockResolvedValue({ ...samplePerson, phone: [] });
+    await handler(makeReq(), makeRes());
+    expect(countCondition).toHaveBeenCalledWith('reminders.no_phone');
   });
 
   it('deduplicates events for the same person', async () => {

@@ -30,7 +30,7 @@ import {
   extractFirstName,
   getDayRangeEastern,
 } from '../../lib/cron.js';
-import { markCronAction, trackCronRun, logHealthError } from '../../lib/redis.js';
+import { markCronAction, trackCronRun, logHealthError, countCondition } from '../../lib/redis.js';
 import { settleFailedSend } from '../../lib/cron-send.js';
 import { renderTemplate } from '../../lib/templates.js';
 import {
@@ -219,6 +219,7 @@ async function processFollowUp(
         eventId: event.id,
         summary: event.summary,
       });
+      if (!isDryRun) await countCondition('followups.no_person');
       return {
         ...baseResult,
         personName: null,
@@ -236,6 +237,7 @@ async function processFollowUp(
         eventId: event.id,
         personId: person.id,
       });
+      if (!isDryRun) await countCondition('followups.no_phone');
       return {
         ...baseResult,
         personName: person.name,

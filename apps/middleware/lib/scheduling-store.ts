@@ -10,6 +10,7 @@ import {
   getPendingDirective,
   getQbCustomerIdFromPipedrive,
   logHealthError,
+  countCondition,
   markCronAction,
   storePipedriveToQbMapping,
   trackSchedulingClassification,
@@ -23,6 +24,7 @@ import {
  */
 export const schedulingStore: SchedulingStore = {
   logHealthError: (source, message, details) => logHealthError(source, message, details),
+  countCondition: (name) => countCondition(name),
   writePendingDirective: (directive) => writePendingDirective(directive),
   getPendingDirective: (directiveId) => getPendingDirective<SchedulingDirective>(directiveId),
   getDirectiveIdByEstimate: (qbEstimateId) => getDirectiveIdByEstimate(qbEstimateId),

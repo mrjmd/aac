@@ -9,6 +9,7 @@ import { PIPEDRIVE_CROSS_SYSTEM_FIELDS } from '@aac/api-clients/pipedrive';
 import {
   getQbCustomerIdFromPipedrive,
   storePipedriveToQbMapping,
+  countCondition,
 } from '../redis.js';
 import type { PersonSyncContext } from './types.js';
 
@@ -67,6 +68,7 @@ export async function syncPersonToQuickBooks(ctx: PersonSyncContext): Promise<st
   const qbConnected = await qb.isConnected();
   if (!qbConnected) {
     log.debug('QuickBooks not connected, skipping sync');
+    await countCondition('pd-webhook.qb_disconnected');
     return null;
   }
 
