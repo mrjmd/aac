@@ -35,5 +35,10 @@ Plan: `analysis/02-strategy/stale-quote-followup-plan-2026-10.md`.
   re-extracts every thread.
 - A run past `deadlineMs` stops starting new quotes, saves state, and keeps
   the last full queue and awaiting list (`partial: true`).
+- The draft cap (`MAX_DRAFTS_PER_DAY`, 6) is per Eastern day: touches already
+  queued today count, so a rerun (the worker's backstop slot, `--max-drafts`)
+  only fills the rest. A touch is saved the moment it is drafted, and a
+  same-day rerun re-lists it in `toSend` (earlier days: `waiting`), never
+  re-drafts it. A `--doc` run ignores earlier drafts.
 - `FEW_SHOTS` is frozen from `patterns.json` (2026-10-21); change it on
   purpose, not by recomputing.

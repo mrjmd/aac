@@ -175,12 +175,93 @@ describe('runStaleQuotes', () => {
     expect(countCondition).not.toHaveBeenCalled();
   });
 
-  it('a queued draft not yet sent is listed as waiting, never re-drafted', async () => {
+  it('a same-day rerun re-lists the unsent draft to send, never re-drafts it', async () => {
     const f = fake();
+    const first = await runStaleQuotes(f.deps, { dryRun: false });
+    const r = await runStaleQuotes(f.deps, { dryRun: false });
+    expect(r.draftedThisRun).toBe(0);
+    expect(r.queue.toSend).toEqual(first.queue.toSend);
+    expect(r.queue.waiting).toHaveLength(0);
+    expect(f.notes).toHaveLength(1);
+    expect(f.store.state.estimates['900'].touches).toHaveLength(1);
+  });
+
+  it('a draft queued on an earlier day and still unsent is listed as waiting', async () => {
+    let t = NOW;
+    const f = fake({ now: () => t });
     await runStaleQuotes(f.deps, { dryRun: false });
+    t = NOW + DAY;
     const r = await runStaleQuotes(f.deps, { dryRun: false });
     expect(r.queue.toSend).toHaveLength(0);
     expect(r.queue.waiting).toHaveLength(1);
+    expect(f.notes).toHaveLength(1);
+  });
+
+  describe('daily draft cap', () => {
+    const eight = (): QBEstimate[] => Array.from({ length: 8 }, (_, i) => estimate({ Id: `9${i}`, DocNumber: `16${i}` }));
+    const drafted = (f: Fake): number => Object.values(f.store.state.estimates).reduce((n, s) => n + s.touches.length, 0);
+
+    it('a second run the same Eastern day only finishes what the first left (11/06: 6 + 6)', async () => {
+      const f = fake({ estimates: eight() });
+      const first = await runStaleQuotes(f.deps, { dryRun: false });
+      expect(first.draftedThisRun).toBe(6);
+      const second = await runStaleQuotes(f.deps, { dryRun: false });
+      expect(second.draftedThisRun).toBe(0);
+      expect(second.queue.toSend).toHaveLength(6);
+      expect(second.queue.skipped.filter((s) => /daily cap of 6/.test(s.reason))).toHaveLength(2);
+      expect(f.notes).toHaveLength(6);
+      expect(drafted(f)).toBe(6);
+    });
+
+    it('a run cut short by its deadline leaves the rest of the cap to the backstop slot', async () => {
+      let t = NOW;
+      const f = fake({ estimates: eight(), now: () => t });
+      // Each estimate's scan costs 1s of clock; the deadline stops the first run after a few.
+      f.deps.quo.listMessages = async () => {
+        t += 1000;
+        return { data: [] };
+      };
+      const first = await runStaleQuotes(f.deps, { dryRun: false, deadlineMs: NOW + 2500 });
+      expect(first.partial).toBe(true);
+      expect(first.draftedThisRun).toBe(3);
+      const second = await runStaleQuotes(f.deps, { dryRun: false });
+      expect(second.draftedThisRun).toBe(3);
+      expect(second.queue.toSend).toHaveLength(6);
+      expect(f.notes).toHaveLength(6);
+    });
+
+    it('counts only touches queued on the current Eastern day', async () => {
+      const f = fake({ estimates: eight() });
+      const earlier = (id: string, queuedAt: string) => ({
+        estimateId: id, doc: id, customer: 'x', phone: null, firstSeenAt: queuedAt, seasonClass: 'injection' as const,
+        largeResurf: false, variant: { t1Days: 2, t2Days: 10 }, touches: [{ tier: 'T1' as const, queuedAt, draft: 'd', sentDetectedAt: queuedAt }],
+      });
+      // 11/04 02:00Z is still 11/03 in Eastern time; 11/04 05:00Z is 11/04.
+      f.store.state.estimates = { a: earlier('a', '2026-11-04T02:00:00.000Z'), b: earlier('b', '2026-11-04T05:00:00.000Z') };
+      const r = await runStaleQuotes(f.deps, { dryRun: true });
+      expect(r.draftedThisRun).toBe(5);
+    });
+
+    it('a one-estimate run ignores the drafts already made today', async () => {
+      const f = fake({ estimates: eight() });
+      await runStaleQuotes(f.deps, { dryRun: false });
+      const r = await runStaleQuotes(f.deps, { dryRun: false, doc: '167' });
+      expect(r.draftedThisRun).toBe(1);
+    });
+  });
+
+  it('a drafted touch is saved before the run finishes (a killed run never re-drafts it)', async () => {
+    let drafts = 0;
+    const f = fake({
+      estimates: [estimate(), estimate({ Id: '901', DocNumber: '1601', TxnDate: new Date(NOW - 11 * DAY).toISOString().slice(0, 10) })],
+      gemini: (prompt) => {
+        if (prompt.startsWith('Review this outbound SMS')) return '{"ok": true}';
+        if (++drafts === 2) throw new Error('function killed');
+        return 'Hi Pat, just checking back in.';
+      },
+    });
+    await expect(runStaleQuotes(f.deps, { dryRun: false })).rejects.toThrow();
+    expect(f.store.state.estimates['900'].touches).toHaveLength(1);
     expect(f.notes).toHaveLength(1);
   });
 

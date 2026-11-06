@@ -2,7 +2,9 @@
  * Stale-quote follow-up (route: /api/stale-quotes, Vercel cron every 20 min
  * through the 12:00 UTC hour). One full scan per Eastern day: the first
  * slot runs it, later slots finish a scan the time budget cut short, then
- * skip. Drafts are Quo copy/paste notes; nothing is ever sent.
+ * skip. The draft cap is per Eastern day across slots, so a finishing slot
+ * only fills what the first left. Drafts are Quo copy/paste notes; nothing
+ * is ever sent.
  *
  * Gated by Redis `stale-quotes:mode` (off | dry | live, unset = off). Dry
  * refreshes only the awaiting-reply list. `?force=1` (middleware secret)
@@ -63,7 +65,8 @@ async function handle(request: Request): Promise<Response> {
       partial: r.partial,
       at: new Date().toISOString(),
       pending: r.pendingInScope,
-      drafted: r.queue.toSend.length,
+      drafted: r.draftedThisRun,
+      toSend: r.queue.toSend.length,
       waiting: r.queue.waiting.length,
       flags: r.queue.flags.length,
       awaiting: r.awaiting.length,

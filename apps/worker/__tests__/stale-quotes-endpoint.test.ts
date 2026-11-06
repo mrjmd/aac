@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const run = vi.hoisted(() =>
-  vi.fn().mockResolvedValue({ partial: false, pendingInScope: 3, queue: { toSend: [1], waiting: [], flags: [], skipped: [1, 2] }, awaiting: [] }),
+  vi.fn().mockResolvedValue({ partial: false, pendingInScope: 3, draftedThisRun: 1, queue: { toSend: [1], waiting: [], flags: [], skipped: [1, 2] }, awaiting: [] }),
 );
 const mode = vi.hoisted(() => ({ value: 'dry' as string }));
 const getStaleQuoteDeps = vi.hoisted(() => vi.fn((): object | null => ({})));

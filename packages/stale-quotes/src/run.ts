@@ -31,6 +31,7 @@ import type { QBCustomer, QBEstimate, QBInvoice } from '@aac/api-clients/quickbo
 import type { QuoMessage } from '@aac/api-clients/quo';
 import type { GmailMessage } from '@aac/api-clients/gmail';
 import { isBotDraft } from '@aac/quoting';
+import { easternDate } from '@aac/shared-utils/eastern';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import { assignVariant, classifyService } from './classify.js';
 import { computeBookingHorizon, expandEvent, findBookedEvent } from './calendar.js';
@@ -51,7 +52,7 @@ import {
   LAST_CHECKIN_AGE_DAYS,
   LAST_CHECKIN_GAP_DAYS,
   MANUAL_HOLDS,
-  MAX_DRAFTS_PER_RUN,
+  MAX_DRAFTS_PER_DAY,
   MAX_UNANSWERED,
   OUR_EMAILS,
   QUO_THROTTLE_MS,
@@ -66,6 +67,7 @@ import {
   type RunResult,
   type RunlogRow,
   type StaleQuoteDeps,
+  type TouchRecord,
 } from './types.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -75,10 +77,12 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
   const clock = deps.now ?? Date.now;
   const throttle = deps.throttleMs ?? QUO_THROTTLE_MS;
   const { dryRun, doc: docArg } = opts;
-  const maxDrafts = opts.maxDrafts ?? MAX_DRAFTS_PER_RUN;
+  const maxDrafts = opts.maxDrafts ?? MAX_DRAFTS_PER_DAY;
 
   const now = clock();
   const today = isoDay(now);
+  const easternToday = easternDate(now);
+  const queuedToday = (t: TouchRecord): boolean => easternDate(t.queuedAt) === easternToday;
 
   // ── pull everything once ───────────────────────────────────────────
   log('Pulling QBO estimates + customers + invoices…');
@@ -106,7 +110,7 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
   );
   if (docArg) pending = pending.filter((e) => e.DocNumber === docArg);
   // Freshest first: recent quotes are the ones a nudge can still save, so
-  // the per-run draft cap goes to them before the deep-cold tail.
+  // the daily draft cap goes to them before the deep-cold tail.
   pending.sort((a, b) => (b.TxnDate ?? '').localeCompare(a.TxnDate ?? ''));
   log(`  ${estimates.length} estimates → ${pending.length} Pending in scope${docArg ? ` (doc ${docArg})` : ''}`);
 
@@ -131,6 +135,13 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
   };
   const runlog: RunlogRow[] = [];
   const awaitingHuman: AwaitingHumanEntry[] = [];
+  // The cap is per Eastern day, not per run: the worker's backstop slot
+  // finishes a scan the first slot's time budget cut short, and must only
+  // fill what is left of today's cap (11/06: two slots drafted 6 each). A
+  // one-estimate run is an explicit request and ignores earlier drafts.
+  const draftedEarlierToday = docArg
+    ? 0
+    : Object.values(state.estimates).reduce((n, s) => n + s.touches.filter(queuedToday).length, 0);
   let draftsThisRun = 0;
   let partial = false;
 
@@ -429,20 +440,27 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
       continue;
     }
 
-    // already queued and still unsent? re-list as waiting, don't re-draft
+    // already queued and still unsent? never re-draft. Queued earlier today
+    // (a rerun of today's scan) → still today's draft, listed to send;
+    // queued on an earlier day → waiting.
     const openTouch = st.touches.find((t) => !t.sentDetectedAt);
     if (openTouch) {
-      queue.waiting.push({
+      const listed: QueueDraft = {
         doc, estimateId: e.Id, customer, phone: phone!, amount, ageDays,
         tier: openTouch.tier, variant: variantLabel(st), draft: openTouch.draft,
         whyNow: `queued ${openTouch.queuedAt.slice(0, 10)}, no matching outbound detected yet — still waiting to be sent`,
         queuedAt: openTouch.queuedAt,
-      });
+      };
+      if (queuedToday(openTouch)) {
+        queue.toSend.push({ ...listed, whyNow: openTouch.whyNow ?? `${openTouch.tier} drafted earlier today` });
+      } else {
+        queue.waiting.push(listed);
+      }
       continue;
     }
 
-    if (draftsThisRun >= maxDrafts) {
-      skip(`due (${tier}) but per-run cap of ${maxDrafts} reached`);
+    if (draftedEarlierToday + draftsThisRun >= maxDrafts) {
+      skip(`due (${tier}) but daily cap of ${maxDrafts} reached`);
       continue;
     }
 
@@ -505,7 +523,10 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
     draftsThisRun++;
 
     if (!dryRun) {
-      st.touches.push({ tier, queuedAt: entry.queuedAt, draft });
+      st.touches.push({ tier, queuedAt: entry.queuedAt, draft, whyNow });
+      // Save the touch before posting: a run killed mid-scan (maxDuration)
+      // never reaches saveState, and the next slot would draft it again.
+      await store.saveEstimate(st);
       try {
         const contact = phone ? await quo.findContactByPhone(phone) : null;
         if (contact) {
@@ -552,7 +573,7 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
     log(`\n[dry-run] no state/queue written, no notes posted${docArg || partial ? '' : ' (refreshed the awaiting-reply list)'}`);
   }
 
-  return { partial, horizon: horizon.text, queue, awaiting: awaitingHuman, runlog, pendingInScope: pending.length };
+  return { partial, horizon: horizon.text, queue, awaiting: awaitingHuman, runlog, pendingInScope: pending.length, draftedThisRun: draftsThisRun };
 }
 
 function variantLabel(st: EstimateState): string {

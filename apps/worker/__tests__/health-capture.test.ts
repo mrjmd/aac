@@ -99,7 +99,7 @@ vi.mock('../lib/quote-deps.js', async (importOriginal) => ({
 vi.mock('@aac/api-clients/gmail', () => ({ GmailClient: vi.fn(() => ({})) }));
 
 const staleRun = vi.hoisted(() =>
-  vi.fn(async () => ({ partial: false, pendingInScope: 2, queue: { toSend: [1], waiting: [], flags: [], skipped: [1] }, awaiting: [] })),
+  vi.fn(async () => ({ partial: false, pendingInScope: 2, draftedThisRun: 1, queue: { toSend: [1], waiting: [], flags: [], skipped: [1] }, awaiting: [] })),
 );
 const staleMode = vi.hoisted(() => vi.fn(async () => 'dry'));
 vi.mock('@aac/stale-quotes', () => ({ runStaleQuotes: staleRun }));

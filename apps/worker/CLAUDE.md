@@ -56,7 +56,8 @@ Plain Vercel Serverless Functions (no framework) that run the
   cron every 20 min through the 12:00 UTC hour: the first slot scans every
   Pending quote and drafts due follow-ups as `📋 STALE-QUOTE FOLLOW-UP` Quo
   notes (never sends); later slots finish a scan its 600s budget cut short,
-  then skip until tomorrow. Gated by Redis `stale-quotes:mode`
+  then skip until tomorrow. The 6-draft cap is per Eastern day across slots
+  (touches already queued today count). Gated by Redis `stale-quotes:mode`
   (off | dry | live, unset = off); dry refreshes only the awaiting-reply
   list. Needs the Google env (calendar + Gmail are hard gates).
 - `api/triage.ts`: daily triage (`@aac/triage`, docs/plans/triage-to-worker.md),

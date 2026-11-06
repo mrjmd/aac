@@ -12,6 +12,8 @@ export interface StaleQuoteStore {
   loadState(): Promise<FunnelStateFile>;
   /** Replace the saved state with this one (entries missing from it are dropped). */
   saveState(state: FunnelStateFile): Promise<void>;
+  /** Write one estimate's entry now (a drafted touch survives a run that dies before saveState). */
+  saveEstimate(st: EstimateState): Promise<void>;
   loadQueue(): Promise<QueueFile | null>;
   saveQueue(queue: QueueFile): Promise<void>;
   loadAwaiting(): Promise<AwaitingFile | null>;
@@ -55,6 +57,10 @@ export class RedisStaleQuoteStore implements StaleQuoteStore {
     if (gone.length) await this.redis.hdel(keys.staleQuotesState, ...gone);
   }
 
+  async saveEstimate(st: EstimateState): Promise<void> {
+    await this.redis.hset(keys.staleQuotesState, { [st.estimateId]: JSON.stringify(st) });
+  }
+
   async loadQueue(): Promise<QueueFile | null> {
     return parse<QueueFile>(await this.redis.get(keys.staleQuotesQueue));
   }
@@ -90,6 +96,9 @@ export class MemoryStaleQuoteStore implements StaleQuoteStore {
   }
   async saveState(state: FunnelStateFile): Promise<void> {
     this.state = structuredClone(state);
+  }
+  async saveEstimate(st: EstimateState): Promise<void> {
+    this.state.estimates[st.estimateId] = structuredClone(st);
   }
   async loadQueue(): Promise<QueueFile | null> {
     return this.queue;

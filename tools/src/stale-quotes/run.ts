@@ -8,7 +8,7 @@
  *   npx tsx tools/src/stale-quotes/run.ts --dry-run          # print, write nothing (refreshes the awaiting-reply list)
  *   npx tsx tools/src/stale-quotes/run.ts                    # live: notes + queue + state
  *   npx tsx tools/src/stale-quotes/run.ts --doc 1516         # one estimate
- *   npx tsx tools/src/stale-quotes/run.ts --max-drafts 4     # cap this run (default 6)
+ *   npx tsx tools/src/stale-quotes/run.ts --max-drafts 4     # today's cap (default 6; earlier drafts today count)
  *
  * A live run takes the same Redis run lock as the worker's cron
  * (keys.staleQuotesRunLock), so the two never overlap: if the cron holds
@@ -18,7 +18,7 @@
 
 import { GoogleCalendarClient } from '@aac/api-clients/google-calendar';
 import { GmailClient } from '@aac/api-clients/gmail';
-import { RedisStaleQuoteStore, runStaleQuotes, MAX_DRAFTS_PER_RUN, type RunResult } from '@aac/stale-quotes';
+import { RedisStaleQuoteStore, runStaleQuotes, MAX_DRAFTS_PER_DAY, type RunResult } from '@aac/stale-quotes';
 import { technicianEmails } from '@aac/shared-utils/calendar';
 import { keys } from '@aac/shared-utils/redis';
 import { geminiFromEnv, googleOAuthFromEnv, loadEnv, quickBooksFromEnv, quoFromEnv, redisFromEnv } from '../lib/env';
@@ -28,7 +28,7 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const dryRun = argv.includes('--dry-run');
   const doc = argv.includes('--doc') ? argv[argv.indexOf('--doc') + 1] : undefined;
-  const maxDrafts = argv.includes('--max-drafts') ? Number(argv[argv.indexOf('--max-drafts') + 1]) : MAX_DRAFTS_PER_RUN;
+  const maxDrafts = argv.includes('--max-drafts') ? Number(argv[argv.indexOf('--max-drafts') + 1]) : MAX_DRAFTS_PER_DAY;
 
   const redis = redisFromEnv();
   const oauth = googleOAuthFromEnv();

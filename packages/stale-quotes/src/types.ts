@@ -12,7 +12,9 @@ import type { StaleQuoteStore } from './state.js';
 
 // ── config ───────────────────────────────────────────────────────────
 
-export const MAX_DRAFTS_PER_RUN = 6;
+/** New drafts per Eastern day, across every run that day (the worker's
+ *  backstop slot finishes a partial scan; it must not get a fresh 6). */
+export const MAX_DRAFTS_PER_DAY = 6;
 export const QUO_THROTTLE_MS = 220; // 10 req/s hard limit — stay well under
 export const MAX_UNANSWERED = 3; // consecutive unanswered touches, then stop
 export const FINAL_AGE_OUT_DAYS = 14; // final touch unanswered this long → close flag
@@ -65,6 +67,8 @@ export interface TouchRecord {
   tier: 'T1' | 'T2' | 'T3';
   queuedAt: string;
   draft: string;
+  /** The queue's "why now" line when drafted (re-listed by a same-day rerun). */
+  whyNow?: string;
   sentDetectedAt?: string;
   repliedWithin7d?: boolean;
 }
@@ -122,8 +126,8 @@ export interface QueueFlag {
 export interface QueueFile {
   generatedAt: string;
   bookingHorizon: string;
-  toSend: QueueDraft[];
-  waiting: QueueDraft[]; // queued earlier, no matching outbound detected yet
+  toSend: QueueDraft[]; // drafted today (Eastern), by this run or an earlier one today
+  waiting: QueueDraft[]; // queued on an earlier day, no matching outbound detected yet
   flags: QueueFlag[];
   skipped: Array<{ doc: string; customer: string; reason: string }>;
 }
@@ -171,6 +175,8 @@ export interface RunOptions {
   dryRun: boolean;
   /** One estimate by DocNumber (no awaiting refresh, no prune). */
   doc?: string;
+  /** Cap on new drafts per Eastern day (default MAX_DRAFTS_PER_DAY). Touches
+   *  already queued today count against it, except on a `doc` run. */
   maxDrafts?: number;
   /** Epoch ms: stop starting new estimates after this (worker time budget). */
   deadlineMs?: number;
@@ -184,4 +190,6 @@ export interface RunResult {
   awaiting: AwaitingHumanEntry[];
   runlog: RunlogRow[];
   pendingInScope: number;
+  /** Drafts this run created (queue.toSend also re-lists today's earlier ones). */
+  draftedThisRun: number;
 }
