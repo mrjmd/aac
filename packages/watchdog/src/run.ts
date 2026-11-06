@@ -1,5 +1,15 @@
 import { keys } from '@aac/shared-utils/redis';
-import { DAILY_CRONS, evaluate, fmt, HEARTBEATS, INTERVAL_CRONS, type Condition, type Signals } from './checks.js';
+import {
+  DAILY_CRONS,
+  evaluate,
+  fmt,
+  HEARTBEATS,
+  INTERVAL_CRONS,
+  modeOn,
+  type Condition,
+  type QuoteDrafterSkip,
+  type Signals,
+} from './checks.js';
 
 const HOUR = 3_600_000;
 /** Still down after this long since the last text: say so again. */
@@ -31,6 +41,8 @@ export interface WatchdogDeps {
   /** Text Matt (agent line → his cell). */
   sms(text: string): Promise<void>;
   now?: () => Date;
+  /** Env for env-gated job modes (ADS_CONVERSIONS_MODE). Defaults to process.env. */
+  env?: Record<string, string | undefined>;
 }
 
 export interface TickResult {
@@ -39,10 +51,14 @@ export interface TickResult {
   recovered: string[];
 }
 
+/** Daily jobs with an on/off switch. */
+const GATED = DAILY_CRONS.filter((c) => c.mode);
+
 export async function gatherSignals(deps: WatchdogDeps, now: Date): Promise<Signals> {
   const { redis } = deps;
+  const env = deps.env ?? process.env;
   const cronJobs = [...DAILY_CRONS.map((c) => c.job), ...INTERVAL_CRONS.map((c) => c.job)];
-  const [quoNewest, quoProcessed, cronVals, beatVals, health] = await Promise.all([
+  const [quoNewest, quoProcessed, cronVals, beatVals, health, modeVals, modeOnSince, skip] = await Promise.all([
     deps.quoNewestActivity(new Date(now.getTime() - 6 * HOUR)).then(
       (v) => ({ v }),
       (err: Error) => ({ error: err.message }),
@@ -51,6 +67,14 @@ export async function gatherSignals(deps: WatchdogDeps, now: Date): Promise<Sign
     Promise.all(cronJobs.map((j) => redis.get<string>(keys.cronLastRun(j)))),
     Promise.all(HEARTBEATS.map((h) => redis.get<string>(keys.heartbeat(h.name)))),
     deps.middlewareHealth().catch((err: Error) => ({ ok: false, detail: err.message })),
+    Promise.all(
+      GATED.map((c) => {
+        const m = c.mode!;
+        return 'env' in m ? Promise.resolve(env[m.env] ?? null) : redis.get<string>(m.redisKey);
+      }),
+    ),
+    redis.hgetall<Record<string, string>>(keys.watchdogModeOn),
+    redis.get<QuoteDrafterSkip>(keys.quoteDrafterSkip),
   ]);
   return {
     now,
@@ -58,7 +82,24 @@ export async function gatherSignals(deps: WatchdogDeps, now: Date): Promise<Sign
     crons: Object.fromEntries(cronJobs.map((j, i) => [j, cronVals[i]])),
     heartbeats: Object.fromEntries(HEARTBEATS.map((h, i) => [h.name, beatVals[i]])),
     middlewareHealth: health,
+    modes: Object.fromEntries(GATED.map((c, i) => [c.job, modeVals[i]])),
+    modeOnSince: Object.fromEntries(GATED.map((c) => [c.job, modeOnSince?.[c.job] ?? null])),
+    quoteDrafterSkip: skip,
   };
+}
+
+/** Remember when each gated job's mode was first seen on; forget it when it goes off. */
+async function trackModes(redis: WatchdogRedis, s: Signals, nowIso: string): Promise<void> {
+  const turnedOn: Record<string, string> = {};
+  const turnedOff: string[] = [];
+  for (const c of GATED) {
+    const on = modeOn(s.modes?.[c.job]);
+    const since = s.modeOnSince?.[c.job];
+    if (on && !since) turnedOn[c.job] = nowIso;
+    if (!on && since) turnedOff.push(c.job);
+  }
+  if (Object.keys(turnedOn).length) await redis.hset(keys.watchdogModeOn, turnedOn);
+  if (turnedOff.length) await redis.hdel(keys.watchdogModeOn, ...turnedOff);
 }
 
 function downText(c: Condition, reminder: boolean): string {
@@ -73,7 +114,9 @@ function downText(c: Condition, reminder: boolean): string {
 export async function runWatchdogTick(deps: WatchdogDeps): Promise<TickResult> {
   const now = deps.now?.() ?? new Date();
   const nowIso = now.toISOString();
-  const conditions = evaluate(await gatherSignals(deps, now));
+  const signals = await gatherSignals(deps, now);
+  const conditions = evaluate(signals);
+  await trackModes(deps.redis, signals, nowIso);
   const open = (await deps.redis.hgetall<Record<string, OpenCondition>>(keys.watchdogState)) ?? {};
   const result: TickResult = { down: [], texted: [], recovered: [] };
   const writes: Record<string, OpenCondition> = {};
@@ -86,7 +129,8 @@ export async function runWatchdogTick(deps: WatchdogDeps): Promise<TickResult> {
         cleared.push(c.id);
         // Only announce recovery for outages Matt was told about.
         if (prev.alertedAt) {
-          await deps.sms(`✅ Recovered: ${c.title.replace(/ (DOWN|stopped|missed its run|failing)$/, '')} is back (was down since ${fmt(prev.since)}).`);
+          const what = c.recovered ?? `${c.title.replace(/ (DOWN|stopped|missed its run|failing)$/, '')} is back`;
+          await deps.sms(`✅ Recovered: ${what} (was down since ${fmt(prev.since)}).`);
           result.recovered.push(c.id);
         }
       }

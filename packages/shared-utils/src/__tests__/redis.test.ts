@@ -38,6 +38,11 @@ describe('keys', () => {
       expect(keys.cronResult('qb-reconcile', '2026-11-05')).toBe('cron:qb-reconcile:2026-11-05:result');
       expect(ttl.cronResult).toBe(2_592_000);
     });
+
+    it('builds the watchdog mode-on hash and the quote-tick skip streak keys', () => {
+      expect(keys.watchdogModeOn).toBe('watchdog:mode-on');
+      expect(keys.quoteDrafterSkip).toBe('quote-drafter:skip');
+    });
   });
 
   describe('deduplication', () => {

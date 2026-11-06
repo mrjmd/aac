@@ -170,6 +170,14 @@ export const keys = {
   quoteDrafterRunLock: 'quote-drafter:run-lock' as const,
 
   /**
+   * STRING JSON {reason: 'locked' | 'no-assets', since, at, ticks}: the
+   * quote-tick skip streak. Written by the worker's quote-tick on a skipped
+   * tick, deleted once a tick runs (no-assets: once the manifest is back).
+   * The watchdog reads it (locked 15 ticks in a row, or no asset manifest).
+   */
+  quoteDrafterSkip: 'quote-drafter:skip' as const,
+
+  /**
    * Kill-switch override: 'off' | 'shadow' | 'live'. Checked each run
    * before the QUOTE_DRAFTER_MODE env default — lets us flip modes
    * without a redeploy.
@@ -322,6 +330,13 @@ export const keys = {
 
   /** HASH: watchdog condition id → JSON {since, alertedAt} for open conditions (dedup + recovery notices). */
   watchdogState: 'watchdog:state' as const,
+
+  /**
+   * HASH: mode-gated daily job → ISO time the watchdog first saw its mode
+   * on (not off). A job switched on after today's slot isn't late until its
+   * next one. Field deleted when the mode goes off.
+   */
+  watchdogModeOn: 'watchdog:mode-on' as const,
 
   // ── Google Ads offline conversions (@aac/ads-conversions) ────────────
 

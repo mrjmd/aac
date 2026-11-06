@@ -1,7 +1,7 @@
 /**
  * Drift guard between the Vercel cron schedules and what the watchdog
- * watches. Every cron path in apps/worker/vercel.json and
- * apps/middleware/vercel.json must be either watched (a check in
+ * watches. Every cron path in apps/worker, apps/middleware and apps/agent
+ * vercel.json must be either watched (a check in
  * src/checks.ts reads the signal it writes) or listed in NOT_WATCHED with a
  * reason; every watched cron must still exist in a vercel.json.
  *
@@ -14,11 +14,27 @@ import { DAILY_CRONS, INTERVAL_CRONS, HEARTBEATS } from '../src/checks.js';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
-function cronPaths(app: 'worker' | 'middleware'): string[] {
+type App = 'worker' | 'middleware' | 'agent';
+const APPS: App[] = ['worker', 'middleware', 'agent'];
+
+function crons(app: App): Array<{ path: string; schedule: string }> {
   const json = JSON.parse(readFileSync(`${ROOT}apps/${app}/vercel.json`, 'utf8')) as {
-    crons?: Array<{ path: string }>;
+    crons?: Array<{ path: string; schedule: string }>;
   };
-  return (json.crons ?? []).map((c) => `${app}:${c.path}`);
+  return json.crons ?? [];
+}
+
+function cronPaths(app: App): string[] {
+  return crons(app).map((c) => `${app}:${c.path}`);
+}
+
+/** The vercel.json path of a watched job: worker routes are /api/<job>, middleware and agent crons /api/cron/<job>. */
+function pathOf(app: App, job: string): string {
+  return app === 'worker' ? `worker:/api/${job}` : `${app}:/api/cron/${job}`;
+}
+
+function scheduleOf(app: App, job: string): string | undefined {
+  return crons(app).find((c) => `${app}:${c.path}` === pathOf(app, job))?.schedule;
 }
 
 /**
@@ -32,32 +48,31 @@ const HEARTBEAT_SOURCE: Record<string, string> = {
   'quote-drafter': 'worker:/api/quote-tick',
 };
 
+/** Worker and agent last-run stamps: the file that writes keys.cronLastRun(job), and the call it makes. */
+const STAMP_SOURCE: Record<string, { file: string; needle: string }> = {
+  sweep: { file: 'apps/worker/api/sweep.ts', needle: "recordRun('sweep'" },
+  'inbound-tick': { file: 'apps/worker/api/inbound-tick.ts', needle: "recordRun('inbound-tick'" },
+  'quote-email-tick': { file: 'apps/worker/api/quote-email-tick.ts', needle: "recordRun('quote-email-tick'" },
+  'stale-quotes': { file: 'apps/worker/api/stale-quotes.ts', needle: "recordRun('stale-quotes'" },
+  triage: { file: 'apps/worker/api/triage.ts', needle: "recordRun('triage'" },
+  'ads-conversions': { file: 'packages/ads-conversions/src/run.ts', needle: "keys.cronLastRun('ads-conversions')" },
+  'error-surface': { file: 'apps/agent/lib/error-surface.ts', needle: 'trackCronRun(JOB_NAME' },
+};
+
 /**
  * Crons the watchdog deliberately does not check, with why.
- * TODO entries are gaps found when this test was added (2026-11-05); decide
- * per entry whether the watchdog should watch it. Do not add one without a reason.
+ * Do not add one without a reason.
  */
 const NOT_WATCHED: Record<string, string> = {
   // The watchdog itself: it can't report its own death. It writes
-  // keys.heartbeat('watchdog'); something outside the worker would have to read it.
+  // keys.heartbeat('watchdog'); the agent's error-surface cron and the
+  // outside pinger (worker /api/health) read it.
   'worker:/api/watchdog': 'self',
-  // TODO: 10-minute backstop sweep; writes keys.cronLastRun('sweep') (since 11/05), not read.
-  'worker:/api/sweep': 'TODO',
-  // TODO: 15-minute T4 email-channel tick; writes keys.cronLastRun('quote-email-tick') when it polls, not read.
-  'worker:/api/quote-email-tick': 'TODO',
-  // TODO: daily 11:00 UTC; already writes keys.cronLastRun('ads-conversions'), not read.
-  'worker:/api/ads-conversions': 'TODO',
-  // TODO: per-minute inbound router tick (off by default); writes keys.cronLastRun('inbound-tick'), not read.
-  'worker:/api/inbound-tick': 'TODO',
-  // TODO: daily stale-quote scan (mode off by default); writes keys.cronLastRun('stale-quotes') after a scan, not read.
-  'worker:/api/stale-quotes': 'TODO',
-  // TODO: daily triage run (mode off by default); writes keys.cronLastRun('triage') after a run, not read.
-  'worker:/api/triage': 'TODO',
 };
 
 function watched(): Set<string> {
   const out = new Set<string>();
-  for (const c of [...DAILY_CRONS, ...INTERVAL_CRONS]) out.add(`middleware:/api/cron/${c.job}`);
+  for (const c of [...DAILY_CRONS, ...INTERVAL_CRONS]) out.add(pathOf(c.app, c.job));
   for (const h of HEARTBEATS) {
     const src = HEARTBEAT_SOURCE[h.name];
     if (src) out.add(src);
@@ -65,12 +80,20 @@ function watched(): Set<string> {
   return out;
 }
 
-describe('watchdog ↔ vercel.json cron drift', () => {
-  const all = [...cronPaths('worker'), ...cronPaths('middleware')];
+/** Minutes between runs of a simple interval schedule ("* * * * *" = 1, "*\/N ..." = N). */
+function intervalMin(schedule: string): number {
+  const minute = schedule.split(' ')[0];
+  if (minute === '*') return 1;
+  const m = minute.match(/^\*\/(\d+)$/);
+  if (!m) throw new Error(`not an interval schedule: ${schedule}`);
+  return Number(m[1]);
+}
 
-  it('reads crons from both vercel.json files', () => {
-    expect(cronPaths('worker').length).toBeGreaterThan(0);
-    expect(cronPaths('middleware').length).toBeGreaterThan(0);
+describe('watchdog ↔ vercel.json cron drift', () => {
+  const all = APPS.flatMap(cronPaths);
+
+  it('reads crons from every app vercel.json', () => {
+    for (const app of APPS) expect(cronPaths(app).length, app).toBeGreaterThan(0);
   });
 
   it('every watched heartbeat has a known source cron', () => {
@@ -92,13 +115,21 @@ describe('watchdog ↔ vercel.json cron drift', () => {
     expect(Object.keys(NOT_WATCHED).filter((p) => !all.includes(p))).toEqual([]);
   });
 
-  it('daily cron hours match the middleware schedules', () => {
-    const json = JSON.parse(readFileSync(`${ROOT}apps/middleware/vercel.json`, 'utf8')) as {
-      crons: Array<{ path: string; schedule: string }>;
-    };
+  it('daily cron hours match the vercel.json schedules', () => {
     for (const c of DAILY_CRONS) {
-      const entry = json.crons.find((x) => x.path === `/api/cron/${c.job}`);
-      expect(entry?.schedule, c.job).toBe(`0 ${c.hourUtc} * * *`);
+      const schedule = scheduleOf(c.app, c.job);
+      expect(schedule, c.job).toBeDefined();
+      const [, hour, dom, mon, dow] = schedule!.split(' ');
+      expect([hour, dom, mon, dow], c.job).toEqual([String(c.hourUtc), '*', '*', '*']);
+      if (c.app === 'middleware') expect(schedule, c.job).toBe(`0 ${c.hourUtc} * * *`);
+    }
+  });
+
+  it('interval windows allow at least two missed runs, so one skipped run never pages', () => {
+    for (const c of INTERVAL_CRONS) {
+      const schedule = scheduleOf(c.app, c.job);
+      expect(schedule, c.job).toBeDefined();
+      expect(c.maxAgeMin, c.job).toBeGreaterThanOrEqual(2 * intervalMin(schedule!));
     }
   });
 
@@ -110,5 +141,15 @@ describe('watchdog ↔ vercel.json cron drift', () => {
       const src = readFileSync(`${ROOT}apps/middleware/api/cron/${job}.ts`, 'utf8');
       expect(src, p).toContain(`trackCronRun('${job}'`);
     }
+  });
+
+  it('every watched worker and agent job still writes its last-run stamp under the watched name', () => {
+    const jobs = [...DAILY_CRONS, ...INTERVAL_CRONS].filter((c) => c.app !== 'middleware').map((c) => c.job);
+    expect(jobs.filter((j) => !STAMP_SOURCE[j])).toEqual([]);
+    for (const j of jobs) {
+      const src = readFileSync(`${ROOT}${STAMP_SOURCE[j].file}`, 'utf8');
+      expect(src, j).toContain(STAMP_SOURCE[j].needle);
+    }
+    expect(readFileSync(`${ROOT}apps/agent/lib/error-surface.ts`, 'utf8')).toContain("JOB_NAME = 'error-surface'");
   });
 });

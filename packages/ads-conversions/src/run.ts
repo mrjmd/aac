@@ -410,7 +410,11 @@ export async function runAdsConversions(
 
 async function finish(deps: AdsConversionsDeps, summary: AdsRunSummary): Promise<AdsRunSummary> {
   await deps.redis.set(keys.adsConversionsLastSummary, summary);
-  await deps.redis.set(keys.cronLastRun('ads-conversions'), summary.ranAt);
+  // The watchdog's "it ran" stamp: not for a skip (conversion actions
+  // missing) or an upload request Google rejected outright.
+  if (!summary.skipped && !summary.failed.some((f) => f.orderId === '*')) {
+    await deps.redis.set(keys.cronLastRun('ads-conversions'), summary.ranAt);
+  }
   deps.log(
     `ads-conversions ${summary.mode}: taps=${summary.taps} new=${summary.newMatches} ` +
       `(ref ${summary.matchedByRef}, timing ${summary.matchedByTiming}) ambiguous=${summary.ambiguous} ` +

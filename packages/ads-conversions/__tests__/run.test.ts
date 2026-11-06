@@ -129,11 +129,13 @@ describe('runAdsConversions', () => {
   });
 
   it('skips the upload when the actions do not exist yet', async () => {
-    const { deps, upload } = makeDeps();
+    const { deps, redis, upload } = makeDeps();
     deps.ads.listConversionActions = async () => [];
     const s = await runAdsConversions(deps, { mode: 'live' });
     expect(s.skipped).toMatch(/conversion actions missing/);
     expect(upload).not.toHaveBeenCalled();
+    // A skip is not a run: the watchdog's last-run stamp stays put.
+    expect(redis.data.get(keys.cronLastRun('ads-conversions'))).toBeUndefined();
   });
 
   it('drops events the API names as invalid and retries the rest once', async () => {
@@ -145,6 +147,8 @@ describe('runAdsConversions', () => {
     expect(s.failed).toHaveLength(1);
     expect(s.uploaded).toBe(2);
     expect((redis.data.get(keys.adsConversionsSent) as Set<string>).size).toBe(2);
+    // One bad event is a data problem, not a dead job: still stamped.
+    expect(redis.data.get(keys.cronLastRun('ads-conversions'))).toBe(NOW.toISOString());
   });
 
   it('marks nothing sent when the whole request fails', async () => {
@@ -154,6 +158,7 @@ describe('runAdsConversions', () => {
     expect(s.failed[0].orderId).toBe('*');
     expect(s.uploaded).toBe(0);
     expect(redis.data.get(keys.adsConversionsSent)).toBeUndefined();
+    expect(redis.data.get(keys.cronLastRun('ads-conversions'))).toBeUndefined();
   });
 
   it('a QBO error on one click is recorded and the rest still upload', async () => {

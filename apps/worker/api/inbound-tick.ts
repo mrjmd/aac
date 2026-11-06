@@ -50,11 +50,15 @@ export async function GET(request: Request): Promise<Response> {
         failed: failed.slice(0, 5).map((e) => ({ phone: e.phone, detail: e.detail?.slice(0, 200) ?? null })),
       });
     }
-    await recordRun('inbound-tick', {
-      sent: summary.entries.length - failed.length,
-      skipped: Math.max(0, summary.due - summary.entries.length),
-      errors: failed.length,
-    });
+    // The stamp means bursts are being read: a tick whose every read failed
+    // (Gemini down, a bad live route) leaves it to go stale for the watchdog.
+    if (!(summary.entries.length && failed.length === summary.entries.length)) {
+      await recordRun('inbound-tick', {
+        sent: summary.entries.length - failed.length,
+        skipped: Math.max(0, summary.due - summary.entries.length),
+        errors: failed.length,
+      });
+    }
     return json({ status: 'ok', mode: summary.mode, due: summary.due, read: summary.entries.length });
   } catch (err) {
     log.error('inbound tick failed', err as Error);

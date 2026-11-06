@@ -45,7 +45,8 @@ const workerRedis = vi.hoisted(() => {
       return 'OK';
     }),
     get: vi.fn(async (k: string) => kv.get(k) ?? null),
-    del: vi.fn(async (k: string) => kv.delete(k)),
+    del: vi.fn(async (k: string) => Number(kv.delete(k))),
+    hget: vi.fn(async (k: string, f: string) => (kv.get(k) as Record<string, unknown> | undefined)?.[f] ?? null),
     eval: vi.fn(async (_script: string, ks: string[], args: string[]) => {
       if (kv.get(ks[0]) !== args[0]) return 0;
       kv.delete(ks[0]);
@@ -370,6 +371,64 @@ describe('last-run stamps (routes without a heartbeat)', () => {
     await quoteTick(cron());
     expect(workerRedis.set).toHaveBeenCalledWith('health:worker:ts', expect.any(String));
     expect(workerRedis.set).toHaveBeenCalledWith('health:quote-drafter:ts', expect.any(String));
+  });
+});
+
+describe('heartbeats mean work happened', () => {
+  const skip = () => workerRedis.kv.get('quote-drafter:skip') as { reason: string; ticks: number; since: string } | undefined;
+  const beat = () => workerRedis.set.mock.calls.some((c) => c[0] === 'health:quote-drafter:ts');
+
+  it('quote-tick: a locked tick skips the heartbeat and extends the lock streak; a tick that runs clears it', async () => {
+    drafter.runTick.mockResolvedValue({ mode: 'live', skipped: 'locked', drained: 0, due: 0, settling: 0, drafted: 0, records: [] });
+    try {
+      await quoteTick(cron());
+      await quoteTick(cron());
+      await quoteTick(cron());
+    } finally {
+      drafter.runTick.mockReset();
+      drafter.runTick.mockResolvedValue({ mode: 'live', drained: 0, due: 0, settling: 0, drafted: 0, records: [] });
+    }
+    expect(beat()).toBe(false);
+    expect(skip()).toMatchObject({ reason: 'locked', ticks: 3 });
+    await quoteTick(cron());
+    expect(beat()).toBe(true);
+    expect(skip()).toBeUndefined();
+  });
+
+  it('quote-tick: no-assets survives idle ticks until the manifest is back', async () => {
+    drafter.runTick.mockResolvedValueOnce({ mode: 'live', skipped: 'no-assets', drained: 1, due: 1, settling: 0, drafted: 0, records: [] });
+    await quoteTick(cron());
+    expect(skip()).toMatchObject({ reason: 'no-assets', ticks: 1 });
+    expect(beat()).toBe(false);
+    await quoteTick(cron()); // idle: never loads the manifest
+    expect(skip()).toMatchObject({ reason: 'no-assets' });
+    workerRedis.kv.set('quote-drafter:assets', { ruleset: 'https://blob/ruleset.md' });
+    await quoteTick(cron());
+    expect(skip()).toBeUndefined();
+  });
+
+  it('quote-tick: mode off clears any streak and writes no heartbeat', async () => {
+    workerRedis.kv.set('quote-drafter:skip', { reason: 'locked', since: 'x', at: 'x', ticks: 9 });
+    drafter.runTick.mockResolvedValueOnce({ mode: 'off', skipped: 'off', drained: 0, due: 0, settling: 0, drafted: 0, records: [] });
+    await quoteTick(cron());
+    expect(skip()).toBeUndefined();
+    expect(beat()).toBe(false);
+  });
+
+  it('inbound-tick: a tick whose every read failed does not stamp', async () => {
+    router.runInboundTick.mockResolvedValueOnce({
+      mode: 'live',
+      due: 2,
+      entries: [
+        { at: 'x', phone: '+15085550001', outcome: 'failed', detail: 'gemini: 404' },
+        { at: 'x', phone: '+15085550002', outcome: 'failed', detail: 'gemini: 404' },
+      ],
+    });
+    expect((await inboundTick(cron())).status).toBe(200);
+    expect(lastRun('inbound-tick')).toBeNull();
+    expect(errors()[0].source).toBe('worker:inbound-tick');
+    await inboundTick(cron()); // idle tick: the router is reading fine
+    expect(lastRun('inbound-tick')).not.toBeNull();
   });
 });
 

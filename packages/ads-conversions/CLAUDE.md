@@ -24,3 +24,6 @@ buys clicks that turn into work instead of website taps.
   the primary goal are owner-approved, manual steps.
 - Keys come from `@aac/shared-utils/redis` (`adsClicks`, `adsConversionsSent`,
   `adsConversionsLastSummary`, `cronLastRun('ads-conversions')`).
+- `cronLastRun('ads-conversions')` is the watchdog's "it ran" stamp: written
+  only for a run that was not skipped and whose upload Google did not
+  reject outright (orderId `*`). One bad event still stamps.

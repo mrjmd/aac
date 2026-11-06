@@ -10,6 +10,9 @@
  * Mode: Redis `quote-drafter:mode` overrides QUOTE_DRAFTER_MODE
  * (off | shadow | live); off short-circuits before touching the queue.
  *
+ * Heartbeat `health:quote-drafter:ts` only after a tick that ran (not off,
+ * locked or no-assets); skips go to the streak in lib/quote-skip.ts.
+ *
  * With `quote` in Redis `inbound-router:live`, the inbound router judges
  * the customer's texts, photos and voicemails and hands its quote decisions
  * over as routed jobs; this loop drops those events and keeps Matt's own
@@ -22,6 +25,7 @@ import { liveRoutes } from '@aac/inbound-router';
 import { getQuoteDeps, envMode } from '../lib/quote-deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
 import { recordFailure } from '../lib/health.js';
+import { trackQuoteTickSkip } from '../lib/quote-skip.js';
 
 const log = createLogger('worker-quote-tick');
 
@@ -33,9 +37,10 @@ export async function GET(request: Request): Promise<Response> {
     const deps = getQuoteDeps();
     const routerOwnsInbound = (await liveRoutes(deps)).has('quote');
     const summary = await runTick(deps, envMode(), { routerOwnsInbound });
-    if (summary.mode !== 'off') {
-      await writeHeartbeat(deps.redis, 'quote-drafter');
-    }
+    // The heartbeat means a tick ran; a skipped one (off, run lock taken,
+    // no asset manifest) only extends the skip streak the watchdog reads.
+    if (!summary.skipped) await writeHeartbeat(deps.redis, 'quote-drafter');
+    await trackQuoteTickSkip(deps.redis, summary);
     if (summary.skipped === 'no-assets') {
       await recordFailure('quote-tick', 'quote drafter skipped: no asset manifest in Redis (run sync-assets)');
     }

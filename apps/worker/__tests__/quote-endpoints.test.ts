@@ -25,7 +25,7 @@ vi.mock('@aac/quote-drafter', async (importOriginal) => ({
   ...mockDrafter,
 }));
 
-const redisMock = { set: vi.fn(), get: vi.fn().mockResolvedValue(null) };
+const redisMock = { set: vi.fn(), get: vi.fn().mockResolvedValue(null), del: vi.fn().mockResolvedValue(0), hget: vi.fn().mockResolvedValue(null) };
 vi.mock('../lib/quote-deps.js', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getQuoteDeps: vi.fn(() => ({ redis: redisMock })),
@@ -84,6 +84,7 @@ describe('quote-tick', () => {
     });
     await quoteTick(req({ authorization: 'Bearer cron-secret' }));
     expect(redisMock.set).not.toHaveBeenCalled();
+    expect(redisMock.del).toHaveBeenCalledWith('quote-drafter:skip');
   });
 
   it('reports 500 on failure so the cron run is visibly red', async () => {
