@@ -2,9 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import type { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
 import type { OpenQuoteEntry } from '@aac/shared-utils/types';
-import { classify, routerOwnsEvent, type TriggerEvent, type DrafterDeps } from '../src/types.js';
+import { classify, routerOwnsEvent, T2_DEDUPE_H, T4_DEDUPE_H, type TriggerEvent, type DrafterDeps } from '../src/types.js';
 import { confirmNextDocNumber, draftOne, type DraftOneOptions, type RunContext } from '../src/drafter.js';
-import { enqueueRoutedQuote, releaseRunLock, runTick, resolveVisitCustomers, RUN_LOCK_TTL_MS } from '../src/trigger.js';
+import { DEDUPE_PRUNE_MS, enqueueRoutedQuote, releaseRunLock, runTick, resolveVisitCustomers, RUN_LOCK_TTL_MS } from '../src/trigger.js';
 import { loadAssets, clearAssetCache } from '../src/assets.js';
 import { parseGateVerdict, buildScopeGatePrompt } from '../src/gate.js';
 import {
@@ -385,6 +385,22 @@ describe('runTick', () => {
     await redis.set(keys.quoteDrafterMode, 'off');
     const summary = await runTick(deps, 'live');
     expect(summary.mode).toBe('off');
+  });
+
+  it('prunes T2 and T4 dedupe fields past DEDUPE_PRUNE_MS, keeps ones inside the window', async () => {
+    const { deps, redis } = makeDeps();
+    const now = deps.now();
+    const old = new Date(now - DEDUPE_PRUNE_MS - 60_000).toISOString();
+    const fresh = new Date(now - 3_600_000).toISOString();
+    await redis.hset(keys.quoteTriggerT4Done, { '77': old, '78': fresh });
+    await redis.hset(keys.quoteTriggerT2Done, { '+16175550001': old, '+16175550002': fresh });
+    await runTick(deps, 'live');
+    expect(await redis.hget(keys.quoteTriggerT4Done, '77')).toBeNull();
+    expect(await redis.hget(keys.quoteTriggerT4Done, '78')).toBe(fresh);
+    expect(await redis.hget(keys.quoteTriggerT2Done, '+16175550001')).toBeNull();
+    expect(await redis.hget(keys.quoteTriggerT2Done, '+16175550002')).toBe(fresh);
+    // the prune horizon is well past the 24h window the dedupe checks read
+    expect(DEDUPE_PRUNE_MS).toBeGreaterThan(Math.max(T2_DEDUPE_H, T4_DEDUPE_H) * 3_600_000 * 5);
   });
 
   it('skips when another run holds the lock', async () => {

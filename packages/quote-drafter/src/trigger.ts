@@ -330,6 +330,21 @@ async function evaluateT4(
   return actOnScopeChange(deps, mode, phone, events.length, open, verdict.reason, channelsOf(inbound), logEntry);
 }
 
+/**
+ * Dedupe hashes (field → ISO of the last action) only matter for their
+ * 24h window; fields older than DEDUPE_PRUNE_MS are dropped every tick so
+ * the hash can't grow forever (a hash field has no TTL of its own).
+ */
+export const DEDUPE_PRUNE_MS = 7 * 86_400_000;
+
+async function pruneDedupeHash(deps: DrafterDeps, key: string, now: number): Promise<void> {
+  const all = ((await deps.redis.hgetall(key)) ?? {}) as Record<string, string>;
+  const stale = Object.entries(all)
+    .filter(([, at]) => now - new Date(at).getTime() > DEDUPE_PRUNE_MS)
+    .map(([field]) => field);
+  if (stale.length) await deps.redis.hdel(key, ...stale);
+}
+
 /** One T4 action per estimate per window. */
 async function t4Deduped(deps: DrafterDeps, open: OpenQuoteEntry): Promise<string | null> {
   const lastDone = await deps.redis.hget<string>(keys.quoteTriggerT4Done, open.estimateId);
@@ -649,13 +664,9 @@ export async function runTick(deps: DrafterDeps, envMode: DrafterMode, opts: Tic
       }
     }
 
-    // prune old T2 dedupe entries
-    const t2 = ((await deps.redis.hgetall(keys.quoteTriggerT2Done)) ?? {}) as Record<string, string>;
-    for (const [p, at] of Object.entries(t2)) {
-      if (now - new Date(at).getTime() > 7 * 86_400_000) {
-        await deps.redis.hdel(keys.quoteTriggerT2Done, p);
-      }
-    }
+    // prune old T2 / T4 dedupe entries (each read back only T2_DEDUPE_H / T4_DEDUPE_H)
+    await pruneDedupeHash(deps, keys.quoteTriggerT2Done, now);
+    await pruneDedupeHash(deps, keys.quoteTriggerT4Done, now);
 
     // T4 open-quote index upkeep (self-gates to every 30 min; fire-safe)
     try {
