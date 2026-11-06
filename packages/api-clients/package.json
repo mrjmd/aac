@@ -21,7 +21,8 @@
     "./google-analytics": "./dist/google-analytics.js",
     "./google-search-console": "./dist/google-search-console.js",
     "./google-maps": "./dist/google-maps.js",
-    "./google-signin": "./dist/google-signin.js"
+    "./google-signin": "./dist/google-signin.js",
+    "./github": "./dist/github.js"
   },
   "scripts": {
     "build": "tsc",

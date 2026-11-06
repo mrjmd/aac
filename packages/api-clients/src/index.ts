@@ -88,3 +88,12 @@ export type {
   CreatePostOptions,
   CreateIdeaOptions,
 } from './buffer.js';
+
+export { GitHubClient } from './github.js';
+export type {
+  GitHubConfig,
+  ListWorkflowRunsOptions,
+  WorkflowJob,
+  WorkflowJobStep,
+  WorkflowRun,
+} from './github.js';

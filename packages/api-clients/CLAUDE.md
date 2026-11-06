@@ -29,6 +29,7 @@ infrastructure used by ALL four apps and the tools directory.
 | GoogleAnalyticsClient | google-analytics.ts | aac-astro/scripts/ga4-report.js |
 | GoogleSearchConsoleClient | google-search-console.ts | aac-astro/scripts/gsc-report.js |
 | GoogleSignInClient | google-signin.ts | apps/field/lib/google-oauth.ts |
+| GitHubClient | github.ts | new (Actions runs + jobs, read-only; CC System health CI card) |
 
 ## Dependencies
 
