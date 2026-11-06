@@ -17,7 +17,8 @@
     "./types": "./dist/types.js",
     "./webhook-signature": "./dist/webhook-signature.js",
     "./multiday": "./dist/multiday.js",
-    "./inbound-settle": "./dist/inbound-settle.js"
+    "./inbound-settle": "./dist/inbound-settle.js",
+    "./return-path": "./dist/return-path.js"
   },
   "scripts": {
     "build": "tsc",

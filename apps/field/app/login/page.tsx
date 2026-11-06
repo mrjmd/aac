@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { authBypassEmail } from '@/lib/auth-bypass';
+import { safeReturnPath } from '@aac/shared-utils/return-path';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,7 @@ export default async function LoginPage({
   if (authBypassEmail()) redirect('/');
 
   const { next, error } = await searchParams;
-  const safeNext = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
+  const safeNext = safeReturnPath(next);
   const signInHref = `/auth/google?next=${encodeURIComponent(safeNext)}`;
 
   return (

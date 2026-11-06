@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     return new NextResponse("Not found", { status: 404 });
   }
   const sessionId = await createSession({ email, name: "Local dev" });
-  const res = NextResponse.redirect(new URL(safeReturnTo(url.searchParams.get("next")), url.origin));
+  const res = NextResponse.redirect(new URL(safeReturnTo(url.searchParams.get("next"), url.origin), url.origin));
   res.cookies.set(SESSION_COOKIE_NAME, sessionId, sessionCookieAttributes());
   return res;
 }

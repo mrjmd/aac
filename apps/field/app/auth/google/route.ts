@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { safeReturnPath } from '@aac/shared-utils/return-path';
 import { buildAuthorizeUrl } from '@/lib/google-oauth';
 
 /**
@@ -8,9 +9,9 @@ import { buildAuthorizeUrl } from '@/lib/google-oauth';
  */
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
-  const next = url.searchParams.get('next') ?? '/';
-  // Only allow relative paths back into the app — refuse open-redirect attempts.
-  const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : '/';
+  // Only same-origin paths back into the app — refuse open-redirect attempts
+  // (including `/\evil.com`, which a prefix check misses).
+  const safeNext = safeReturnPath(url.searchParams.get('next'), url.origin);
   const target = await buildAuthorizeUrl(url.origin, safeNext);
   return NextResponse.redirect(target);
 }

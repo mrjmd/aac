@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { consumeState, getSignInClient, redirectUri } from "@/lib/google-signin";
+import { consumeState, getSignInClient, redirectUri, safeReturnTo } from "@/lib/google-signin";
 import { createSession, isAllowed, sessionCookieAttributes, SESSION_COOKIE_NAME } from "@/lib/session";
 import { createLogger } from "@aac/shared-utils/logger";
 
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
   });
   log.info("Signed in", { email: userInfo.email });
 
-  const res = NextResponse.redirect(new URL(returnTo, url.origin));
+  const res = NextResponse.redirect(new URL(safeReturnTo(returnTo, url.origin), url.origin));
   res.cookies.set(SESSION_COOKIE_NAME, sessionId, sessionCookieAttributes());
   return res;
 }

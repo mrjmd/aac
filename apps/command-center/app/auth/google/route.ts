@@ -4,7 +4,7 @@ import { getSignInClient, issueState, redirectUri, safeReturnTo } from "@/lib/go
 /** GET /auth/google?next=/path — start Google sign-in. */
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
-  const state = await issueState(safeReturnTo(url.searchParams.get("next")));
+  const state = await issueState(safeReturnTo(url.searchParams.get("next"), url.origin));
   const authorize = getSignInClient().authorizeUrl({
     redirectUri: redirectUri(url.origin),
     state,

@@ -8,6 +8,7 @@ import {
 } from '@/lib/google-oauth';
 import { createSession, sessionCookieAttributes, SESSION_COOKIE_NAME } from '@/lib/session';
 import { createLogger } from '@aac/shared-utils/logger';
+import { safeReturnPath } from '@aac/shared-utils/return-path';
 
 const log = createLogger('field:auth-callback');
 
@@ -70,7 +71,7 @@ export async function GET(req: NextRequest) {
 
   log.info('Signed in', { email: userInfo.email });
 
-  const res = NextResponse.redirect(new URL(returnTo, url.origin));
+  const res = NextResponse.redirect(new URL(safeReturnPath(returnTo, url.origin), url.origin));
   res.cookies.set(SESSION_COOKIE_NAME, sessionId, sessionCookieAttributes());
   return res;
 }
