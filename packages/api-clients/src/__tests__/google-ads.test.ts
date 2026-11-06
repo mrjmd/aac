@@ -90,4 +90,21 @@ describe('GoogleAdsClient', () => {
       },
     ]);
   });
+
+  it('sums daily spend from cost micros', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'tok' }))
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { results: [{ segments: { date: '2026-11-02' }, metrics: { costMicros: '98500000' } }, { segments: { date: '2026-11-03' }, metrics: {} }] },
+        ]),
+      );
+    const rows = await makeClient().dailySpend('2026-11-02', '2026-11-03');
+    expect(rows).toEqual([
+      { date: '2026-11-02', cost: 98.5 },
+      { date: '2026-11-03', cost: 0 },
+    ]);
+    const body = JSON.parse(fetchMock.mock.calls[1]![1].body as string) as { query: string };
+    expect(body.query).toContain("segments.date BETWEEN '2026-11-02' AND '2026-11-03'");
+  });
 });

@@ -6,7 +6,6 @@ import {
   STUB_TITLE_PREFIX,
   isTechOutOfOffice,
 } from "@aac/shared-utils/calendar";
-import type { TechWeek } from "@aac/metrics";
 import { EASTERN_TZ, easternDate } from "@aac/shared-utils/eastern";
 
 /** The mockup's calendar dot classes. */
@@ -65,13 +64,6 @@ export function fieldDay(events: TimelineEvent[], day: string): FieldEvent[] {
       town: e.location?.split(",").map((s) => s.trim())[1],
       href: e.htmlLink,
     }));
-}
-
-/** Upcoming weeks (after the current one) at 75%+ booked, the "booked out" number. */
-export function bookedAhead(weeks: TechWeek[], today: string): { full: number; of: number; thisWeek: TechWeek | null } {
-  const idx = weeks.findIndex((w, i) => w.weekStart <= today && (weeks[i + 1]?.weekStart ?? "9999") > today);
-  const ahead = weeks.slice(idx + 1);
-  return { full: ahead.filter((w) => (w.bookedPct ?? 0) >= 0.75).length, of: ahead.length, thisWeek: weeks[idx] ?? null };
 }
 
 /** True when a "Mike OOO" event covers the day (all-day ends are exclusive). */

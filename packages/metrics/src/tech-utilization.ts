@@ -6,6 +6,7 @@ import {
   isTechOutOfOffice,
 } from '@aac/shared-utils/calendar';
 import { easternDate, easternMinuteOfDay } from '@aac/shared-utils/eastern';
+import { addDays, mondayOf, weekday } from './weeks.js';
 
 /** One Monday-to-Sunday week of a technician's calendar. */
 export interface TechWeek {
@@ -27,9 +28,6 @@ export const WORKDAY_HOURS = 8;
 const MAX_EVENT_HOURS = 10;
 
 const isAllDay = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
-const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
-const weekday = (d: string) => new Date(`${d}T00:00:00Z`).getUTCDay(); // 0 Sun .. 6 Sat
-const mondayOf = (d: string) => addDays(d, -((weekday(d) + 6) % 7));
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 function typeOf(e: CalendarEvent): keyof TechWeek['byType'] {
@@ -136,6 +134,13 @@ export function buildTechUtilization(args: {
       bookedPct: capacityHours > 0 ? Math.round((w.bookedHours / capacityHours) * 100) / 100 : null,
     };
   });
+}
+
+/** Upcoming weeks (after the one holding `today`) at 75%+ booked: the "booked out" number. */
+export function bookedAhead(weeks: TechWeek[], today: string): { full: number; of: number; thisWeek: TechWeek | null } {
+  const idx = weeks.findIndex((w, i) => w.weekStart <= today && (weeks[i + 1]?.weekStart ?? '9999') > today);
+  const ahead = weeks.slice(idx + 1);
+  return { full: ahead.filter((w) => (w.bookedPct ?? 0) >= 0.75).length, of: ahead.length, thisWeek: weeks[idx] ?? null };
 }
 
 /** Fetch the calendar window and build: `pastWeeks` back through `futureWeeks` ahead of this week. */

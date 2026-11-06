@@ -1195,6 +1195,22 @@ export class QuickBooksClient {
     return result.QueryResponse?.Deposit ?? [];
   }
 
+  /** Every payment received on or after `sinceDate` (TxnDate, YYYY-MM-DD), paged. */
+  async listPaymentsSince(sinceDate: string): Promise<QBPayment[]> {
+    const pageSize = 1000;
+    const all: QBPayment[] = [];
+    for (let start = 1; ; start += pageSize) {
+      const sql = `SELECT * FROM Payment WHERE TxnDate >= '${sinceDate}' STARTPOSITION ${start} MAXRESULTS ${pageSize}`;
+      const result = await this.request<{ QueryResponse?: { Payment?: QBPayment[] } }>(
+        `/query?query=${encodeURIComponent(sql)}&minorversion=70`,
+      );
+      const page = result.QueryResponse?.Payment ?? [];
+      all.push(...page);
+      if (page.length < pageSize) break;
+    }
+    return all;
+  }
+
   async getPayment(paymentId: string): Promise<QBPayment | null> {
     try {
       const result = await this.request<{ Payment?: QBPayment }>(

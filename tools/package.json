@@ -15,6 +15,7 @@
     "@aac/grader": "workspace:*",
     "@aac/items": "workspace:*",
     "@aac/message-drafts": "workspace:*",
+    "@aac/metrics": "workspace:*",
     "@aac/quote-drafter": "workspace:*",
     "@aac/quoting": "workspace:*",
     "@aac/scheduling": "workspace:*",

@@ -22,6 +22,25 @@ export function adsMode(): AdsConversionsMode {
 }
 
 let cached: AdsConversionsDeps | null | undefined;
+let cachedAds: GoogleAdsClient | null | undefined;
+
+/** The Google Ads client alone (the scorecard's spend), or null without the Ads env. */
+export function adsClient(): GoogleAdsClient | null {
+  if (cachedAds !== undefined) return cachedAds;
+  const env = process.env;
+  const need = ['GOOGLE_ADS_CLIENT_ID', 'GOOGLE_ADS_CLIENT_SECRET', 'GOOGLE_ADS_REFRESH_TOKEN', 'GOOGLE_ADS_DEVELOPER_TOKEN', 'GOOGLE_ADS_CUSTOMER_ID'];
+  cachedAds = need.some((k) => !env[k])
+    ? null
+    : new GoogleAdsClient({
+        clientId: env.GOOGLE_ADS_CLIENT_ID as string,
+        clientSecret: env.GOOGLE_ADS_CLIENT_SECRET as string,
+        refreshToken: env.GOOGLE_ADS_REFRESH_TOKEN as string,
+        developerToken: env.GOOGLE_ADS_DEVELOPER_TOKEN as string,
+        customerId: env.GOOGLE_ADS_CUSTOMER_ID as string,
+        loginCustomerId: env.GOOGLE_ADS_LOGIN_CUSTOMER_ID,
+      });
+  return cachedAds;
+}
 
 export function getAdsDeps(): AdsConversionsDeps | null {
   if (cached !== undefined) return cached;
@@ -47,12 +66,7 @@ export function getAdsDeps(): AdsConversionsDeps | null {
   const { deps, redis } = getWorkerDeps();
   cached = {
     ga: new GoogleAnalyticsClient({ propertyId: env.GA4_PROPERTY_ID as string, oauth }),
-    ads: new GoogleAdsClient({
-      ...oauth,
-      developerToken: env.GOOGLE_ADS_DEVELOPER_TOKEN as string,
-      customerId: env.GOOGLE_ADS_CUSTOMER_ID as string,
-      loginCustomerId: env.GOOGLE_ADS_LOGIN_CUSTOMER_ID,
-    }),
+    ads: adsClient() as GoogleAdsClient,
     dataManager: new DataManagerClient(oauth),
     adsAccount: {
       customerId: env.GOOGLE_ADS_CUSTOMER_ID as string,

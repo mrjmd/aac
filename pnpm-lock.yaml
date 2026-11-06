@@ -351,6 +351,9 @@ importers:
       '@aac/message-drafts':
         specifier: workspace:*
         version: link:../../packages/message-drafts
+      '@aac/metrics':
+        specifier: workspace:*
+        version: link:../../packages/metrics
       '@aac/quote-drafter':
         specifier: workspace:*
         version: link:../../packages/quote-drafter
@@ -870,6 +873,9 @@ importers:
       '@aac/message-drafts':
         specifier: workspace:*
         version: link:../packages/message-drafts
+      '@aac/metrics':
+        specifier: workspace:*
+        version: link:../packages/metrics
       '@aac/quote-drafter':
         specifier: workspace:*
         version: link:../packages/quote-drafter

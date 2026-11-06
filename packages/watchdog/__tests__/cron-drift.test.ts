@@ -69,6 +69,11 @@ const NOT_WATCHED: Record<string, string> = {
   // keys.heartbeat('watchdog'); the agent's error-surface cron and the
   // outside pinger (worker /api/health) read it.
   'worker:/api/watchdog': 'self',
+  // Reporting, not business pipes (P1 only): a missed night leaves the
+  // command center showing the last good numbers. Their last runs show on
+  // the System health page (SIGNALS in apps/command-center/lib/system-health.ts).
+  'worker:/api/grader': 'reporting: Automations readiness numbers',
+  'worker:/api/scorecard': 'reporting: the weekly scorecard',
 };
 
 function watched(): Set<string> {

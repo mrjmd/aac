@@ -1,8 +1,12 @@
 import { easternDate } from "@aac/shared-utils/eastern";
 import { cards, loadSafe } from "@/lib/cards";
-import { bookedAhead, fieldDay, techOut, type FieldEvent } from "@/lib/field-events";
+import { bookedAhead, type Scorecard } from "@aac/metrics";
+import { keys } from "@aac/shared-utils/redis";
+import { getRedis } from "@/lib/redis";
+import { fieldDay, techOut, type FieldEvent } from "@/lib/field-events";
 import { Freshness } from "../components/freshness";
 import { Glance, OverviewTabs, PageHeader, SourceError } from "../components/layout-parts";
+import { ScorecardCard } from "./scorecard";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +31,13 @@ export default async function WeekPage() {
   const monday = addDays(today, dow === 0 ? 1 : 1 - dow);
   const days = Array.from({ length: 6 }, (_, n) => addDays(monday, n));
   const calCard = cards.calendarIndex();
-  const [cal, weeks] = await Promise.all([loadSafe(calCard), loadSafe(cards.techWeeks())]);
+  const [cal, weeks, score] = await Promise.all([
+    loadSafe(calCard),
+    loadSafe(cards.techWeeks()),
+    getRedis()
+      .get<Scorecard>(keys.scorecard)
+      .catch(() => null),
+  ]);
   const byDay = days.map((d, n) => {
     const ev = cal.snap ? fieldDay(cal.snap.data, d) : [];
     const out = cal.snap ? techOut(cal.snap.data, d) : false;
@@ -76,6 +86,7 @@ export default async function WeekPage() {
           </div>
         ))}
       </div>
+      <ScorecardCard card={score} />
       <div className="card">
         <h3>Not built yet</h3>
         <div>

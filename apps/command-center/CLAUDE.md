@@ -58,6 +58,14 @@ drafts with a word diff (`lib/word-diff.ts`) and the hand-grade buttons
 (`POST /api/automations/grade` {id, grade | null}, the only write). The
 auto-send toggles stay disabled until graduation is built.
 
+## Scorecard (`/week`)
+
+This week's 13-week scorecard (mockup's This week) reads `scorecard:latest`,
+which the worker's nightly `/api/scorecard` builds with `runScorecard` in
+`@aac/metrics` (row definitions, goals and date bases live there, one per
+row, shown under "How each row is counted"). The page never fetches the
+sources. Cells are for reading trends and never become items.
+
 ## Day-One Features (Phase 1)
 
 1. **Middleware Heartbeat Monitor** — Green/red status based on Redis timestamp.

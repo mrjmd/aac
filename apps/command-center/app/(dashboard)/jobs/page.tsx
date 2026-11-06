@@ -1,6 +1,6 @@
 import { easternDate } from "@aac/shared-utils/eastern";
 import { cards, loadSafe } from "@/lib/cards";
-import { bookedAhead } from "@/lib/field-events";
+import { bookedAhead } from "@aac/metrics";
 import { Freshness } from "../components/freshness";
 import { NeedsAttention } from "../components/items";
 import { PageHeader, SourceError, Tile } from "../components/layout-parts";

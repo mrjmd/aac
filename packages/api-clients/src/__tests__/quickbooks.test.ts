@@ -620,6 +620,23 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('listPaymentsSince', () => {
+    it('filters on TxnDate and pages until a short page', async () => {
+      const client = makeClient();
+      const full = Array.from({ length: 1000 }, (_, i) => ({ Id: `p${i}`, SyncToken: '0', TotalAmt: 1, CustomerRef: { value: 'c' } }));
+      mockFetch
+        .mockReturnValueOnce(mockResponse({ QueryResponse: { Payment: full } }))
+        .mockReturnValueOnce(mockResponse({ QueryResponse: {} }));
+
+      const result = await client.listPaymentsSince('2025-08-04');
+
+      const decoded = mockFetch.mock.calls.map((c) => decodeURIComponent((c[0] as string).split('query=')[1].split('&')[0]));
+      expect(decoded[0]).toContain("FROM Payment WHERE TxnDate >= '2025-08-04'");
+      expect(decoded[1]).toContain('STARTPOSITION 1001 ');
+      expect(result).toHaveLength(1000);
+    });
+  });
+
   describe('listRecentInvoices', () => {
     it('queries all invoices with optional sinceISODate', async () => {
       const client = makeClient();

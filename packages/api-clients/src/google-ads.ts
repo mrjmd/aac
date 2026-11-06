@@ -142,4 +142,12 @@ export class GoogleAdsClient {
     );
     return rows.map((r) => ({ ...r.conversionAction }));
   }
+
+  /** Account spend per day, from..to inclusive (YYYY-MM-DD, account time zone). Days with no spend are absent. */
+  async dailySpend(from: string, to: string): Promise<Array<{ date: string; cost: number }>> {
+    const rows = await this.search<{ segments: { date: string }; metrics: { costMicros?: string } }>(
+      `SELECT segments.date, metrics.cost_micros FROM customer WHERE segments.date BETWEEN '${from}' AND '${to}'`,
+    );
+    return rows.map((r) => ({ date: r.segments.date, cost: Number(r.metrics.costMicros ?? 0) / 1_000_000 }));
+  }
 }

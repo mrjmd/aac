@@ -1,6 +1,7 @@
 import { easternDate } from "@aac/shared-utils/eastern";
 import { cards, loadSafe } from "@/lib/cards";
-import { bookedAhead, fieldDay, techOut } from "@/lib/field-events";
+import { bookedAhead } from "@aac/metrics";
+import { fieldDay, techOut } from "@/lib/field-events";
 import { usdK } from "../components/layout-parts";
 import { TodayView } from "./today-view";
 

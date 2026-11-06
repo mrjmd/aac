@@ -87,6 +87,16 @@ Plain Vercel Serverless Functions (no framework) that run the
   = off); dry grades without writing records. Once per Eastern day per mode,
   `?force=1` (middleware secret) runs again; 600s budget, the rest wait for
   tomorrow. maxDuration 800 / memory 512.
+- `api/scorecard.ts`: nightly weekly scorecard (`@aac/metrics`
+  runScorecard), cron 09:00 UTC. Brings the lead cache `scorecard:leads`
+  (first contact and first reply per phone, seeded from the funnel study's
+  ledger) up to date from Quo threads that moved since the last run, then
+  reads QBO estimates and payments, the calendar and Google Ads spend and
+  saves every row to `scorecard:latest` for the command center's This
+  week. Reads only; sends nothing. Once per Eastern day, `?force=1`
+  (middleware secret) runs again; 500s budget for the Quo pass, a partial
+  pass keeps the old cursor. Needs the Google env; Ads is optional (the
+  spend row names the gap). maxDuration 800 / memory 1024.
 - `api/health.ts`: for an outside uptime pinger: 200 `{status: 'ok'}`
   only while Redis answers and `health:watchdog:ts` is under 15 min old,
   else 503 `{status: 'down'}`. Unauthenticated, no details. The one alert

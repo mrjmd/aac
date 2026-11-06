@@ -400,6 +400,15 @@ export const keys = {
   /** NX lock (TTL 900s) so two grader runs never overlap. */
   graderRunLock: 'grader:run-lock' as const,
 
+  // ── Weekly scorecard (worker writes nightly, command center This week reads) ──
+  /** JSON Scorecard (`@aac/metrics`): every row's weekly values, rebuilt nightly. */
+  scorecard: 'scorecard:latest' as const,
+  /** HASH phone (E.164) → LeadFact: first inbound contact and first reply, per phone. */
+  scorecardLeads: 'scorecard:leads' as const,
+  /** JSON { day, at, ...counts } of the last run. */
+  scorecardLastRun: 'scorecard:last-run' as const,
+  scorecardRunLock: 'scorecard:run-lock' as const,
+
   /** HASH: person id → JSON Person (agenda topics, past conversations, tagged items, facts). No TTL. */
   ccPeople: 'cc:people' as const,
 

@@ -69,6 +69,8 @@ export const SIGNALS: Signal[] = [
   { label: "stale-quotes", app: "worker", kind: "cron", name: "stale-quotes", maxAgeMin: DAY_MIN, what: "Stale-quote follow-up drafts (daily)", optional: true },
   { label: "triage", app: "worker", kind: "cron", name: "triage", maxAgeMin: DAY_MIN, what: "Daily triage into Today (worker)", optional: true },
   { label: "ads-conversions", app: "worker", kind: "cron", name: "ads-conversions", maxAgeMin: DAY_MIN, what: "Google Ads offline conversions (daily)", optional: true },
+  { label: "scorecard", app: "worker", kind: "cron", name: "scorecard", maxAgeMin: DAY_MIN, what: "Weekly scorecard rows (nightly)", optional: true },
+  { label: "grader", app: "worker", kind: "cron", name: "grader", maxAgeMin: DAY_MIN, what: "Grades yesterday's drafts (daily)", optional: true },
   { label: "gemini-canary", app: "worker", kind: "cron", name: "gemini-canary", maxAgeMin: 135, what: "Canary run (pass or fail)" },
   { label: "error-surface", app: "agent", kind: "cron", name: "error-surface", maxAgeMin: 25, what: "Texts health errors every 10 min", optional: true },
 ];
