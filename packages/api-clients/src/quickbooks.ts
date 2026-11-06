@@ -9,6 +9,7 @@
  */
 
 import { createLogger } from '@aac/shared-utils/logger';
+import { VendorHttpError } from './errors.js';
 import { quickNormalizePhone } from '@aac/shared-utils/phone';
 import type { QBOAuthTokens } from '@aac/shared-utils/types';
 
@@ -259,7 +260,7 @@ export class QuickBooksClient {
     if (!response.ok) {
       const error = await response.text();
       log.error('Token refresh failed', new Error(error), { status: response.status });
-      throw new Error(`QuickBooks token refresh failed: ${response.status}`);
+      throw new VendorHttpError('quickbooks', response.status, `QuickBooks token refresh failed: ${response.status}`);
     }
 
     const data = await response.json();
@@ -374,7 +375,7 @@ export class QuickBooksClient {
         endpoint,
         status: response.status,
       });
-      throw new Error(`QuickBooks API error: ${response.status} - ${error}`);
+      throw new VendorHttpError('quickbooks', response.status, `QuickBooks API error: ${response.status} - ${error}`);
     }
 
     return response.json();

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QuickBooksClient } from '../quickbooks.js';
+import { VendorHttpError, isVendorHttpError } from '../errors.js';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -198,6 +199,25 @@ describe('QuickBooksClient', () => {
       expect(mockFetch.mock.calls[0][0]).toContain('oauth.platform.intuit.com');
       expect(saveTokens).toHaveBeenCalledOnce();
       expect(saveTokens.mock.calls[0][0].accessToken).toBe('new-access-token');
+    });
+  });
+
+  describe('token refresh rejected', () => {
+    it('throws a VendorHttpError with the OAuth status', async () => {
+      const client = new QuickBooksClient({
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret',
+        realmId: 'test-realm',
+        redirectUri: 'http://localhost/callback',
+        getTokens: vi.fn().mockResolvedValue({ ...makeTokens(), expiresAt: Date.now() - 1000 }),
+        saveTokens: vi.fn().mockResolvedValue(undefined),
+      });
+      mockFetch.mockReturnValueOnce(mockResponse({ error: 'invalid_grant' }, 400));
+
+      const err = await client.searchCustomerByEmail('a@b.com').catch((e: unknown) => e);
+      expect(isVendorHttpError(err)).toBe(true);
+      expect((err as VendorHttpError).status).toBe(400);
+      expect((err as Error).message).toBe('QuickBooks token refresh failed: 400');
     });
   });
 
@@ -796,6 +816,27 @@ describe('QuickBooksClient', () => {
       const url = mockFetch.mock.calls[0][0] as string;
       expect(url).toContain('/invoice/inv-7/send');
       expect(url).not.toContain('sendTo=');
+    });
+
+    it('throws a VendorHttpError carrying the status when QBO answers 500', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ Fault: { type: 'SystemFault' } }, 500));
+
+      const err = await client.sendInvoice('inv-7').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(VendorHttpError);
+      expect(isVendorHttpError(err)).toBe(true);
+      expect((err as VendorHttpError).status).toBe(500);
+      expect((err as VendorHttpError).vendor).toBe('quickbooks');
+      // Message unchanged from the plain Error the client threw before.
+      expect((err as Error).message).toMatch(/^QuickBooks API error: 500 - /);
+    });
+
+    it('lets a transport failure through as a non-vendor error (no status)', async () => {
+      const client = makeClient();
+      mockFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+      const err = await client.sendInvoice('inv-7').catch((e: unknown) => e);
+      expect(isVendorHttpError(err)).toBe(false);
     });
   });
 

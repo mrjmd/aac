@@ -12,6 +12,8 @@
 export { PipedriveClient } from './pipedrive.js';
 export type { PipedriveConfig } from './pipedrive.js';
 
+export { VendorHttpError, isVendorHttpError } from './errors.js';
+
 export { QuoClient } from './quo.js';
 export type { QuoConfig } from './quo.js';
 

@@ -307,6 +307,13 @@ export const keys = {
   /** ISO time a middleware cron last ran. Written by middleware's trackCronRun (same string); read by the watchdog. */
   cronLastRun: (job: string) => `cron:${job}:last-run` as const,
 
+  /**
+   * SET NX marker for a once-per-entity cron action (e.g. the reminder text
+   * for one calendar event). Written by middleware's markCronAction, deleted
+   * by releaseCronAction when the vendor definitively rejected the send.
+   */
+  cronAction: (action: string, entityId: string) => `cron:${action}:${entityId}` as const,
+
   /** HASH: watchdog condition id → JSON {since, alertedAt} for open conditions (dedup + recovery notices). */
   watchdogState: 'watchdog:state' as const,
 

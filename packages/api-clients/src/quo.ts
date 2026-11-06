@@ -8,6 +8,7 @@
  */
 
 import { createLogger } from '@aac/shared-utils/logger';
+import { VendorHttpError } from './errors.js';
 
 const log = createLogger('quo');
 
@@ -251,7 +252,7 @@ export class QuoClient {
         endpoint,
         status: response.status,
       });
-      throw new Error(`Quo API error: ${response.status} - ${error}`);
+      throw new VendorHttpError('quo', response.status, `Quo API error: ${response.status} - ${error}`);
     }
 
     // Some endpoints return 204 No Content

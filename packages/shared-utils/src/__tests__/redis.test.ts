@@ -24,6 +24,12 @@ describe('keys', () => {
     });
   });
 
+  describe('cron actions', () => {
+    it('builds the cron action marker key (same string markCronAction always wrote)', () => {
+      expect(keys.cronAction('reminder', 'evt-123')).toBe('cron:reminder:evt-123');
+    });
+  });
+
   describe('deduplication', () => {
     it('builds dedupe key', () => {
       expect(keys.dedupe('pipedrive', 'evt-123')).toBe('dedupe:pipedrive:evt-123');

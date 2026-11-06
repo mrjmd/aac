@@ -8,6 +8,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./pipedrive": "./dist/pipedrive.js",
+    "./errors": "./dist/errors.js",
     "./quo": "./dist/quo.js",
     "./quickbooks": "./dist/quickbooks.js",
     "./searchbug": "./dist/searchbug.js",

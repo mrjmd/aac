@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QuoClient } from '../quo.js';
+import { VendorHttpError, isVendorHttpError } from '../errors.js';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -233,6 +234,10 @@ describe('QuoClient', () => {
         const expectation = expect(promise).rejects.toThrow('Quo API error: 429');
         await vi.runAllTimersAsync();
         await expectation;
+        // Exhausted 429s are a definitive vendor answer, with the status.
+        const err = await promise.catch((e: unknown) => e);
+        expect(isVendorHttpError(err)).toBe(true);
+        expect((err as VendorHttpError).status).toBe(429);
 
         expect(mockFetch).toHaveBeenCalledTimes(4);
       } finally {
@@ -411,6 +416,25 @@ describe('QuoClient', () => {
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.from).toBe('+15558888888');
+    });
+
+    it('throws a VendorHttpError carrying the status when Quo answers 500', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ message: 'boom' }, 500));
+
+      const err = await client.sendMessage('+15559999999', 'Hello!').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(VendorHttpError);
+      expect((err as VendorHttpError).status).toBe(500);
+      expect((err as VendorHttpError).vendor).toBe('quo');
+      expect((err as Error).message).toMatch(/^Quo API error: 500 - /);
+    });
+
+    it('lets a network failure through as a non-vendor error', async () => {
+      const client = makeClient();
+      mockFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+      const err = await client.sendMessage('+15559999999', 'Hello!').catch((e: unknown) => e);
+      expect(isVendorHttpError(err)).toBe(false);
     });
   });
 
