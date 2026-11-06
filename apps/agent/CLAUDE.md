@@ -96,7 +96,7 @@ See `docs/projects/agent-vision.md` for the long-term destination.
 | `PIPEDRIVE_API_KEY` / `PIPEDRIVE_COMPANY_DOMAIN` / `PIPEDRIVE_SYSTEM_USER_ID` | yes | Shared with middleware |
 | `QUICKBOOKS_CLIENT_ID` / `QUICKBOOKS_CLIENT_SECRET` / `QUICKBOOKS_REALM_ID` / `QUICKBOOKS_REDIRECT_URI` | yes | Shared with middleware |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | yes | Shared Redis |
-| `CRON_SECRET` | prod only | Vercel cron auth — same secret as middleware |
+| `CRON_SECRET` | yes | Vercel cron auth, same secret as middleware; crons 500 without it (also in development) |
 | `NODE_ENV` | — | `development` or `production` |
 
 ## What does NOT belong here

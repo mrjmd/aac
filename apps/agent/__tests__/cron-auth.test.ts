@@ -50,7 +50,7 @@ describe('verifyCronAuth', () => {
     expect(res._json).toEqual({ error: 'Unauthorized' });
   });
 
-  it('500s when CRON_SECRET is unset outside development', () => {
+  it('500s when CRON_SECRET is unset in production', () => {
     env.cron.secret = null;
     const res = makeRes();
     expect(verifyCronAuth(makeReq('Bearer null'), res)).toBe(false);
@@ -65,11 +65,12 @@ describe('verifyCronAuth', () => {
     expect(res._status).toBe(401);
   });
 
-  it('skips auth in development when CRON_SECRET is unset', () => {
+  it('fails closed in development too when CRON_SECRET is unset', () => {
     env.cron.secret = null;
     env.nodeEnv = 'development';
     const res = makeRes();
-    expect(verifyCronAuth(makeReq(), res)).toBe(true);
-    expect(res._status).toBeNull();
+    expect(verifyCronAuth(makeReq(), res)).toBe(false);
+    expect(res._status).toBe(500);
+    expect(res._json).toEqual({ error: 'Cron not configured' });
   });
 });

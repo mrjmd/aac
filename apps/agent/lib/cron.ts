@@ -16,17 +16,14 @@ const log = createLogger('agent:cron');
 /**
  * Verify that a request came from Vercel Cron (or an authorized caller).
  * Vercel sends `Authorization: Bearer <CRON_SECRET>`. Returns true if
- * authorized, false (and sends 401/500) if not.
+ * authorized, false (and sends 401/500) if not. Fails closed: an unset
+ * CRON_SECRET is a 500 in every NODE_ENV, development included.
  */
 export function verifyCronAuth(req: VercelRequest, res: VercelResponse): boolean {
   const env = getEnv();
 
   if (!env.cron.secret) {
-    if (env.nodeEnv === 'development') {
-      log.debug('Cron auth skipped (development, no CRON_SECRET)');
-      return true;
-    }
-    log.error('CRON_SECRET not configured in production');
+    log.error('CRON_SECRET not configured; refusing cron call');
     res.status(500).json({ error: 'Cron not configured' });
     return false;
   }
