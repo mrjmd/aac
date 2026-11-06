@@ -2,7 +2,7 @@
   "name": "aac",
   "version": "0.0.0",
   "private": true,
-  "description": "AAC Business Automation System — Four-Pillar Monorepo",
+  "description": "AAC Business Automation System \u2014 Four-Pillar Monorepo",
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
@@ -20,6 +20,26 @@
   },
   "packageManager": "pnpm@10.33.0",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "sharp"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp"
+    ],
+    "overrides": {
+      "minimatch@>=10.0.0 <10.2.3": "^10.2.3",
+      "vite@>=7.0.0 <7.3.7": "^7.3.7",
+      "basic-ftp@>=5.0.0 <5.3.1": "^5.3.1",
+      "shell-quote@>=1.0.0 <1.9.0": "^1.9.0",
+      "ws@>=8.0.0 <8.21.0": "^8.21.0",
+      "brace-expansion@>=1.0.0 <1.1.20": "^1.1.20",
+      "brace-expansion@>=5.0.0 <5.0.11": "^5.0.11",
+      "js-yaml@>=4.0.0 <4.3.2": "^4.3.2",
+      "tar@>=7.0.0 <7.5.21": "^7.5.21",
+      "postcss@>=8.0.0 <8.5.18": "^8.5.18",
+      "ip-address@>=10.0.0 <10.3.1": "^10.3.1",
+      "nanoid@>=3.0.0 <3.3.18": "^3.3.18",
+      "smol-toml@>=1.0.0 <1.7.1": "^1.7.1",
+      "source-map-js@>=1.0.0 <1.2.2": "^1.2.2",
+      "zod@>=4.0.0 <4.6.6": "^4.6.6"
+    }
   }
 }
