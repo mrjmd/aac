@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Sortable from "sortablejs";
 import { isPending, TOPIC_STATUS_LABEL, type Person, type PersonEventKind, type Topic, type TopicStatus } from "@aac/items/people";
 import { useItems } from "../items-context";
 import { usePeople } from "../people-context";
@@ -25,6 +26,43 @@ export function PersonCard({ person }: { person: Person }) {
   const [decided, setDecided] = useState("");
   const [followUp, setFollowUp] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  // Dragged order, shown until the save comes back as the person's own order.
+  const [order, setOrder] = useState<string[] | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const topics = order ? order.map((id) => person.topics.find((t) => t.id === id)).filter((t): t is Topic => !!t) : person.topics;
+  useEffect(() => setOrder(null), [person]);
+
+  const changeRef = useRef(change);
+  changeRef.current = change;
+  const sayRef = useRef(say);
+  sayRef.current = say;
+  useEffect(() => {
+    if (!listRef.current) return;
+    const s = Sortable.create(listRef.current, {
+      handle: ".grip",
+      animation: 150,
+      // Pointer events rather than native drag and drop: same on mouse and touch.
+      forceFallback: true,
+      ghostClass: "sortable-ghost",
+      chosenClass: "sortable-chosen",
+      filter: ".empty",
+      onEnd: (evt) => {
+        if (evt.oldIndex === evt.newIndex) return;
+        const ids = Array.from(evt.to.querySelectorAll<HTMLElement>(":scope > .topic")).map((el) => el.dataset.id!);
+        // React owns the DOM: put the moved node back and re-render in the new order.
+        evt.item.remove();
+        evt.from.insertBefore(evt.item, evt.from.children[evt.oldIndex ?? 0] ?? null);
+        setOrder(ids);
+        void changeRef.current({ id: person.id, op: "reorder", topicIds: ids }).then((saved) => {
+          if (!saved) {
+            setOrder(null);
+            sayRef.current("That order didn't save");
+          }
+        });
+      },
+    });
+    return () => s.destroy();
+  }, [person.id]);
 
   const send = async (body: Record<string, unknown>, ok: string) => {
     setBusy(true);
@@ -81,9 +119,13 @@ export function PersonCard({ person }: { person: Person }) {
           {person.when ? ` · ${person.when}` : ""}
         </span>
       </div>
-      {person.topics.length ? (
-        person.topics.map((t) => (
-          <div key={t.id} className="topic">
+      <div ref={listRef}>
+      {topics.length ? (
+        topics.map((t) => (
+          <div key={t.id} className="topic" data-id={t.id}>
+            <span className="grip" title="Drag to reorder" aria-hidden="true">
+              ⠿
+            </span>
             <input
               type="checkbox"
               className="tick"
@@ -120,6 +162,7 @@ export function PersonCard({ person }: { person: Person }) {
       ) : (
         <div className="empty">No open topics. Add one, or send any item here with ⋯.</div>
       )}
+      </div>
 
       {form === "topic" && (
         <div className="pform">

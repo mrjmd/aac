@@ -22,6 +22,7 @@ export {
   PeopleStore,
   removeTopic,
   reopenTopic,
+  reorderTopics,
   setFacts,
   setTopicStatus,
   TOPIC_STATUS_LABEL,

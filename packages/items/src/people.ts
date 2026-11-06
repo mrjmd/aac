@@ -110,6 +110,15 @@ export function removeTopic(p: Person, topicId: string): Person {
   return { ...p, topics: p.topics.filter((t) => t.id !== topicId) };
 }
 
+/** Put topics in the dragged order; any topic the list doesn't name keeps its place at the end. */
+export function reorderTopics(p: Person, topicIds: string[]): Person {
+  const rank = (t: Topic) => {
+    const i = topicIds.indexOf(t.id);
+    return i < 0 ? topicIds.length : i;
+  };
+  return { ...p, topics: [...p.topics].sort((a, b) => rank(a) - rank(b)) };
+}
+
 export function untag(p: Person, itemKey: string): Person {
   return { ...p, tagged: p.tagged.filter((k) => k !== itemKey) };
 }

@@ -7,6 +7,7 @@ import {
   newPerson,
   removeTopic,
   reopenTopic,
+  reorderTopics,
   setFacts,
   setTopicStatus,
   untag,
@@ -34,6 +35,7 @@ type Op =
   | { op: "removeTopic"; id: string; topicId: string }
   | { op: "addressed"; id: string; topicId: string; at?: string }
   | { op: "reopen"; id: string; topic: Topic; at: string }
+  | { op: "reorder"; id: string; topicIds: string[] }
   | { op: "untag"; id: string; itemKey: string }
   | { op: "had"; id: string; kind: PersonEventKind; decided?: string; followUp?: string[]; at?: string }
   | { op: "facts"; id: string; facts: Array<[string, string]> }
@@ -83,6 +85,10 @@ export async function POST(request: NextRequest) {
     case "reopen":
       if (!body.topic?.id || !body.topic.title || !STATUSES.has(body.topic.status) || !body.at) return bad("topic and at required");
       next = reopenTopic(p, body.topic, body.at);
+      break;
+    case "reorder":
+      if (!Array.isArray(body.topicIds)) return bad("topicIds required");
+      next = reorderTopics(p, body.topicIds);
       break;
     case "untag":
       next = untag(p, body.itemKey);

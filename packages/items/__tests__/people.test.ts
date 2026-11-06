@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addItemTopic, addressTopic, addTopic, isPending, logConversation, newPerson, reopenTopic, setFacts, setTopicStatus } from '../src/people.js';
+import { addItemTopic, addressTopic, addTopic, isPending, logConversation, newPerson, reopenTopic, reorderTopics, setFacts, setTopicStatus } from '../src/people.js';
 
 const now = new Date('2026-11-03T15:00:00Z');
 const mike = () => newPerson({ name: 'Mike', role: 'Tech' }, 0, now);
@@ -71,5 +71,13 @@ describe('people', () => {
     expect(p.topics.map((t) => t.title).sort()).toEqual(['ATM pulls', 'Janet Willy check']);
     expect(p.tagged).toEqual(['d3:1']);
     expect(reopenTopic(p, janet!, '2026-11-08')).toBe(p);
+  });
+
+  it('reorders topics by the dragged list, leaving unnamed ones at the end', () => {
+    let p = addTopic(mike(), { title: 'A' }, now);
+    p = addTopic(addTopic(p, { title: 'B' }, now), { title: 'C' }, now);
+    const [a, b, c] = p.topics;
+    expect(reorderTopics(p, [c!.id, a!.id]).topics.map((t) => t.title)).toEqual(['C', 'A', 'B']);
+    expect(reorderTopics(p, [b!.id, c!.id, a!.id, 'gone']).topics.map((t) => t.title)).toEqual(['B', 'C', 'A']);
   });
 });
