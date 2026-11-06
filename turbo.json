@@ -40,7 +40,9 @@
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", "!**/CLAUDE.md", "!**/README.md"]
     },
-    "lint": {},
+    "lint": {
+      "inputs": ["$TURBO_DEFAULT$", "!**/CLAUDE.md", "!**/README.md", "$TURBO_ROOT$/eslint.config.mjs"]
+    },
     "clean": {
       "cache": false
     }

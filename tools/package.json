@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Operational scripts — thin wrappers over @aac/api-clients",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@aac/ads-conversions": "workspace:*",
