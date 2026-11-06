@@ -97,6 +97,53 @@ Rules that follow from it:
 
 First candidates: the "just sent your quote" text and stale-quote T1.
 
+### Kinds of cases come from the data (11/06)
+
+Matt, 11/06: segments must come from the real jobs, not made up. Each kind
+has a path: **fast** (common and simple, earns auto-send first),
+**learnable** (fewer cases or more variety), or **stays with you** (needs
+judgment, a visit or questions; always drafts, never auto-sends).
+
+Quotes: all 573 QBO estimates (Sep 2024 to Nov 2026), each classified by
+Gemini from its lines, the photo-corpus area reads and the thread (job
+type, wall, crack direction, structural signs, finished wall, photos
+enough, owner needed more), joined to win/loss, site visit first
+(purple event within 60 days before), and callbacks (yellow event after
+the job). Script: `tools/src/scratch/classify-quote-segments.ts`. Share is
+of the last 12 months (348 quotes).
+
+| Kind | Path | Share | Median | Evidence |
+|---|---|---|---|---|
+| One crack, poured wall (vertical, diagonal, window corner) | fast | 21% | \$1,075 | Half between \$975 and \$1,175; complexity 1.2/5; drafter got the items right on 12 of 13 past quotes |
+| Bulkhead injection only | fast | 4% | \$1,900 | Price almost never varies |
+| Pipe or tie-hole leaks only | fast | 6% | \$775 | Tight range |
+| 2+ cracks, poured wall | fast | 16% | \$2,100 | Priced per crack; misses so far are count and short-crack price |
+| Cracks plus extras (pipes, tie holes, drywall removal) | learnable | 6% | \$1,725 | Owner needed more info on 53% |
+| Floor and slab cracks | learnable | 4% | \$700 | Wide price range |
+| Step resurfacing | learnable | 3% | \$1,738 | 27% of jobs had a callback |
+| Flat resurfacing (patio, walk, garage, pool, parge) | stays with you | 17% | \$2,400 | Needed more info 48%, callback 24%, drafter items right 6 of 14 |
+| Structural (bowing, displacement, horizontal, carbon fiber) | stays with you | 13% | \$2,650 | Needed more info 52%; costliest to get wrong |
+| Stone, brick, block walls | stays with you | 9% | \$1,575 | Photos enough on 17% of stone quotes; 37% visited first |
+| Mixed or unusual | stays with you | 3% | | Commercial, multi-unit, one-offs |
+
+About 47% of quotes are in fast kinds. Within them, any quote with a
+finished wall in the way, no usable photos, a past failed repair, or an
+open customer question still drafts (about half of one-crack quotes are
+that clean). Volume caveat: one crack is about 6 a month, so proving 90%
+on it alone takes roughly 4 to 5 months of graded drafts.
+
+Other automations (counts from local data; see the 11/06 session notes):
+- **Just sent your quote:** simple quote, quiet thread (fast, 7 of 9 sent
+  as drafted) vs caveat or open question (stays, 0 of 8).
+- **Stale quotes:** silent customer under 90 days (fast, 21 open), final
+  check-in (learnable, 19), customer spoke last and price talk / third
+  parties / two properties (stay with you).
+- **New-lead replies:** MA crack or bulkhead with photos (fast, 8 of 12),
+  no photos yet (fast, 2 of 2), declines and Connecticut (learnable),
+  already on the phone or existing customer (should not draft at all).
+- **Scheduling and router:** no outcome data yet; kinds are assessment
+  requests, quote approvals and confirmations, graded after the replay.
+
 ## Part 2: Big-idea backlog (captured, not scheduled)
 
 Matt asked these be written down; none is approved for building.
