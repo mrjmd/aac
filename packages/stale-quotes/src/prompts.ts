@@ -85,9 +85,8 @@ export function parseExtractionLoose<T>(raw: string): T | null {
 export function buildDraftPrompt(input: {
   customer: string;
   firstName: string;
-  quoteDate: string;
-  ageDays: number;
-  items: string[];
+  /** One entry per quote the text covers (the customer's due quotes, newest first). */
+  quotes: Array<{ quoteDate: string; ageDays: number; items: string[] }>;
   tier: 'T1' | 'T2' | 'T3';
   seasonClass: ServiceClass;
   horizonText: string;
@@ -117,7 +116,7 @@ ${input.fewShots.map((s) => `- "${s}"`).join('\n')}`;
   }[input.tier];
 
   const userPrompt = `Customer: ${input.customer} (address them as ${input.firstName})
-Quote sent: ${input.quoteDate} (${input.ageDays} days ago) for: ${input.items.join(', ')}
+${quoteLines(input.quotes)}
 Service class: ${input.seasonClass}
 Booking horizon (the only availability fact you may use): ${input.horizonText}
 ${input.statedTiming ? `Customer's stated timing: ${input.statedTiming}` : ''}
@@ -130,6 +129,13 @@ ${input.smsTail || '(no prior text thread beyond the quote)'}
 Write the single SMS follow-up now. Output ONLY the message text, no quotes, no preamble.`;
 
   return { systemPrompt, userPrompt };
+}
+
+function quoteLines(quotes: Array<{ quoteDate: string; ageDays: number; items: string[] }>): string {
+  const [q] = quotes;
+  if (quotes.length === 1) return `Quote sent: ${q.quoteDate} (${q.ageDays} days ago) for: ${q.items.join(', ')}`;
+  return `Quotes sent (this ONE text covers all ${quotes.length}; mention each briefly by the work, never by quote number or price):
+${quotes.map((x) => `- ${x.quoteDate} (${x.ageDays} days ago) for: ${x.items.join(', ')}`).join('\n')}`;
 }
 
 export function buildReviewPrompt(

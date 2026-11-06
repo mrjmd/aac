@@ -216,11 +216,14 @@ describe('runStaleQuotes', () => {
   });
 
   describe('daily draft cap', () => {
-    const eight = (): QBEstimate[] => Array.from({ length: 8 }, (_, i) => estimate({ Id: `9${i}`, DocNumber: `16${i}` }));
+    // Eight customers, one quote each (one customer's quotes share a draft).
+    const eight = (): QBEstimate[] =>
+      Array.from({ length: 8 }, (_, i) => estimate({ Id: `9${i}`, DocNumber: `16${i}`, CustomerRef: { value: `c${i}`, name: `Pat ${i}` } }));
+    const eightCustomers = Array.from({ length: 8 }, (_, i) => ({ Id: `c${i}`, PrimaryPhone: { FreeFormNumber: `(617) 555-010${i}` } }));
     const drafted = (f: Fake): number => Object.values(f.store.state.estimates).reduce((n, s) => n + s.touches.length, 0);
 
     it('a second run the same Eastern day only finishes what the first left (11/06: 6 + 6)', async () => {
-      const f = fake({ estimates: eight() });
+      const f = fake({ estimates: eight(), customers: eightCustomers });
       const first = await runStaleQuotes(f.deps, { dryRun: false });
       expect(first.draftedThisRun).toBe(6);
       const second = await runStaleQuotes(f.deps, { dryRun: false });
@@ -233,7 +236,7 @@ describe('runStaleQuotes', () => {
 
     it('a run cut short by its deadline leaves the rest of the cap to the backstop slot', async () => {
       let t = NOW;
-      const f = fake({ estimates: eight(), now: () => t });
+      const f = fake({ estimates: eight(), customers: eightCustomers, now: () => t });
       // Each draft costs 1s of clock; the deadline stops the first run after a few.
       const getEstimate = f.deps.qb.getEstimate;
       f.deps.qb.getEstimate = async (id: string) => {
@@ -250,7 +253,7 @@ describe('runStaleQuotes', () => {
     });
 
     it('counts only touches queued on the current Eastern day', async () => {
-      const f = fake({ estimates: eight() });
+      const f = fake({ estimates: eight(), customers: eightCustomers });
       const earlier = (id: string, queuedAt: string) => ({
         estimateId: id, doc: id, customer: 'x', phone: null, firstSeenAt: queuedAt, seasonClass: 'injection' as const,
         largeResurf: false, variant: { t1Days: 2, t2Days: 10 }, touches: [{ tier: 'T1' as const, queuedAt, draft: 'd', sentDetectedAt: queuedAt }],
@@ -262,7 +265,7 @@ describe('runStaleQuotes', () => {
     });
 
     it('a one-estimate run ignores the drafts already made today', async () => {
-      const f = fake({ estimates: eight() });
+      const f = fake({ estimates: eight(), customers: eightCustomers });
       await runStaleQuotes(f.deps, { dryRun: false });
       const r = await runStaleQuotes(f.deps, { dryRun: false, doc: '167' });
       expect(r.draftedThisRun).toBe(1);
@@ -272,7 +275,14 @@ describe('runStaleQuotes', () => {
   it('a drafted touch is saved before the run finishes (a killed run never re-drafts it)', async () => {
     let drafts = 0;
     const f = fake({
-      estimates: [estimate(), estimate({ Id: '901', DocNumber: '1601', TxnDate: new Date(NOW - 11 * DAY).toISOString().slice(0, 10) })],
+      estimates: [
+        estimate(),
+        estimate({ Id: '901', DocNumber: '1601', TxnDate: new Date(NOW - 11 * DAY).toISOString().slice(0, 10), CustomerRef: { value: 'c2', name: 'Sam Other' } }),
+      ],
+      customers: [
+        { Id: 'c1', PrimaryPhone: { FreeFormNumber: '(617) 555-0100' } },
+        { Id: 'c2', PrimaryPhone: { FreeFormNumber: '(617) 555-0199' } },
+      ],
       gemini: (prompt) => {
         if (prompt.startsWith('Review this outbound SMS')) return '{"ok": true}';
         if (++drafts === 2) throw new Error('function killed');
@@ -456,6 +466,122 @@ describe('conversation gates are per customer', () => {
     expect(r.awaiting.map((a) => a.doc)).toEqual(['1587']);
     expect(f.store.state.estimates['2389'].suspended?.reason).toBe('awaiting-human');
     expect(f.store.state.estimates['3771'].suspended?.reason).toBe('awaiting-human');
+  });
+});
+
+describe('one draft per customer', () => {
+  // Two Pending quotes of one customer (c1, Pat): #1600 10d old, #1601 older.
+  const older = (days: number, over: Partial<QBEstimate> = {}): QBEstimate =>
+    estimate({ Id: '901', DocNumber: '1601', TxnDate: new Date(NOW - days * DAY).toISOString().slice(0, 10), TotalAmt: 875, lines: [line('Water Line Sealing', 875)], ...over });
+  const draftPrompts = (f: Fake): string[] => f.prompts.filter((p) => p.startsWith('Customer:'));
+
+  it('two quotes due the same day get one text naming both, and both ladders advance', async () => {
+    const f = fake({ estimates: [estimate(), older(12)] });
+    const r = await runStaleQuotes(f.deps, { dryRun: false });
+    expect(r.draftedThisRun).toBe(1);
+    expect(r.queue.toSend).toHaveLength(1);
+    expect(r.queue.toSend[0]).toMatchObject({ doc: '1600', docs: ['1600', '1601'], amount: 1175 + 875, tier: 'T1' });
+    expect(r.queue.toSend[0].whyNow).toContain('one text for #1600 + #1601');
+    expect(f.notes).toHaveLength(1);
+    expect(f.notes[0]).toContain('STALE-QUOTE FOLLOW-UP (#1600 + #1601, T1)');
+    expect(draftPrompts(f)).toHaveLength(1);
+    expect(draftPrompts(f)[0]).toContain('this ONE text covers all 2');
+    expect(draftPrompts(f)[0]).toContain('Crack Injection');
+    expect(draftPrompts(f)[0]).toContain('Water Line Sealing');
+    for (const id of ['900', '901']) {
+      expect(f.store.state.estimates[id].touches).toEqual([expect.objectContaining({ tier: 'T1', docs: ['1600', '1601'] })]);
+    }
+  });
+
+  it('a single quote keeps the one-quote prompt and no docs list', async () => {
+    const f = fake();
+    const r = await runStaleQuotes(f.deps, { dryRun: false });
+    expect(r.queue.toSend[0].docs).toBeUndefined();
+    expect(draftPrompts(f)[0]).toMatch(/Quote sent: \d{4}-\d{2}-\d{2} \(10 days ago\) for: Crack Injection\n/);
+    expect(f.store.state.estimates['900'].touches[0].docs).toBeUndefined();
+  });
+
+  it('the gentlest tier sets the tone: a final touch only when every quote is on its final touch', async () => {
+    // #1601 is 120d old (last check-in, T3); #1600 is on T1.
+    const f = fake({ estimates: [estimate(), older(120)] });
+    const r = await runStaleQuotes(f.deps, { dryRun: true });
+    expect(r.queue.toSend[0].tier).toBe('T1');
+    expect(draftPrompts(f)[0]).toContain('Touch tier: T1');
+  });
+
+  it('a gate-passing sibling that is not due yet rides along once it is 2 days old', async () => {
+    // #1600 is 1d old (T1 not due), #1601 is 12d old and due.
+    const young = estimate({ TxnDate: new Date(NOW - DAY).toISOString().slice(0, 10) });
+    const f = fake({ estimates: [young, older(12)] });
+    const r = await runStaleQuotes(f.deps, { dryRun: true });
+    expect(r.queue.toSend.map((d) => d.doc)).toEqual(['1601']);
+    expect(r.queue.toSend[0].docs).toBeUndefined();
+    expect(r.queue.skipped).toContainEqual(expect.objectContaining({ doc: '1600', reason: expect.stringMatching(/^T1 due /) }));
+
+    // Estimate 903 draws the 3-day T1 slot: at 2 days old it is not due, and
+    // joins the due quote's text instead of getting its own a day later.
+    const two = fake({ estimates: [estimate({ Id: '903', DocNumber: '1603', TxnDate: new Date(NOW - 2 * DAY).toISOString().slice(0, 10) }), older(12)] });
+    const r2 = await runStaleQuotes(two.deps, { dryRun: false });
+    expect(r2.queue.toSend).toHaveLength(1);
+    expect(r2.queue.toSend[0].docs).toEqual(['1601', '1603']);
+    expect(two.store.state.estimates['903'].touches).toEqual([expect.objectContaining({ tier: 'T1', docs: ['1601', '1603'] })]);
+  });
+
+  it('a same-day rerun lists the combined draft once and never re-drafts it', async () => {
+    const f = fake({ estimates: [estimate(), older(12)] });
+    const first = await runStaleQuotes(f.deps, { dryRun: false });
+    const r = await runStaleQuotes(f.deps, { dryRun: false });
+    expect(r.draftedThisRun).toBe(0);
+    expect(r.queue.toSend).toEqual(first.queue.toSend);
+    expect(f.notes).toHaveLength(1);
+  });
+
+  it('a combined draft counts once against the daily cap', async () => {
+    const f = fake({ estimates: [estimate(), older(12)] });
+    await runStaleQuotes(f.deps, { dryRun: false });
+    const others = Array.from({ length: 6 }, (_, i) => estimate({ Id: `8${i}`, DocNumber: `17${i}`, CustomerRef: { value: `x${i}`, name: `Lee ${i}` } }));
+    const g = fake({
+      estimates: [estimate(), older(12), ...others],
+      customers: [
+        { Id: 'c1', PrimaryPhone: { FreeFormNumber: '(617) 555-0100' } },
+        ...others.map((_, i) => ({ Id: `x${i}`, PrimaryPhone: { FreeFormNumber: `(508) 555-010${i}` } })),
+      ],
+    });
+    g.store.state = structuredClone(f.store.state);
+    const r = await runStaleQuotes(g.deps, { dryRun: false });
+    expect(r.draftedThisRun).toBe(5);
+  });
+
+  it('a quote that comes due while a sibling draft sits unsent waits on that draft', async () => {
+    let t = NOW;
+    // Day 1: #1601 (12d old) is due; #1600 was quoted today, too new to ride along.
+    const fresh = estimate({ TxnDate: new Date(NOW).toISOString().slice(0, 10) });
+    const f = fake({ estimates: [fresh, older(12)], now: () => t });
+    await runStaleQuotes(f.deps, { dryRun: false });
+    expect(f.notes).toHaveLength(1);
+    // Four days later #1600 is due too; the first draft was never sent.
+    t = NOW + 4 * DAY;
+    const r = await runStaleQuotes(f.deps, { dryRun: false });
+    expect(r.draftedThisRun).toBe(0);
+    expect(r.queue.waiting.map((d) => d.doc)).toEqual(['1601']);
+    expect(r.queue.skipped).toContainEqual(expect.objectContaining({ doc: '1600', reason: 'waiting on the unsent draft for #1601' }));
+    expect(f.notes).toHaveLength(1);
+  });
+
+  it('an unsent draft held only by a not-yet-due quote still blocks a new one', async () => {
+    // #1601 is 2 days old on the 3-day T1 slot (not due) and holds an unsent
+    // text from this morning; #1600 is due.
+    const f = fake({ estimates: [estimate(), older(2)] });
+    f.store.state.estimates['901'] = {
+      estimateId: '901', doc: '1601', customer: 'Pat Example', phone: '+16175550100', firstSeenAt: '2026-11-01T12:00:00.000Z',
+      seasonClass: 'injection', largeResurf: false, variant: { t1Days: 3, t2Days: 10 },
+      touches: [{ tier: 'T1', queuedAt: new Date(NOW - 3_600_000).toISOString(), draft: 'Hi Pat, checking in on the water line quote.' }],
+    };
+    const r = await runStaleQuotes(f.deps, { dryRun: false });
+    expect(r.draftedThisRun).toBe(0);
+    expect(r.queue.toSend.map((d) => d.doc)).toEqual(['1601']);
+    expect(r.queue.skipped).toContainEqual(expect.objectContaining({ doc: '1600', reason: 'waiting on the unsent draft for #1601' }));
+    expect(f.notes).toHaveLength(0);
   });
 });
 

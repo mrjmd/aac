@@ -57,6 +57,7 @@ import {
   OUR_EMAILS,
   QUO_THROTTLE_MS,
   RECENT_OUTBOUND_COOLOFF_H,
+  T1_VARIANTS,
   T3_GAP_DAYS,
   isoDay,
   type AwaitingHumanEntry,
@@ -69,6 +70,9 @@ import {
   type StaleQuoteDeps,
   type TouchRecord,
 } from './types.js';
+
+/** A not-yet-due quote rides along in a sibling's draft once it is this old (the earliest T1 slot). */
+const T1_MIN_DAYS = Math.min(...T1_VARIANTS);
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -144,13 +148,22 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
   const runlog: RunlogRow[] = [];
   const awaitingHuman: AwaitingHumanEntry[] = [];
   const awaitingCustomers = new Set<string>();
+  const readyByCustomer = new Map<string, Ready[]>();
+  const skipQuote = (doc: string, customer: string, reason: string): void => {
+    queue.skipped.push({ doc, customer, reason });
+    runlog.push({ at: new Date(clock()).toISOString(), doc, customer, outcome: 'skipped', reason });
+  };
   // The cap is per Eastern day, not per run: the worker's backstop slot
   // finishes a scan the first slot's time budget cut short, and must only
   // fill what is left of today's cap (11/06: two slots drafted 6 each). A
-  // one-estimate run is an explicit request and ignores earlier drafts.
+  // one-estimate run is an explicit request and ignores earlier drafts. A
+  // combined draft is one text: it counts once, on its lead quote.
   const draftedEarlierToday = docArg
     ? 0
-    : Object.values(state.estimates).reduce((n, s) => n + s.touches.filter(queuedToday).length, 0);
+    : Object.values(state.estimates).reduce(
+        (n, s) => n + s.touches.filter((t) => queuedToday(t) && (!t.docs || t.docs[0] === s.doc)).length,
+        0,
+      );
   let draftsThisRun = 0;
   let partial = false;
 
@@ -185,10 +198,7 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
     st.largeResurf = svc.largeResurf;
     state.estimates[e.Id] = st;
 
-    const skip = (reason: string): void => {
-      queue.skipped.push({ doc, customer, reason });
-      runlog.push({ at: new Date(clock()).toISOString(), doc, customer, outcome: 'skipped', reason });
-    };
+    const skip = (reason: string): void => skipQuote(doc, customer, reason);
 
     const label = `#${doc} ${customer} $${amount.toLocaleString()} (${ageDays}d, ${svc.cls}${svc.largeResurf ? ' LARGE' : ''})`;
 
@@ -435,50 +445,97 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
         : tier === 'T2'
           ? Math.max(quoteMs + st.variant.t2Days * DAY, anchor + 7 * DAY)
           : anchor + T3_GAP_DAYS * DAY;
-    if (now < dueMs) {
-      skip(`${tier} due ${isoDay(dueMs)}`);
+    // Due or not, the draft decision is per customer, after the scan.
+    const ready: Ready = {
+      e, st, doc, customer, phone: phone!, amount, ageDays, quoteMs, address, svc, label,
+      tier, dueMs, lastCheckIn, unanswered, smsTail,
+    };
+    (readyByCustomer.get(customerKey) ?? readyByCustomer.set(customerKey, []).get(customerKey)!).push(ready);
+  }
+
+  // ── one draft per customer: every quote of theirs that passed the gates
+  // and is due goes into one text, and quotes that passed the gates but are
+  // not due yet (at least T1_MIN_DAYS old) ride along, so the customer
+  // never gets two nudges a few days apart. Each quote records the touch at
+  // its own tier, so their ladders advance together.
+  for (const members of readyByCustomer.values()) {
+    const notDueYet = (m: Ready): void => skipQuote(m.doc, m.customer, `${m.tier} due ${isoDay(m.dueMs)}`);
+    const isDue = (m: Ready): boolean => now >= m.dueMs;
+    const openOf = (m: Ready): TouchRecord | undefined => m.st.touches.find((t) => !t.sentDetectedAt);
+    const due = members.filter(isDue);
+    if (!due.length) {
+      members.forEach(notDueYet);
       continue;
     }
 
-    // already queued and still unsent? never re-draft. Queued earlier today
-    // (a rerun of today's scan) → still today's draft, listed to send;
-    // queued on an earlier day → waiting.
-    const openTouch = st.touches.find((t) => !t.sentDetectedAt);
-    if (openTouch) {
+    // already queued and still unsent? never re-draft, for any of their
+    // quotes. Queued earlier today (a rerun of today's scan) → still today's
+    // draft, listed to send; queued on an earlier day → waiting.
+    const lead = due.find(openOf) ?? members.find(openOf);
+    if (lead) {
+      const open = openOf(lead)!;
+      const covered = members.filter((m) => openOf(m)?.queuedAt === open.queuedAt);
       const listed: QueueDraft = {
-        doc, estimateId: e.Id, customer, phone: phone!, amount, ageDays,
-        tier: openTouch.tier, variant: variantLabel(st), draft: openTouch.draft,
-        whyNow: `queued ${openTouch.queuedAt.slice(0, 10)}, no matching outbound detected yet — still waiting to be sent`,
-        queuedAt: openTouch.queuedAt,
+        doc: lead.doc, estimateId: lead.e.Id, customer: lead.customer, phone: lead.phone,
+        amount: covered.reduce((n, m) => n + m.amount, 0), ageDays: lead.ageDays,
+        tier: open.tier, variant: variantLabel(lead.st), draft: open.draft,
+        whyNow: `queued ${open.queuedAt.slice(0, 10)}, no matching outbound detected yet — still waiting to be sent`,
+        queuedAt: open.queuedAt,
+        ...(open.docs ? { docs: open.docs } : {}),
       };
-      if (queuedToday(openTouch)) {
-        queue.toSend.push({ ...listed, whyNow: openTouch.whyNow ?? `${openTouch.tier} drafted earlier today` });
+      if (queuedToday(open)) {
+        queue.toSend.push({ ...listed, whyNow: open.whyNow ?? `${open.tier} drafted earlier today` });
       } else {
         queue.waiting.push(listed);
       }
+      for (const m of due) if (!covered.includes(m)) skipQuote(m.doc, m.customer, `waiting on the unsent draft for #${lead.doc}`);
+      members.filter((m) => !isDue(m) && !covered.includes(m)).forEach(notDueYet);
       continue;
     }
 
     if (draftedEarlierToday + draftsThisRun >= maxDrafts) {
-      skip(`due (${tier}) but daily cap of ${maxDrafts} reached`);
+      for (const m of due) skipQuote(m.doc, m.customer, `due (${m.tier}) but daily cap of ${maxDrafts} reached`);
+      members.filter((m) => !isDue(m)).forEach(notDueYet);
       continue;
     }
+    if (opts.deadlineMs !== undefined && clock() > opts.deadlineMs) {
+      partial = true;
+      log(`  time budget reached before #${due[0].doc}; the rest waits for the next run`);
+      break;
+    }
+
+    const riders = members.filter((m) => !isDue(m) && m.ageDays >= T1_MIN_DAYS && !openOf(m));
+    members.filter((m) => !isDue(m) && !riders.includes(m)).forEach(notDueYet);
 
     // ── draft it — but first re-check TxnStatus live: the qb-reconcile cron
     // (every 30 min) can flip Pending→Accepted/Closed mid-run without a
     // webhook, and this scan takes several minutes.
-    const fresh = await qb.getEstimate(e.Id).catch(() => null);
-    if (!fresh || fresh.TxnStatus !== 'Pending' || (fresh.LinkedTxn ?? []).some((t) => t.TxnType === 'Invoice')) {
-      skip(`no longer Pending at draft time (${fresh?.TxnStatus ?? 'gone'})`);
+    const live: Ready[] = [];
+    for (const m of [...due, ...riders]) {
+      const fresh = await qb.getEstimate(m.e.Id).catch(() => null);
+      if (!fresh || fresh.TxnStatus !== 'Pending' || (fresh.LinkedTxn ?? []).some((t) => t.TxnType === 'Invoice')) {
+        skipQuote(m.doc, m.customer, `no longer Pending at draft time (${fresh?.TxnStatus ?? 'gone'})`);
+      } else {
+        live.push(m);
+      }
+    }
+    if (!live.some(isDue)) {
+      live.forEach(notDueYet);
       continue;
     }
-    log(`\n── drafting ${tier} for ${label}`);
-    const items = (e.Line ?? [])
-      .filter((l) => l.DetailType === 'SalesItemLineDetail')
-      .map((l) => (l as unknown as { SalesItemLineDetail?: { ItemRef?: { name?: string } } }).SalesItemLineDetail?.ItemRef?.name ?? '')
-      .filter((n) => n && !/discount|guarantee/i.test(n));
+    const head = live[0];
+    const { st, doc, customer, phone, svc } = head;
+    // The gentlest tier among them sets the tone: a "closing out the quote"
+    // final touch only when every quote in the text is on its final touch.
+    const tier = live.map((m) => m.tier).sort()[0];
+    const lastCheckIn = live.every((m) => m.lastCheckIn);
+    const docs = live.map((m) => m.doc);
+    log(`\n── drafting ${tier} for ${live.map((m) => m.label).join(' + ')}`);
+    const quotes = live.map((m) => ({ quoteDate: isoDay(m.quoteMs), ageDays: m.ageDays, items: itemNames(m.e), address: m.address }));
     const firstName = customer.split(/\s+/)[0];
-    const quoteContext = `${items.join(', ')}${address ? ` at ${address}` : ''}`;
+    const quoteContext = quotes
+      .map((q) => `${q.items.join(', ')}${q.address ? ` at ${q.address}` : ''}`)
+      .join(live.length > 1 ? ' | and, in the same text: ' : '');
     // Exterior resurfacing can't honestly be offered a slot past the
     // outdoor season's end (~Nov 1) — the honest pitch is the spring list.
     const seasonEndMs = Date.UTC(new Date(now).getUTCFullYear(), 10, 1);
@@ -487,8 +544,8 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
         ? 'the outdoor resurfacing season is wrapping up for the year — we are booking spots on the early-spring list now (work resumes late Feb / March)'
         : horizon.text;
     const { systemPrompt, userPrompt } = buildDraftPrompt({
-      customer, firstName, quoteDate: isoDay(quoteMs), ageDays, items, tier,
-      seasonClass: svc.cls, horizonText, smsTail,
+      customer, firstName, quotes, tier,
+      seasonClass: svc.cls, horizonText, smsTail: head.smsTail,
       statedTiming: st.statedTiming ? `${st.statedTiming.resumeAt} ("${st.statedTiming.evidence}")` : undefined,
       fewShots, today,
     });
@@ -496,13 +553,13 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
     let draft = (await generateWithRetry(gemini, userPrompt, systemPrompt)).trim().replace(/^["']|["']$/g, '');
     // reviewer gate — one regeneration on failure
     for (let pass = 0; pass < 2; pass++) {
-      const reviewRaw = await generateWithRetry(gemini, buildReviewPrompt(draft, horizonText, tier, quoteContext, smsTail));
+      const reviewRaw = await generateWithRetry(gemini, buildReviewPrompt(draft, horizonText, tier, quoteContext, head.smsTail));
       const review = parseExtractionLoose<{ ok: boolean; problems?: string[] }>(reviewRaw);
       if (review?.ok) break;
       const problems = review?.problems?.join('; ') ?? 'unparseable review';
       log(`  ⚠ reviewer flagged: ${problems}`);
       if (pass === 1) {
-        skip(`draft failed review twice: ${problems}`);
+        for (const m of live) skipQuote(m.doc, m.customer, `draft failed review twice: ${problems}`);
         draft = '';
         break;
       }
@@ -510,23 +567,27 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
     }
     if (!draft) continue;
 
-    const whyNow = `${tier}${lastCheckIn ? ' (last check-in, quote over 90d)' : ''} · ${unanswered} unanswered · quote ${ageDays}d old · ${svc.cls} · ${horizonText}`;
+    const together = live.length > 1 ? ` · one text for ${docs.map((d) => `#${d}`).join(' + ')}` : '';
+    const whyNow = `${tier}${lastCheckIn ? ' (last check-in, quote over 90d)' : ''} · ${head.unanswered} unanswered · quote ${head.ageDays}d old · ${svc.cls} · ${horizonText}${together}`;
     log(`  ${draft}`);
     log(`  why: ${whyNow}`);
 
     const entry: QueueDraft = {
-      doc, estimateId: e.Id, customer, phone: phone!, amount, ageDays,
+      doc, estimateId: head.e.Id, customer, phone, amount: live.reduce((n, m) => n + m.amount, 0), ageDays: head.ageDays,
       tier, variant: variantLabel(st), draft, whyNow, queuedAt: new Date(clock()).toISOString(),
+      ...(live.length > 1 ? { docs } : {}),
     };
     queue.toSend.push(entry);
-    runlog.push({ at: entry.queuedAt, doc, customer, outcome: 'drafted', tier, variant: entry.variant, draft });
+    runlog.push({ at: entry.queuedAt, doc, ...(entry.docs ? { docs } : {}), customer, outcome: 'drafted', tier, variant: entry.variant, draft });
     draftsThisRun++;
 
     if (!dryRun) {
-      st.touches.push({ tier, queuedAt: entry.queuedAt, draft, whyNow });
-      // Save the touch before posting: a run killed mid-scan (maxDuration)
+      // Save the touches before posting: a run killed mid-scan (maxDuration)
       // never reaches saveState, and the next slot would draft it again.
-      await store.saveEstimate(st);
+      for (const m of live) {
+        m.st.touches.push({ tier: m.tier, queuedAt: entry.queuedAt, draft, whyNow, ...(entry.docs ? { docs } : {}) });
+        await store.saveEstimate(m.st);
+      }
       try {
         const contact = phone ? await quo.findContactByPhone(phone) : null;
         if (contact) {
@@ -534,7 +595,7 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
           // should see at a glance which system produced a note.
           await quo.createContactNote(
             contact.id,
-            `📋 STALE-QUOTE FOLLOW-UP (#${doc}, ${tier}) — copy/paste:\n\n${draft}\n\n(${whyNow})`,
+            `📋 STALE-QUOTE FOLLOW-UP (${docs.map((d) => `#${d}`).join(' + ')}, ${tier}) — copy/paste:\n\n${draft}\n\n(${whyNow})`,
           );
           log('  ✓ posted Quo note');
         } else {
@@ -574,6 +635,33 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
   }
 
   return { partial, horizon: horizon.text, queue, awaiting: awaitingHuman, runlog, pendingInScope: pending.length, draftedThisRun: draftsThisRun };
+}
+
+/** A quote that passed every gate: due now, or only waiting on its ladder slot. */
+interface Ready {
+  e: QBEstimate;
+  st: EstimateState;
+  doc: string;
+  customer: string;
+  phone: string;
+  amount: number;
+  ageDays: number;
+  quoteMs: number;
+  address: string;
+  svc: ReturnType<typeof classifyService>;
+  label: string;
+  tier: 'T1' | 'T2' | 'T3';
+  dueMs: number;
+  lastCheckIn: boolean;
+  unanswered: number;
+  smsTail: string;
+}
+
+function itemNames(e: QBEstimate): string[] {
+  return (e.Line ?? [])
+    .filter((l) => l.DetailType === 'SalesItemLineDetail')
+    .map((l) => (l as unknown as { SalesItemLineDetail?: { ItemRef?: { name?: string } } }).SalesItemLineDetail?.ItemRef?.name ?? '')
+    .filter((n) => n && !/discount|guarantee/i.test(n));
 }
 
 interface Contact {

@@ -41,6 +41,14 @@ Plan: `analysis/02-strategy/stale-quote-followup-plan-2026-10.md`.
   by an extraction of an inbound older than when it was recorded (owner
   hand-sets survive). The awaiting-reply list has one entry per customer.
   The cadence ladder (touch count, tier) stays per quote.
+- One draft per customer per day (owner 11/06): every due quote of theirs,
+  plus gate-passing siblings at least 2 days old that aren't due yet, goes
+  into one text naming each by the work. Every quote records the touch at
+  its own tier (`docs` lists them, lead first), so the ladders move
+  together; the gentlest tier sets the tone (a "closing out" final touch
+  only when all are on T3). It is one queue entry and one Quo note, and it
+  counts once against the cap. While any of their drafts sits unsent, no new
+  one is drafted for that customer.
 - A run past `deadlineMs` stops starting new quotes, saves state, and keeps
   the last full queue and awaiting list (`partial: true`).
 - The draft cap (`MAX_DRAFTS_PER_DAY`, 6) is per Eastern day: touches already

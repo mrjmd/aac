@@ -69,6 +69,8 @@ export interface TouchRecord {
   draft: string;
   /** The queue's "why now" line when drafted (re-listed by a same-day rerun). */
   whyNow?: string;
+  /** Every quote this one text covers, lead first (a combined draft); absent = this quote alone. */
+  docs?: string[];
   sentDetectedAt?: string;
   repliedWithin7d?: boolean;
 }
@@ -113,6 +115,8 @@ export interface QueueDraft {
   draft: string;
   whyNow: string;
   queuedAt: string;
+  /** A combined draft: every quote the one text covers, `doc` first. */
+  docs?: string[];
 }
 
 export interface QueueFlag {
