@@ -24,6 +24,8 @@ import {
   processIntakePhone,
   processRoutedIntake,
   processRoutedReferral,
+  drainFollowupQueue,
+  FOLLOWUP_QUEUE_MAX_ATTEMPTS,
   type DraftDeps,
   type RoutedIntake,
   type RoutedReferral,
@@ -593,5 +595,91 @@ describe('RedisDraftState referral-done bound', () => {
     expect(Object.keys(after).sort()).toEqual(['+16175550002', '+16175550003']);
     // the prune horizon is well past the window getReferral is read for
     expect(REFERRAL_PRUNE_MS).toBeGreaterThan(REFERRAL_REPEAT_H * 3_600_000 * 5);
+  });
+});
+
+describe('drainFollowupQueue requeue on failure', () => {
+  /** Just the list calls the drain makes; values round-trip through JSON like Upstash. */
+  class ListRedis {
+    list: string[] = [];
+    async lpush(_key: string, ...values: string[]): Promise<number> {
+      for (const v of values) this.list.unshift(v);
+      return this.list.length;
+    }
+    async lpop<T>(_key: string, count: number): Promise<T[] | null> {
+      const out = this.list.splice(0, count);
+      return out.length ? out.map((v) => JSON.parse(v) as T) : null;
+    }
+    entries(): Array<{ estimateId: string; attempts?: number }> {
+      return this.list.map((v) => JSON.parse(v) as { estimateId: string; attempts?: number });
+    }
+  }
+
+  /** Middleware-style enqueue: LPUSH `{ estimateId, at }`, so the newest is at the head. */
+  async function enqueue(redis: ListRedis, ...ids: string[]): Promise<void> {
+    for (const id of ids) await redis.lpush(keys.messageDraftQueue, JSON.stringify({ estimateId: id, at: 'x' }));
+  }
+
+  function failingOn(bad: string) {
+    const { deps, state, mocks } = makeDeps();
+    mocks.getEstimate.mockResolvedValue(null);
+    vi.spyOn(state, 'getFollowup').mockImplementation(async (id: string) => {
+      if (id === bad) throw new Error('redis blip');
+      return null;
+    });
+    return { deps, mocks };
+  }
+
+  it('processes every id and leaves the queue empty when nothing throws', async () => {
+    const redis = new ListRedis();
+    await enqueue(redis, 'a', 'b', 'c');
+    const { deps, mocks } = failingOn('none');
+    await drainFollowupQueue(deps, redis as unknown as Redis);
+    expect(mocks.getEstimate.mock.calls.map(([id]) => id)).toEqual(['c', 'b', 'a']);
+    expect(redis.list).toEqual([]);
+  });
+
+  it('puts the failing id (attempts + 1) and the unprocessed rest back in order, then rethrows', async () => {
+    const redis = new ListRedis();
+    await enqueue(redis, 'a', 'b', 'c', 'd'); // head: d, c, b, a
+    const { deps, mocks } = failingOn('c');
+    await expect(drainFollowupQueue(deps, redis as unknown as Redis)).rejects.toThrow('redis blip');
+    expect(mocks.getEstimate.mock.calls.map(([id]) => id)).toEqual(['d']);
+    expect(redis.entries().map((e) => [e.estimateId, e.attempts])).toEqual([
+      ['c', 1],
+      ['b', 0],
+      ['a', 0],
+    ]);
+  });
+
+  it('requeued ids are drained on the next tick, behind anything enqueued since', async () => {
+    const redis = new ListRedis();
+    await enqueue(redis, 'a', 'b');
+    const first = failingOn('b');
+    await expect(drainFollowupQueue(first.deps, redis as unknown as Redis)).rejects.toThrow();
+    await enqueue(redis, 'z');
+    const second = failingOn('none');
+    await drainFollowupQueue(second.deps, redis as unknown as Redis);
+    expect(second.mocks.getEstimate.mock.calls.map(([id]) => id)).toEqual(['z', 'b', 'a']);
+    expect(redis.list).toEqual([]);
+  });
+
+  it('drops a poison id after FOLLOWUP_QUEUE_MAX_ATTEMPTS failures but keeps the rest', async () => {
+    const redis = new ListRedis();
+    await enqueue(redis, 'a', 'bad');
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      for (let i = 1; i <= FOLLOWUP_QUEUE_MAX_ATTEMPTS; i++) {
+        const { deps } = failingOn('bad');
+        await expect(drainFollowupQueue(deps, redis as unknown as Redis)).rejects.toThrow('redis blip');
+        if (i < FOLLOWUP_QUEUE_MAX_ATTEMPTS) {
+          expect(redis.entries()[0]).toMatchObject({ estimateId: 'bad', attempts: i });
+        }
+      }
+      expect(redis.entries().map((e) => e.estimateId)).toEqual(['a']);
+      expect(errSpy).toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });
