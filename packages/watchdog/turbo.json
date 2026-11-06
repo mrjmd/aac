@@ -1,0 +1,16 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!**/CLAUDE.md",
+        "!**/README.md",
+        "$TURBO_ROOT$/apps/worker/vercel.json",
+        "$TURBO_ROOT$/apps/middleware/vercel.json",
+        "$TURBO_ROOT$/apps/middleware/api/cron/*.ts"
+      ]
+    }
+  }
+}
