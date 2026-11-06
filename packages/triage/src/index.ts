@@ -20,3 +20,4 @@ export {
   type StaleQuoteLists,
   type TriageCandidateContext,
 } from './candidates.js';
+export { TRIAGE_SECTIONS, addDismissal, isRuleActive, removeDismissal, validateDismissalRule } from './dismissals.js';
