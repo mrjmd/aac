@@ -2,6 +2,9 @@
 
 **Status:** Iteration 1 built 2026-08-27 (local HTML + nightly launchd job).
 **Owner surface:** `analysis/triage.html` (gitignored, local-only).
+**Code:** the pipeline moved to `packages/triage` (`@aac/triage`, 2026-11-05, plan
+`docs/plans/triage-to-worker.md`); `tools/src/triage/` keeps thin CLIs. The
+file layout below is iteration 1's.
 **Destination surface:** `apps/command-center` (blocked on audit remediation P0-5 — see Migration below).
 
 ## What this is
@@ -77,8 +80,9 @@ under gitignored `analysis/`.
 | Quo | Conversations active in last 21d → per-thread messages + calls; transcripts for completed calls ≥ 45s | `QuoClient` + direct REST for `/call-transcripts/{id}` (no client method yet — promote to `QuoClient` before any app uses it) |
 | Gmail | Messages from last 21d (spam/trash/promotions/social/forums excluded), grouped into threads, machine senders (noreply/receipts/QBO/etc.) dropped; bodies get quoted-reply tails stripped and are capped at 1500 chars | `GmailClient` (same OAuth refresh token; needs `gmail.readonly` scope — degrades to a System card + `emailSweepError` in the snapshot when missing) |
 
-Transcripts are cached in `analysis/data/triage/transcripts/` (immutable per
-call id) so the nightly run only fetches new calls.
+Transcripts are cached per call id (immutable) so the nightly run only fetches
+new calls: originally `analysis/data/triage/transcripts/`, since 2026-11-05 the
+TriageStore in Redis (`triage:transcript:{callId}`, `triage:voicemail:{callId}`).
 
 ### Detectors (analyze.ts)
 
@@ -166,13 +170,15 @@ middleware-side follow-up.
   joins are token-based; expect some manual dismissals at first. The Redis
   linkage (`field:completion` keyed by calendar event id, scheduling
   directives keyed by QB estimate id) is exact where it exists.
-- **Dismissals are file-edited, not clickable.** Owner-curated suppressions
-  live in `analysis/data/triage/dismissals.json` (added 2026-09-03):
-  `{ match, sections?, reason, addedAt }`, matched case-insensitively against
+- **Dismissals are CLI-edited, not clickable.** Owner-curated suppressions
+  lived in `analysis/data/triage/dismissals.json` (added 2026-09-03); since
+  2026-11-05 they live in Redis (`triage:dismissals`), edited with
+  `npx tsx tools/src/triage/dismiss.ts list|add|remove` (validated, `--dry-run`):
+  `{ match, sections?, reason, addedAt, until? }`, matched case-insensitively against
   finding customer/title/phone in analyze.ts after all detectors run. Pulse
   counts are recomputed post-dismissal. First entries: Forristall (hostile,
   job done), Donna Souza (couldn't help), Ishman Williams (canceled via
-  voicemail). No UI to add/remove yet — edit the JSON.
+  voicemail). No UI to add/remove yet; use dismiss.ts.
 - **Voicemails ARE retrievable: `GET /v1/call-voicemails/{callId}`**
   (docs: quo.com/docs → Calls → "Get a voicemail for a call"; verified live
   2026-09-03 with a full transcript + recording URL). Note the path — it is

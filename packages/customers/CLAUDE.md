@@ -1,7 +1,7 @@
 # @aac/customers — who is this customer, and what has happened with them
 
 One definition of customer identity and the customer timeline, shared by the
-triage detectors (`tools/src/triage/identity.ts`), the command center
+triage detectors (`packages/triage/src/identity.ts`, `@aac/triage`), the command center
 Customer page, and (planned) scheduling's hold matching.
 
 - `match.ts`: pure name/address matching (`nameTokens`, `tokensAlike`,

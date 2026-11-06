@@ -689,7 +689,7 @@ the #7-lite deferred list, shipped calendar-shaped.
    inert until it's set; kill switch = remove the var) + the same ≥0.7
    confidence gate. Summary gains `holdsCreated`. Deliberately lighter
    than stubs: no Matt-voice description, no photos.
-4. **Triage D13** (`tools/src/triage/analyze.ts`, section
+4. **Triage D13** (`packages/triage/src/analyze.ts`, section
    `offer_hold`, "Offered times on hold"): holds where the customer
    replied after Offered-At (→ resolve/convert), the slot passed
    unanswered (red — inventory wasted), unanswered ≥ 24h (yellow; red

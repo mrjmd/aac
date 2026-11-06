@@ -71,7 +71,7 @@ different phone/address kept; "Sarah" stub beside "Sarah Tanzi" still created.
 
 ## Interim
 
-Triage (tools/src/triage/identity.ts, 2026-11-03) now merges customer
+Triage (identity.ts, 2026-11-03; now `packages/triage/src/identity.ts`) now merges customer
 identities and flags booked customers whose estimates are still Pending.
 
 ## Command center impact
