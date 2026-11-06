@@ -153,6 +153,15 @@ describe('quo webhook ack-fast', () => {
       city: 'Quincy',
     }));
     expect(redisMocks.trackWebhookProcessed).toHaveBeenCalledWith('quo');
+    await vi.waitFor(() => expect(redisMocks.trackWebhookProcessed).toHaveBeenCalledWith('quo-sync'));
+  });
+
+  it('stamps the Quo pipe on ack, before the deferred sync finishes', async () => {
+    pdMock.logActivity.mockReturnValue(never());
+    const res = await POST(req(makeMessageEvent()));
+    expect(res.status).toBe(200);
+    expect(redisMocks.trackWebhookProcessed).toHaveBeenCalledTimes(1);
+    expect(redisMocks.trackWebhookProcessed).toHaveBeenCalledWith('quo');
   });
 
   it('a Pipedrive failure after the ack is surfaced to health and skips dispatch, as before', async () => {
@@ -163,7 +172,9 @@ describe('quo webhook ack-fast', () => {
       expect(redisMocks.logHealthError).toHaveBeenCalledWith('quo', 'pipedrive 503', { eventId: 'evt-quo-1' }),
     );
     expect(dispatchMock).not.toHaveBeenCalled();
-    expect(redisMocks.trackWebhookProcessed).not.toHaveBeenCalled();
+    // The pipe still counts as delivering (ack stamp); only the sync stamp is missing.
+    expect(redisMocks.trackWebhookProcessed).toHaveBeenCalledWith('quo');
+    expect(redisMocks.trackWebhookProcessed).not.toHaveBeenCalledWith('quo-sync');
   });
 
   it('dispatch failures after the ack are surfaced to health, not the caller', async () => {
@@ -287,6 +298,14 @@ describe('Redis outage (10/19 auto-disable pattern)', () => {
     expect(redisMocks.scheduleIntakeDraft).not.toHaveBeenCalled();
     expect(pdMock.logActivity).not.toHaveBeenCalled();
     expect(redisMocks.logHealthError).toHaveBeenCalledTimes(1);
+  });
+
+  it('acks 200 on a customer event when the ack-path counter hits the outage', async () => {
+    redisMocks.trackWebhookProcessed.mockImplementationOnce(trackWebhookProcessedRedisDown);
+    const res = await POST(req(makeMessageEvent()));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'accepted' });
+    expect(redisMocks.logHealthError).not.toHaveBeenCalled();
   });
 
   it('acks 200 and carries on when the in-handler webhook counter hits the outage (it never throws)', async () => {

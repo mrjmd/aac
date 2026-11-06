@@ -266,7 +266,7 @@ export async function scheduleInboundSettle(phone: string, nowMs: number): Promi
 }
 
 export async function trackWebhookProcessed(
-  source: 'pipedrive' | 'quo' | 'google-ads' | 'qb'
+  source: 'pipedrive' | 'quo' | 'quo-sync' | 'google-ads' | 'qb'
 ): Promise<void> {
   await health.trackWebhookProcessed(getRedis(), source);
 }

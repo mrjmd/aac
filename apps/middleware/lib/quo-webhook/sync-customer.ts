@@ -48,7 +48,8 @@ export async function syncCustomer(
     // ============================================
     deferSchedulingDispatch(pd, env, event, eventData, e164Phone, pipedrivePersonId);
 
-    await trackWebhookProcessed('quo');
+    // Sync finished. The webhook itself stamps 'quo' on ack.
+    await trackWebhookProcessed('quo-sync');
   } catch (error) {
     log.error('Webhook processing failed', error as Error, { eventId: event.id });
     await logHealthError('quo', (error as Error).message, { eventId: event.id });

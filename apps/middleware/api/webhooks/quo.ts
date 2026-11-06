@@ -208,6 +208,11 @@ export async function POST(request: Request): Promise<Response> {
     // ============================================
     defer(syncCustomer(event, eventData, e164Phone));
 
+    // The event reached the middleware: the watchdog's Quo-pipe signal.
+    // Stamped here, not after the sync, so a Pipedrive outage doesn't read
+    // as a disabled webhook (the sync stamps 'quo-sync' when it finishes).
+    await trackWebhookProcessed('quo');
+
     return json({ status: 'accepted', eventType: event.type });
   } catch (error) {
     log.error('Webhook processing failed', error as Error, { eventId: event.id });
