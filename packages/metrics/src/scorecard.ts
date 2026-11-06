@@ -81,6 +81,8 @@ export const SCORECARD_GOALS: Record<string, number> = {
   booked: 2,
   jobs: 5,
   collected: 11.5,
+  // Matt 11/06: average under two weeks from invoice to payment.
+  paylag: 14,
 };
 
 const round = (n: number, dp: number) => Math.round(n * 10 ** dp) / 10 ** dp;
