@@ -7,5 +7,7 @@ export default defineConfig({
   },
   test: {
     include: ["__tests__/**/*.test.ts"],
+    // api-auth.test.ts imports every route module cold; CI runners need >5s.
+    testTimeout: 30_000,
   },
 });
