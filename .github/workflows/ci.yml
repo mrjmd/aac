@@ -1,4 +1,4 @@
-# CI: typecheck + test, then build, on every push and pull request.
+# CI: typecheck + test, lint, then build, on every push and pull request.
 #
 # No notifications of any kind. Results are read through the GitHub API
 # (command center System health page), so keep the workflow, job and step
@@ -51,6 +51,11 @@ jobs:
 
       - name: Typecheck and test
         run: pnpm turbo typecheck test
+
+      # Warn-only config (eslint.config.mjs), so this fails only on real
+      # errors. Tighten rules there, not here.
+      - name: Lint
+        run: pnpm turbo lint
 
       # Separate step: running build alongside typecheck races on the
       # Next.js apps' generated route types.
