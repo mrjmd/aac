@@ -14,6 +14,7 @@
   "dependencies": {
     "@aac/ads-conversions": "workspace:*",
     "@aac/api-clients": "workspace:*",
+    "@aac/grader": "workspace:*",
     "@aac/inbound-router": "workspace:*",
     "@aac/message-drafts": "workspace:*",
     "@aac/quote-drafter": "workspace:*",

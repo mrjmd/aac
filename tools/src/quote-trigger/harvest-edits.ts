@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
-import { diffDraftLines } from '@aac/quoting';
+import { ownerChanges as diffOwnerChanges } from '@aac/grader';
 import { loadEnv, quickBooksFromEnv, redisFromEnv } from '../lib/env';
 
 const RUNLOG_PATH = 'analysis/data/triage/drafts.json';
@@ -91,13 +91,8 @@ async function main(): Promise<void> {
         state = botOwned ? 'untouched' : 'owner-edited';
       }
       if (!botOwned && d.lines) {
-        // diffDraftLines(current, draftLines) yields draft-relative signs;
-        // invert so signs describe what the OWNER did to the bot draft.
-        ownerChanges = diffDraftLines(current, d.lines).map((c) =>
-          c.startsWith('+') ? `owner REMOVED ${c.slice(2)}` :
-          c.startsWith('−') ? `owner ADDED ${c.slice(2).replace(' removed', '')}` :
-          c.replace('~', 'owner CHANGED').replace('→', '←'),
-        );
+        // ignores the Guarantee line the drafter appends itself
+        ownerChanges = diffOwnerChanges(current, d.lines);
       }
     }
     counts[state] = (counts[state] ?? 0) + 1;

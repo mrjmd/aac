@@ -387,6 +387,17 @@ export const keys = {
   /** NX lock (TTL 900s) so a slow scan and the next cron slot never overlap. */
   staleQuotesRunLock: 'stale-quotes:run-lock' as const,
 
+  // ── Draft grader (@aac/grader) ───────────────────────────────────────
+
+  /** HASH: draft id → JSON GradedDraft (what the bot drafted, what Matt did with it, the grade). No TTL; the runlogs it copies from are trimmed. */
+  graderDrafts: 'grader:drafts' as const,
+  /** 'off' | 'dry' | 'live'. Unset = off. Gates the worker's /api/grader cron; dry grades without writing records. */
+  graderMode: 'grader:mode' as const,
+  /** STRING: JSON summary of the last completed worker run ({day, mode, counts}). The once-a-day guard. */
+  graderLastRun: 'grader:last-run' as const,
+  /** NX lock (TTL 900s) so two grader runs never overlap. */
+  graderRunLock: 'grader:run-lock' as const,
+
   /** HASH: person id → JSON Person (agenda topics, past conversations, tagged items, facts). No TTL. */
   ccPeople: 'cc:people' as const,
 

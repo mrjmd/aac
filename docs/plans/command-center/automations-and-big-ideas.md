@@ -46,6 +46,14 @@ Two grading bugs found in the quote numbers:
    email-sent flag. Scheduling: the slot booked vs the slot suggested. Live
    automations (inbound router): reversals. One Redis record per draft, keys
    in `@aac/shared-utils/redis`. No customer-facing change.
+   **Built 11/06** (`packages/grader`, worker `/api/grader` 13:30 UTC,
+   `grader:mode` off until switched): quotes, followup, intake, CT, referral
+   and stale-quote texts. Scheduling and router reversals not yet. First
+   local dry run over the 60 drafts in the logs: 48 graded. Quotes: 7 as
+   drafted, 5 changed, 2 deleted. "Just sent your quote" on a quiet thread:
+   2 as drafted, 9 rewritten (word similarity 0.2 to 0.4), so the earlier
+   7-of-9 figure does not hold under a strict test. Intake: 1 as drafted,
+   17 changed.
 2. **The page.** System gets a Health | Automations switch. One card per
    automation: stage (drafts for you / does it itself), meter (proven and raw against the 90% bar), last 20 outcomes, since
    date. Drill-in: weekly outcomes chart, the bar as a checklist, a **By kind of case** table (per kind: right of graded, raw, proven vs the bar, hurt count, status, and its own auto-send switch, live only once that kind qualifies), what it

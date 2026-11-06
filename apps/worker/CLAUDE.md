@@ -79,6 +79,14 @@ Plain Vercel Serverless Functions (no framework) that run the
   watchdog's Gemini-degraded condition reads both and is what texts; a
   failed canary is deliberately not a health error. Replaces the laptop
   triage's daily D0 canary as the alarm. Env: `GEMINI_API_KEY`.
+- `api/grader.ts`: daily draft grader (`@aac/grader`), cron 13:30 UTC,
+  after triage. Copies each new draft from the quote-drafter,
+  message-drafts and stale-quote logs into `grader:drafts`, then grades the
+  waiting ones against what Matt sent (QBO estimate, his next texts). Reads
+  only; sends nothing. Gated by Redis `grader:mode` (off | dry | live, unset
+  = off); dry grades without writing records. Once per Eastern day per mode,
+  `?force=1` (middleware secret) runs again; 600s budget, the rest wait for
+  tomorrow. maxDuration 800 / memory 512.
 - `api/health.ts`: for an outside uptime pinger: 200 `{status: 'ok'}`
   only while Redis answers and `health:watchdog:ts` is under 15 min old,
   else 503 `{status: 'down'}`. Unauthenticated, no details. The one alert
