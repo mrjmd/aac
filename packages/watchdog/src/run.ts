@@ -10,6 +10,7 @@ import {
   type QuoteDrafterSkip,
   type Signals,
 } from './checks.js';
+import { geminiConditions } from './gemini.js';
 
 const HOUR = 3_600_000;
 /** Still down after this long since the last text: say so again. */
@@ -31,6 +32,8 @@ export interface WatchdogRedis {
   hgetall<T extends Record<string, unknown>>(key: string): Promise<T | null>;
   hset<T>(key: string, kv: { [field: string]: T }): Promise<number>;
   hdel(key: string, ...fields: string[]): Promise<number>;
+  /** Rolling-window counts (Gemini degraded, ./gemini.ts). Optional: without it that check has no count verdict. */
+  zcount?(key: string, min: number | string, max: number | string): Promise<number>;
 }
 
 export interface WatchdogDeps {
@@ -115,7 +118,7 @@ export async function runWatchdogTick(deps: WatchdogDeps): Promise<TickResult> {
   const now = deps.now?.() ?? new Date();
   const nowIso = now.toISOString();
   const signals = await gatherSignals(deps, now);
-  const conditions = evaluate(signals);
+  const conditions = [...evaluate(signals), ...(await geminiConditions(deps.redis, now))];
   await trackModes(deps.redis, signals, nowIso);
   const open = (await deps.redis.hgetall<Record<string, OpenCondition>>(keys.watchdogState)) ?? {};
   const result: TickResult = { down: [], texted: [], recovered: [] };

@@ -72,6 +72,12 @@ Plain Vercel Serverless Functions (no framework) that run the
   canary failed) is recorded too. Needs the Redis, QBO, Quo, Gemini and
   Google env (`skipped: 'no-<group>-env'` otherwise); maxDuration 800 /
   memory 1024.
+- `api/gemini-canary.ts`: hourly cron (:07). One tiny call on the Gemini
+  default model alias (`runGeminiCanary` in `@aac/watchdog`): a pass stamps
+  `health:gemini-canary:ts`, a failure counts `gemini.canary_failed`. The
+  watchdog's Gemini-degraded condition reads both and is what texts; a
+  failed canary is deliberately not a health error. Replaces the laptop
+  triage's daily D0 canary as the alarm. Env: `GEMINI_API_KEY`.
 - `api/health.ts`: for an outside uptime pinger: 200 `{status: 'ok'}`
   only while Redis answers and `health:watchdog:ts` is under 15 min old,
   else 503 `{status: 'down'}`. Unauthenticated, no details. The one alert
@@ -100,6 +106,12 @@ Plain Vercel Serverless Functions (no framework) that run the
   no-assets), and keeps its skip streak in `quote-drafter:skip`
   (`lib/quote-skip.ts`) for the watchdog's "locked 15 ticks" and
   "no asset manifest" conditions.
+
+**Silent skips** (`lib/conditions.ts` → `countCondition`, System health
+page): inbound-tick counts `router.read_failed` per failed burst,
+quote-email-tick `quote-email.no_scope`; the drafts and stale-quote deps
+carry `countCondition` into the packages (`intake.generation_failed`,
+`followup.skeleton_fallback`, `stale-quotes.note_failed`).
 
 ## Rules
 

@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DAILY_CRONS, INTERVAL_CRONS, HEARTBEATS } from '../src/checks.js';
+import { GEMINI_CANARY_CRON } from '../src/gemini.js';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -77,6 +78,8 @@ function watched(): Set<string> {
     const src = HEARTBEAT_SOURCE[h.name];
     if (src) out.add(src);
   }
+  // Gemini degraded (src/gemini.ts) reads the canary's pass stamp.
+  out.add(GEMINI_CANARY_CRON);
   return out;
 }
 

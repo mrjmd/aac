@@ -10,6 +10,14 @@ share a Vercel project with the middleware it watches.
   on recovery. Also keeps `watchdog:mode-on` (when each mode-gated job was
   first seen on).
 
+- `gemini.ts` — Gemini degraded, the one counted condition that texts:
+  `router.read_failed` + `dispatch.classifier_rejected` 3+ in the last hour
+  (the rolling window countCondition keeps), or the hourly canary
+  (`runGeminiCanary`, worker `/api/gemini-canary`) not passing for 135 min.
+  No verdict until the canary has passed once. Every other counted skip
+  (`health:conditions:*`) goes to the command center System health page
+  only, never a text.
+
 ## What it watches
 
 | Condition | Down when |
