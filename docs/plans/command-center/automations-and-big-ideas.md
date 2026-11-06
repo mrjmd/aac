@@ -47,7 +47,7 @@ Two grading bugs found in the quote numbers:
    automations (inbound router): reversals. One Redis record per draft, keys
    in `@aac/shared-utils/redis`. No customer-facing change.
 2. **The page.** System gets a Health | Automations switch. One card per
-   automation: stage (drafts for you / does it itself), meter toward its bar, last 20 outcomes, since
+   automation: stage (drafts for you / does it itself), meter (proven and raw against the 90% bar), last 20 outcomes, since
    date. Drill-in: weekly outcomes chart, the bar as a checklist, what it
    learned, recent drafts with what it wrote vs what Matt sent.
 3. **Lessons (weekly).** An LLM pass over the week's changed drafts groups
@@ -61,12 +61,41 @@ Two grading bugs found in the quote numbers:
    automation and always Matt's. A live automation that gets reversed twice
    in a week goes back to drafting and says why.
 
-### The bar (Matt's call; starting proposal)
+### The bar (decided by Matt, 2026-11-06)
 
-3+ weeks of history, 20+ graded drafts, 85%+ used as drafted or lightly
-edited, nothing sent in the last 3 weeks he would be embarrassed by.
-Scheduling keeps its written 95%. First candidates: the "just sent your
-quote" text and stale-quote T1.
+No time box: volume decides, since winter may give 20 drafts in the time
+summer gives 200. All four must hold, for every automation (scheduling
+included, replacing its old 95% exit criterion):
+
+1. **Proven at least 90% right**: the one-sided 95% Wilson lower bound on
+   the share graded right is 90% or more. Rough volume this takes: 25 right
+   in a row, 50 at 96%, or about 100 at 95%.
+2. **Raw 95%+ right.**
+3. **Nothing that would have hurt in the last 50** (e.g. texting someone who
+   already said no). One resets the count.
+4. **Each kind of case qualifies on its own** (e.g. crack injection vs
+   resurfacing quotes; T1 vs T3 check-ins). Kinds without the volume stay
+   drafted.
+
+Grades: as-is, cosmetic (counts as right), real change (a wrong fact,
+price, date or tone: a miss), would have hurt. The automatic grader is
+checked against Matt's own grading first (he hand-grades about 30 once,
+then a few a week) before its grades count toward the bar.
+
+Rules that follow from it:
+- Count graded drafts since the automation's last rule change; older ones
+  describe a different version. Frequent small fixes slow graduation, and
+  the page should show that.
+- Turning one on covers only the kinds of cases that cleared the bar (or,
+  once a calibrated confidence exists, only the cases it is sure about);
+  the rest keep drafting.
+- Each card shows a forecast ("at this pace, proven 90% around Nov 20").
+  Improvement curves flatten, so waiting for 98% is usually not worth it.
+- After it is on: a random 1 in 5 of its sends is still graded, plus
+  everything Matt undoes. Two undos in a week or a "would have hurt" puts
+  it back to drafting.
+
+First candidates: the "just sent your quote" text and stale-quote T1.
 
 ## Part 2: Big-idea backlog (captured, not scheduled)
 
