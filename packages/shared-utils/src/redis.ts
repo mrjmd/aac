@@ -477,6 +477,21 @@ export const keys = {
    *  as `agentAuditStream` despite list semantics for backwards compat with the
    *  agent scaffold. */
   agentAuditStream: 'agent:audit:stream' as const,
+
+  // ── Triage (@aac/triage, docs/plans/triage-to-worker.md) ────────────
+
+  /** Cached Quo call transcript, JSON {phone, at, dialogue} (was transcripts/{callId}.json). No TTL: fetched once ever. */
+  triageTranscript: (callId: string) => `triage:transcript:${callId}` as const,
+  /** Cached Quo voicemail, JSON {phone, at, transcript} (was transcripts/vm-{callId}.json); transcript null = no voicemail (404). No TTL. */
+  triageVoicemail: (callId: string) => `triage:voicemail:${callId}` as const,
+  /** STRING: JSON array of owner-curated dismissal rules {match, sections?, reason, addedAt, until?} (was dismissals.json). */
+  triageDismissals: 'triage:dismissals' as const,
+  /** 'off' | 'dry' | 'live'. The worker's triage cron mode. */
+  triageMode: 'triage:mode' as const,
+  /** STRING: JSON summary + timing of the last worker triage run. */
+  triageLastRun: 'triage:last-run' as const,
+  /** NX lock so overlapping triage runs never run twice. */
+  triageRunLock: 'triage:run-lock' as const,
 } as const;
 
 /**

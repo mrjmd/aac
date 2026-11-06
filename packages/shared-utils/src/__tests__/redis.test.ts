@@ -137,6 +137,20 @@ describe('keys', () => {
       expect(keys.quoteDraftSyncToken('1562')).toBe('quote-draft:sync:1562');
     });
   });
+
+  describe('triage', () => {
+    it('builds the per-call transcript and voicemail cache keys', () => {
+      expect(keys.triageTranscript('AC123')).toBe('triage:transcript:AC123');
+      expect(keys.triageVoicemail('AC123')).toBe('triage:voicemail:AC123');
+    });
+
+    it('exposes the static triage keys', () => {
+      expect(keys.triageDismissals).toBe('triage:dismissals');
+      expect(keys.triageMode).toBe('triage:mode');
+      expect(keys.triageLastRun).toBe('triage:last-run');
+      expect(keys.triageRunLock).toBe('triage:run-lock');
+    });
+  });
 });
 
 describe('ttl', () => {
