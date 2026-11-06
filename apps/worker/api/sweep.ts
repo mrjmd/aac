@@ -9,6 +9,7 @@ import { liveRoutes, sweepInbound } from '@aac/inbound-router';
 import { CanHelpStore } from '@aac/quoting';
 import { getWorkerDeps } from '../lib/deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
+import { recordFailure, recordRun } from '../lib/health.js';
 
 const log = createLogger('worker-sweep');
 
@@ -16,8 +17,8 @@ export async function GET(request: Request): Promise<Response> {
   if (!isCronRequest(request) && !isMiddlewareRequest(request)) {
     return json({ error: 'unauthorized' }, 401);
   }
-  const { deps, redis } = getWorkerDeps();
   try {
+    const { deps, redis } = getWorkerDeps();
     const firstRunAt = await deps.state.getFirstRunAt();
     const firstRun = !firstRunAt;
     if (firstRun) await deps.state.setFirstRunAt(new Date().toISOString());
@@ -32,9 +33,11 @@ export async function GET(request: Request): Promise<Response> {
     }
     const drafted = records.filter((r) => r.outcome === 'drafted').length;
     if (records.length) log.info('sweep complete', { drafted, records: records.length });
+    await recordRun('sweep', { sent: drafted, skipped: records.length - drafted, errors: 0 });
     return json({ status: 'ok', drafted, records: records.length });
   } catch (err) {
     log.error('sweep failed', err as Error);
+    await recordFailure('sweep', `sweep failed: ${(err as Error).message}`);
     return json({ status: 'error', message: (err as Error).message }, 500);
   }
 }

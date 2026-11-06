@@ -30,6 +30,9 @@ export const keys = {
   /** Health error log (list, capped at 100 entries) */
   healthErrors: 'health:errors' as const,
 
+  /** SET NX EX marker: a worker route already recorded a health error in the last few minutes (stops a per-minute failure flooding the 100-entry list). */
+  healthErrorThrottle: (source: string) => `health:errors:throttle:${source}` as const,
+
   /** Webhook audit stream — read by Command Center */
   webhookAuditStream: 'logs:webhooks' as const,
 

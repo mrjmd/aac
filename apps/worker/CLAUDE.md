@@ -57,6 +57,23 @@ Plain Vercel Serverless Functions (no framework) that run the
   list. Needs the Google env (calendar + Gmail are hard gates).
 - `api/health.ts` — liveness.
 
+## Health bookkeeping
+
+`lib/health.ts` (over `@aac/shared-utils/health`, never throws):
+
+- **Failures** go to `health:errors` as source `worker:<route>` (shown on the
+  command center health page, texted by the agent's error-surface cron):
+  every route's top-level 500, deps that fail to build (`guarded()` wraps
+  routes with work before their try), and package failures swallowed into a
+  result (inbound-tick `failed` bursts, quote-tick/quote-draft `failed`
+  drafts and a missing asset manifest, ads-conversions `summary.failed`).
+  One entry per source per 10 min (`keys.healthErrorThrottle`) so a
+  per-minute failure can't flood the 100-entry list; the log gets them all.
+- **Last run**: sweep, inbound-tick, quote-email-tick and stale-quotes stamp
+  `cron:<route>:last-run` (+ daily result) after a run that did its work;
+  tick and quote-tick keep their heartbeats, ads-conversions and watchdog
+  stamp in their packages. The watchdog reads none of the new ones yet.
+
 ## Rules
 
 - **All business logic lives in `packages/`** (`@aac/message-drafts`).

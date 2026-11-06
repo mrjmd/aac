@@ -41,15 +41,15 @@ const NOT_WATCHED: Record<string, string> = {
   // The watchdog itself: it can't report its own death. It writes
   // keys.heartbeat('watchdog'); something outside the worker would have to read it.
   'worker:/api/watchdog': 'self',
-  // TODO: 10-minute backstop sweep; writes no heartbeat or last-run key today.
+  // TODO: 10-minute backstop sweep; writes keys.cronLastRun('sweep') (since 11/05), not read.
   'worker:/api/sweep': 'TODO',
-  // TODO: 15-minute T4 email-channel tick; writes no heartbeat today.
+  // TODO: 15-minute T4 email-channel tick; writes keys.cronLastRun('quote-email-tick') when it polls, not read.
   'worker:/api/quote-email-tick': 'TODO',
   // TODO: daily 11:00 UTC; already writes keys.cronLastRun('ads-conversions'), not read.
   'worker:/api/ads-conversions': 'TODO',
-  // TODO: per-minute inbound router tick (off by default); writes no heartbeat today.
+  // TODO: per-minute inbound router tick (off by default); writes keys.cronLastRun('inbound-tick'), not read.
   'worker:/api/inbound-tick': 'TODO',
-  // TODO: daily stale-quote scan (mode off by default); writes no last-run key today.
+  // TODO: daily stale-quote scan (mode off by default); writes keys.cronLastRun('stale-quotes') after a scan, not read.
   'worker:/api/stale-quotes': 'TODO',
 };
 

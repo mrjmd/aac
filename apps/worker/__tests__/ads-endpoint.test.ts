@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const run = vi.hoisted(() => vi.fn().mockResolvedValue({ mode: 'dry', uploaded: 0 }));
+const run = vi.hoisted(() => vi.fn().mockResolvedValue({ mode: 'dry', uploaded: 0, failed: [] }));
 const getAdsDeps = vi.hoisted(() => vi.fn((): object | null => ({})));
 vi.mock('@aac/ads-conversions', () => ({ runAdsConversions: run }));
 vi.mock('../lib/ads-deps.js', () => ({

@@ -16,11 +16,12 @@
  * texts (T3), emails, call transcripts and Mike's debriefs (T2).
  */
 import { createLogger } from '@aac/shared-utils/logger';
-import { keys } from '@aac/shared-utils/redis';
+import { writeHeartbeat } from '@aac/shared-utils/health';
 import { runTick } from '@aac/quote-drafter';
 import { liveRoutes } from '@aac/inbound-router';
 import { getQuoteDeps, envMode } from '../lib/quote-deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
+import { recordFailure } from '../lib/health.js';
 
 const log = createLogger('worker-quote-tick');
 
@@ -33,7 +34,17 @@ export async function GET(request: Request): Promise<Response> {
     const routerOwnsInbound = (await liveRoutes(deps)).has('quote');
     const summary = await runTick(deps, envMode(), { routerOwnsInbound });
     if (summary.mode !== 'off') {
-      await deps.redis.set(keys.heartbeat('quote-drafter'), new Date().toISOString());
+      await writeHeartbeat(deps.redis, 'quote-drafter');
+    }
+    if (summary.skipped === 'no-assets') {
+      await recordFailure('quote-tick', 'quote drafter skipped: no asset manifest in Redis (run sync-assets)');
+    }
+    // The drafter swallows a failed draft into a 'failed' record.
+    const failed = summary.records.filter((r) => r.record?.outcome === 'failed');
+    if (failed.length) {
+      await recordFailure('quote-tick', `quote drafter: ${failed.length} draft(s) failed`, {
+        failed: failed.slice(0, 5).map((r) => ({ phone: r.phone, trigger: r.trigger, detail: r.record?.detail?.slice(0, 200) ?? null })),
+      });
     }
     if (summary.drafted || summary.drained) {
       log.info('quote tick', {
@@ -56,6 +67,7 @@ export async function GET(request: Request): Promise<Response> {
     });
   } catch (err) {
     log.error('quote tick failed', err as Error);
+    await recordFailure('quote-tick', `quote tick failed: ${(err as Error).message}`);
     return json({ status: 'error', message: (err as Error).message }, 500);
   }
 }

@@ -15,6 +15,7 @@ import { keys } from '@aac/shared-utils/redis';
 import { getWorkerDeps } from '../lib/deps.js';
 import { getStaleQuoteDeps, staleQuotesMode } from '../lib/stale-quotes-deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
+import { guarded, recordFailure, recordRun } from '../lib/health.js';
 
 const log = createLogger('worker-stale-quotes');
 
@@ -28,6 +29,10 @@ interface LastRun {
 }
 
 export async function GET(request: Request): Promise<Response> {
+  return guarded('stale-quotes', () => handle(request));
+}
+
+async function handle(request: Request): Promise<Response> {
   const fromMiddleware = isMiddlewareRequest(request);
   if (!isCronRequest(request) && !fromMiddleware) {
     return json({ error: 'unauthorized' }, 401);
@@ -66,9 +71,11 @@ export async function GET(request: Request): Promise<Response> {
     };
     await redis.set(keys.staleQuotesLastRun, JSON.stringify(summary));
     log.info('stale quotes run', summary);
+    await recordRun('stale-quotes', { sent: summary.drafted, skipped: summary.skipped, errors: 0 });
     return json({ status: 'ok', ...summary });
   } catch (err) {
     log.error('stale quotes failed', err as Error);
+    await recordFailure('stale-quotes', `stale quotes failed: ${(err as Error).message}`);
     return json({ status: 'error', message: (err as Error).message }, 500);
   } finally {
     await redis.del(keys.staleQuotesRunLock);

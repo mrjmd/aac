@@ -19,6 +19,10 @@ describe('keys', () => {
       expect(keys.healthErrors).toBe('health:errors');
     });
 
+    it('builds the health error throttle key', () => {
+      expect(keys.healthErrorThrottle('worker:tick')).toBe('health:errors:throttle:worker:tick');
+    });
+
     it('has webhook audit stream key', () => {
       expect(keys.webhookAuditStream).toBe('logs:webhooks');
     });

@@ -11,10 +11,15 @@ import { runAdsConversions } from '@aac/ads-conversions';
 import { createLogger } from '@aac/shared-utils/logger';
 import { adsMode, getAdsDeps } from '../lib/ads-deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
+import { guarded, recordFailure } from '../lib/health.js';
 
 const log = createLogger('worker-ads-conversions');
 
 export async function GET(request: Request): Promise<Response> {
+  return guarded('ads-conversions', () => handle(request));
+}
+
+async function handle(request: Request): Promise<Response> {
   if (!isCronRequest(request) && !isMiddlewareRequest(request)) {
     return json({ error: 'unauthorized' }, 401);
   }
@@ -29,9 +34,17 @@ export async function GET(request: Request): Promise<Response> {
   const lookbackDays = Number.isInteger(days) && days >= 1 && days <= 90 ? days : 3;
   try {
     const summary = await runAdsConversions(deps, { mode, lookbackDays });
+    // Upload rejections come back in summary.failed, not as a throw.
+    if (summary.failed.length) {
+      await recordFailure('ads-conversions', `ads conversions: ${summary.failed.length} upload(s) failed`, {
+        mode,
+        failed: summary.failed.slice(0, 5),
+      });
+    }
     return json({ status: 'ok', ...summary });
   } catch (err) {
     log.error('ads conversions failed', err as Error);
+    await recordFailure('ads-conversions', `ads conversions failed: ${(err as Error).message}`);
     return json({ status: 'error', message: (err as Error).message }, 500);
   }
 }

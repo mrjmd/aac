@@ -18,7 +18,7 @@ import { keys, ttl } from './redis.js';
 
 const log = createLogger('health');
 
-/** The Redis calls health bookkeeping needs. */
+/** The Redis calls health bookkeeping needs (each function takes only the ones it uses). */
 export interface HealthRedis {
   set(key: string, value: string, opts?: { ex: number }): Promise<unknown>;
   incr(key: string): Promise<number>;
@@ -47,7 +47,10 @@ export interface CronRunResult {
 }
 
 /** Count a processed webhook for today and stamp the source's last-processed time. */
-export async function trackWebhookProcessed(redis: HealthRedis, source: string): Promise<void> {
+export async function trackWebhookProcessed(
+  redis: Pick<HealthRedis, 'incr' | 'set' | 'expire'>,
+  source: string,
+): Promise<void> {
   const now = new Date().toISOString();
   const today = now.split('T')[0];
 
@@ -65,7 +68,7 @@ export async function trackWebhookProcessed(redis: HealthRedis, source: string):
 
 /** Push one entry onto `health:errors` (newest first, capped at HEALTH_ERRORS_CAP). */
 export async function logHealthError(
-  redis: HealthRedis,
+  redis: Pick<HealthRedis, 'lpush' | 'ltrim'>,
   source: string,
   message: string,
   details?: Record<string, unknown>,
@@ -92,7 +95,7 @@ export async function logHealthError(
 }
 
 /** Stamp `health:{app}:ts` with the current ISO time. */
-export async function writeHeartbeat(redis: HealthRedis, app: string): Promise<void> {
+export async function writeHeartbeat(redis: Pick<HealthRedis, 'set'>, app: string): Promise<void> {
   try {
     await redis.set(keys.heartbeat(app), new Date().toISOString());
   } catch (err) {
@@ -101,7 +104,11 @@ export async function writeHeartbeat(redis: HealthRedis, app: string): Promise<v
 }
 
 /** Stamp a cron's last-run time and store today's (UTC) result counts. */
-export async function trackCronRun(redis: HealthRedis, jobName: string, result: CronRunResult): Promise<void> {
+export async function trackCronRun(
+  redis: Pick<HealthRedis, 'set'>,
+  jobName: string,
+  result: CronRunResult,
+): Promise<void> {
   const now = new Date().toISOString();
   const today = now.split('T')[0];
 

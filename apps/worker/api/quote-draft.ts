@@ -13,6 +13,7 @@ import { createLogger } from '@aac/shared-utils/logger';
 import { draftOne, loadAssets, loadFieldChannel, prepareRun } from '@aac/quote-drafter';
 import { getQuoteDeps } from '../lib/quote-deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
+import { recordFailure } from '../lib/health.js';
 
 const log = createLogger('worker-quote-draft');
 
@@ -34,6 +35,7 @@ export async function POST(request: Request): Promise<Response> {
     const deps = getQuoteDeps();
     const assets = await loadAssets(deps.redis);
     if (!assets) {
+      await recordFailure('quote-draft', 'manual draft: no asset manifest in Redis (run sync-assets)', { phone: body.phone });
       return json({ status: 'error', message: 'no asset manifest in Redis — run sync-assets' }, 409);
     }
     const run = await prepareRun(deps);
@@ -48,9 +50,13 @@ export async function POST(request: Request): Promise<Response> {
       hasNewInbound: true,
     });
     log.info('manual draft', { phone: body.phone, outcome: record.outcome, detail: record.detail });
+    if (record.outcome === 'failed') {
+      await recordFailure('quote-draft', `manual draft failed: ${record.detail ?? 'no detail'}`, { phone: body.phone });
+    }
     return json({ status: 'ok', record: { ...record } });
   } catch (err) {
     log.error('manual draft failed', err as Error, { phone: body.phone });
+    await recordFailure('quote-draft', `manual draft failed: ${(err as Error).message}`, { phone: body.phone });
     return json({ status: 'error', message: (err as Error).message }, 500);
   }
 }

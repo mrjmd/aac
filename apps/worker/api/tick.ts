@@ -7,11 +7,12 @@
  * and the laptop backstop harmless.
  */
 import { createLogger } from '@aac/shared-utils/logger';
-import { keys } from '@aac/shared-utils/redis';
+import { writeHeartbeat } from '@aac/shared-utils/health';
 import { drainFollowupQueue, drainIntakeDue, dropIntakeDue } from '@aac/message-drafts';
 import { liveRoutes } from '@aac/inbound-router';
 import { getWorkerDeps } from '../lib/deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
+import { recordFailure } from '../lib/health.js';
 
 const log = createLogger('worker-tick');
 
@@ -19,20 +20,21 @@ export async function GET(request: Request): Promise<Response> {
   if (!isCronRequest(request) && !isMiddlewareRequest(request)) {
     return json({ error: 'unauthorized' }, 401);
   }
-  const { deps, redis } = getWorkerDeps();
   try {
+    const { deps, redis } = getWorkerDeps();
     // The inbound router owns first touch once intake is live; the old
     // intake queue is cleared, not drafted.
     const routerIntake = (await liveRoutes({ redis })).has('intake');
     const records = [...(await drainFollowupQueue(deps, redis))];
     if (routerIntake) await dropIntakeDue(deps, redis);
     else records.push(...(await drainIntakeDue(deps, redis)));
-    await redis.set(keys.heartbeat('worker'), new Date().toISOString());
+    await writeHeartbeat(redis, 'worker');
     const drafted = records.filter((r) => r.outcome === 'drafted').length;
     if (records.length) log.info('tick drained', { drafted, records: records.length });
     return json({ status: 'ok', drafted, records: records.length });
   } catch (err) {
     log.error('tick failed', err as Error);
+    await recordFailure('tick', `tick failed: ${(err as Error).message}`);
     return json({ status: 'error', message: (err as Error).message }, 500);
   }
 }

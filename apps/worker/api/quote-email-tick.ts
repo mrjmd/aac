@@ -13,6 +13,7 @@ import { createLogger } from '@aac/shared-utils/logger';
 import { pollQuoteEmails, resolveMode } from '@aac/quote-drafter';
 import { getQuoteDeps, envMode } from '../lib/quote-deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
+import { recordFailure, recordRun } from '../lib/health.js';
 
 const log = createLogger('worker-quote-email-tick');
 
@@ -54,6 +55,7 @@ export async function GET(request: Request): Promise<Response> {
       now: () => Date.now(),
     });
     if (summary.enqueued) log.info('quote email tick', { ...summary });
+    await recordRun('quote-email-tick', { sent: summary.enqueued, skipped: summary.scanned - summary.enqueued, errors: 0 });
     return json({ status: 'ok', mode, ...summary });
   } catch (err) {
     const msg = (err as Error).message;
@@ -64,6 +66,7 @@ export async function GET(request: Request): Promise<Response> {
       return json({ status: 'ok', skipped: 'no-gmail-scope' });
     }
     log.error('quote email tick failed', err as Error);
+    await recordFailure('quote-email-tick', `quote email tick failed: ${msg}`);
     return json({ status: 'error', message: msg }, 500);
   }
 }

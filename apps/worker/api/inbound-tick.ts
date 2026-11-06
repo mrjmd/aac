@@ -14,6 +14,7 @@ import { runInboundTick } from '@aac/inbound-router';
 import { CanHelpStore } from '@aac/quoting';
 import { getWorkerDeps } from '../lib/deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
+import { recordFailure, recordRun } from '../lib/health.js';
 
 const log = createLogger('worker-inbound-tick');
 
@@ -21,8 +22,8 @@ export async function GET(request: Request): Promise<Response> {
   if (!isCronRequest(request) && !isMiddlewareRequest(request)) {
     return json({ error: 'unauthorized' }, 401);
   }
-  const { deps, redis } = getWorkerDeps();
   try {
+    const { deps, redis } = getWorkerDeps();
     const summary = await runInboundTick({
       redis,
       quo: deps.quo,
@@ -41,9 +42,23 @@ export async function GET(request: Request): Promise<Response> {
         detail: e.detail ?? null,
       });
     }
+    // A burst the router couldn't read is swallowed into a 'failed' entry;
+    // record it so it isn't only in the function log.
+    const failed = summary.entries.filter((e) => e.outcome === 'failed');
+    if (failed.length) {
+      await recordFailure('inbound-tick', `inbound router: ${failed.length} burst(s) failed`, {
+        failed: failed.slice(0, 5).map((e) => ({ phone: e.phone, detail: e.detail?.slice(0, 200) ?? null })),
+      });
+    }
+    await recordRun('inbound-tick', {
+      sent: summary.entries.length - failed.length,
+      skipped: Math.max(0, summary.due - summary.entries.length),
+      errors: failed.length,
+    });
     return json({ status: 'ok', mode: summary.mode, due: summary.due, read: summary.entries.length });
   } catch (err) {
     log.error('inbound tick failed', err as Error);
+    await recordFailure('inbound-tick', `inbound tick failed: ${(err as Error).message}`);
     return json({ status: 'error', message: (err as Error).message }, 500);
   }
 }

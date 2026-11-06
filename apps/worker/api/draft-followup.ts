@@ -12,6 +12,7 @@ import { createLogger } from '@aac/shared-utils/logger';
 import { processFollowupById } from '@aac/message-drafts';
 import { getWorkerDeps } from '../lib/deps.js';
 import { isMiddlewareRequest, json } from '../lib/auth.js';
+import { guarded, recordFailure } from '../lib/health.js';
 
 const log = createLogger('worker-draft-followup');
 
@@ -25,6 +26,10 @@ function defer(work: Promise<unknown>): void {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  return guarded('draft-followup', () => handle(request));
+}
+
+async function handle(request: Request): Promise<Response> {
   if (!isMiddlewareRequest(request)) return json({ error: 'unauthorized' }, 401);
   let estimateId: string;
   let sync = false;
@@ -45,6 +50,7 @@ export async function POST(request: Request): Promise<Response> {
       return record;
     } catch (err) {
       log.error('fast-lane follow-up failed', err as Error, { estimateId });
+      await recordFailure('draft-followup', `fast-lane follow-up failed: ${(err as Error).message}`, { estimateId });
       throw err;
     }
   })();

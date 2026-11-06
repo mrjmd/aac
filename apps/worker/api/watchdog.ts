@@ -8,6 +8,7 @@ import { createLogger } from '@aac/shared-utils/logger';
 import { runWatchdogTick } from '@aac/watchdog';
 import { getWatchdogDeps } from '../lib/watchdog-deps.js';
 import { isCronRequest, json } from '../lib/auth.js';
+import { recordFailure } from '../lib/health.js';
 
 const log = createLogger('worker-watchdog');
 
@@ -19,6 +20,7 @@ export async function GET(request: Request): Promise<Response> {
     return json({ status: 'ok', ...result });
   } catch (err) {
     log.error('watchdog tick failed', err as Error);
+    await recordFailure('watchdog', `watchdog tick failed: ${(err as Error).message}`);
     return json({ status: 'error', message: (err as Error).message }, 500);
   }
 }
