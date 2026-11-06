@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { applyVerb, ConfirmRequiredError, rankFeatures, TODO_KEY_PREFIX, type Verb } from "@aac/items";
 import { getItemStore, loadCandidates, todayRanks } from "@/lib/items";
 import { completeTodo } from "@/lib/todos";
+import { requireApiSession } from "@/lib/api-auth";
 
 const VERBS = new Set(["done", "snooze", "dismiss", "restore", "pin", "unpin", "place"]);
 
@@ -10,6 +11,8 @@ const VERBS = new Set(["done", "snooze", "dismiss", "restore", "pin", "unpin", "
  * 409 { confirm: "money" | "legal" } when a dismiss needs confirmation.
  */
 export async function POST(request: NextRequest) {
+  const denied = await requireApiSession(request);
+  if (denied) return denied;
   const { key, verb } = (await request.json()) as { key?: string; verb?: Verb };
   if (!key || !verb || !VERBS.has(verb.type)) {
     return NextResponse.json({ error: "key and a valid verb are required" }, { status: 400 });

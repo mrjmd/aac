@@ -3,9 +3,12 @@ import { canHelpId, endRule, type Referral, type StandingRule } from "@aac/quoti
 import { easternDate } from "@aac/shared-utils/eastern";
 import { parsePhone } from "@aac/shared-utils/phone";
 import { getCanHelpStore } from "@/lib/can-help";
+import { requireApiSession } from "@/lib/api-auth";
 
 /** GET /api/referrals — the referral list and the standing rules. */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const denied = await requireApiSession(request);
+  if (denied) return denied;
   return NextResponse.json(await snapshot());
 }
 
@@ -24,6 +27,8 @@ type Op =
  * Returns the whole store so the page re-renders from the saved state.
  */
 export async function POST(request: NextRequest) {
+  const denied = await requireApiSession(request);
+  if (denied) return denied;
   const body = (await request.json()) as Op;
   const store = getCanHelpStore();
   const today = easternDate(new Date());

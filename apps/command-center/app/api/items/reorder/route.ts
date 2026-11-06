@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rankFeatures, reorderToday } from "@aac/items";
 import { getItemStore, loadCandidates } from "@/lib/items";
+import { requireApiSession } from "@/lib/api-auth";
 
 /**
  * POST /api/items/reorder  { keys: string[] } — Matt's order for Today.
@@ -8,6 +9,8 @@ import { getItemStore, loadCandidates } from "@/lib/items";
  * ranking can learn from where he moved things.
  */
 export async function POST(request: NextRequest) {
+  const denied = await requireApiSession(request);
+  if (denied) return denied;
   const { keys } = (await request.json()) as { keys?: string[] };
   if (!Array.isArray(keys)) return NextResponse.json({ error: "keys[] required" }, { status: 400 });
   const store = getItemStore();

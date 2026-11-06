@@ -14,9 +14,12 @@ import {
 } from "@aac/items";
 import { getPeopleStore } from "@/lib/people";
 import { easternDate } from "@aac/shared-utils/eastern";
+import { requireApiSession } from "@/lib/api-auth";
 
 /** GET /api/people — everyone, in display order. */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const denied = await requireApiSession(request);
+  if (denied) return denied;
   return NextResponse.json(await getPeopleStore().list());
 }
 
@@ -36,6 +39,8 @@ const KINDS = new Set<PersonEventKind>(["call", "text", "meet", "note"]);
 
 /** POST /api/people  { op, ... } — one change to one person (or a new person). */
 export async function POST(request: NextRequest) {
+  const denied = await requireApiSession(request);
+  if (denied) return denied;
   const body = (await request.json()) as Op;
   const store = getPeopleStore();
   const now = new Date();

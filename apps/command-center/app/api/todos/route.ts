@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRedis } from "@/lib/redis";
 import { keys } from "@aac/shared-utils/redis";
 import { loadTodos, todoScore, type TodoItem, type CreateTodoInput, type UpdateTodoInput } from "@/lib/todos";
+import { requireApiSession } from "@/lib/api-auth";
 
 /**
  * GET /api/todos — list all to-dos
  * Query params: status=pending|completed|all (default: all)
  */
 export async function GET(request: NextRequest) {
+  const denied = await requireApiSession(request);
+  if (denied) return denied;
   let items: TodoItem[];
   try {
     items = await loadTodos();
@@ -25,6 +28,8 @@ export async function GET(request: NextRequest) {
  * POST /api/todos — create a new to-do
  */
 export async function POST(request: NextRequest) {
+  const denied = await requireApiSession(request);
+  if (denied) return denied;
   const redis = getRedis();
   const body = (await request.json()) as CreateTodoInput;
 
@@ -62,6 +67,8 @@ export async function POST(request: NextRequest) {
  * Body: { id, ...updates }
  */
 export async function PATCH(request: NextRequest) {
+  const denied = await requireApiSession(request);
+  if (denied) return denied;
   const redis = getRedis();
   const body = (await request.json()) as UpdateTodoInput & { id: string };
 
@@ -104,6 +111,8 @@ export async function PATCH(request: NextRequest) {
  * Body: { id }
  */
 export async function DELETE(request: NextRequest) {
+  const denied = await requireApiSession(request);
+  if (denied) return denied;
   const redis = getRedis();
   const body = (await request.json()) as { id: string };
 

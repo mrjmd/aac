@@ -17,7 +17,10 @@ Shows system health, webhook audit trails, campaign stats, and provides
   the obligations registry and documents. See `docs/plans/command-center/`.
 - **Auth:** Google sign-in via `GoogleSignInClient`, email allowlist
   `CC_ALLOWED_EMAILS`, Redis-backed sessions (`lib/session.ts`). The middleware
-  does a real session lookup on every request. Env: `CC_GOOGLE_OAUTH_CLIENT_ID`,
+  does a real session lookup on every request, and every `app/api/**` route
+  re-checks it with `requireApiSession` (`lib/api-auth.ts`) so a middleware
+  bypass can't reach the data; `__tests__/api-auth.test.ts` fails on any new
+  route that skips it. Env: `CC_GOOGLE_OAUTH_CLIENT_ID`,
   `CC_GOOGLE_OAUTH_CLIENT_SECRET`, `CC_ALLOWED_EMAILS`, Upstash vars.
 - **Import API clients from `@aac/api-clients`** for Pipedrive reads and
   approval actions.
