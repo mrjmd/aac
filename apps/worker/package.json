@@ -22,7 +22,6 @@
     "@aac/triage": "workspace:*",
     "@aac/watchdog": "workspace:*",
     "@upstash/redis": "^1.38.0",
-    "@vercel/functions": "^3.10.2",
     "@vercel/node": "^5"
   },
   "devDependencies": {

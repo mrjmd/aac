@@ -97,8 +97,6 @@ vi.mock('../lib/quote-deps.js', async (importOriginal) => ({
   getQuoteDeps: vi.fn(() => ({ redis: workerRedis })),
 }));
 vi.mock('@aac/api-clients/gmail', () => ({ GmailClient: vi.fn(() => ({})) }));
-// Vercel's waitUntil keeps the deferred draft alive; here it just owns the rejection.
-vi.mock('@vercel/functions', () => ({ waitUntil: (p: Promise<unknown>) => void p.catch(() => {}) }));
 
 const staleRun = vi.hoisted(() =>
   vi.fn(async () => ({ partial: false, pendingInScope: 2, queue: { toSend: [1], waiting: [], flags: [], skipped: [1] }, awaiting: [] })),
