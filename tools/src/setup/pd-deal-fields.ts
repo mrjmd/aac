@@ -67,7 +67,14 @@ async function pdPost<T>(path: string, body: Record<string, unknown>): Promise<T
 
 // Field definitions. Names are what shows up in the PD UI; the script
 // matches existing fields by name to keep this idempotent.
-const FIELD_DEFS = [
+interface FieldDef {
+  constName: string;
+  name: string;
+  field_type: string;
+  options?: readonly string[];
+}
+
+const FIELD_DEFS: readonly FieldDef[] = [
   {
     constName: 'qbEstimateId',
     name: 'QB Estimate ID',
@@ -92,7 +99,7 @@ const FIELD_DEFS = [
     name: 'Lost Reason',
     field_type: 'varchar',
   },
-] as const;
+];
 
 async function main(): Promise<void> {
   console.log('Connecting to api.pipedrive.com…');

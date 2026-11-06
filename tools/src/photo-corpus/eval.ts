@@ -238,13 +238,13 @@ async function main(): Promise<void> {
       if (!draft) throw new Error('unparseable draft');
 
       // ── metrics ──
-      const actual = new Set(
+      const actual = new Set<string>(
         m.lines.filter((l: { item: string }) => !NON_SCOPE.test(l.item)).map((l: { item: string }) => norm(l.item)),
       );
       const grounded = new Set(
         draft.lines.filter((l) => !NON_SCOPE.test(l.item)).map((l) => norm(l.item)),
       );
-      const blind = new Set(
+      const blind = new Set<string>(
         (ex.blind?.areas ?? []).flatMap((a: { predicted_items?: string[] }) => a.predicted_items ?? []).map(norm),
       );
       const setEq = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((x) => b.has(x));

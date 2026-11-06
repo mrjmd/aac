@@ -832,6 +832,9 @@ importers:
       '@resvg/resvg-js':
         specifier: ^2.6.2
         version: 2.6.2
+      '@types/node':
+        specifier: ^22
+        version: 22.19.15
       '@types/react':
         specifier: ^19.2.14
         version: 19.2.14
