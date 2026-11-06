@@ -13,6 +13,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { normalizePhone } from '@aac/shared-utils/phone';
 import { createLogger } from '@aac/shared-utils/logger';
+import { timingSafeEqualString } from '@aac/shared-utils/webhook-signature';
 import {
   markEventProcessed,
   storePhoneMapping,
@@ -137,7 +138,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // ============================================
   // VERIFY GOOGLE KEY
   // ============================================
-  if (env.googleAds.webhookKey && payload.google_key !== env.googleAds.webhookKey) {
+  // Fail closed in production: an unset key must not accept unsigned leads.
+  // 503 (not 401) so Google retries once the key is restored.
+  if (!env.googleAds.webhookKey && process.env.VERCEL_ENV === 'production') {
+    log.error('GOOGLE_ADS_WEBHOOK_KEY is unset in production', { leadId: payload.lead_id });
+    return res.status(503).json({ error: 'Webhook not configured' });
+  }
+  if (env.googleAds.webhookKey && !timingSafeEqualString(payload.google_key, env.googleAds.webhookKey)) {
     log.warn('Invalid google_key', { leadId: payload.lead_id });
     return res.status(401).json({ error: 'Invalid google_key' });
   }

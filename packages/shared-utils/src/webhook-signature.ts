@@ -56,3 +56,21 @@ export function verifyOpenPhoneWebhookSignature(
     return false;
   }
 }
+
+/**
+ * Constant-time string comparison for shared secrets (webhook keys, bearer
+ * tokens). Both sides are SHA-256 hashed first so the compare runs over
+ * equal-length buffers and leaks neither content nor length.
+ *
+ * Fails closed: returns false when either value is missing or empty, so an
+ * unset secret never matches an empty credential.
+ */
+export function timingSafeEqualString(
+  provided: string | null | undefined,
+  expected: string | null | undefined,
+): boolean {
+  if (!provided || !expected) return false;
+  const a = crypto.createHash('sha256').update(provided, 'utf8').digest();
+  const b = crypto.createHash('sha256').update(expected, 'utf8').digest();
+  return crypto.timingSafeEqual(a, b);
+}

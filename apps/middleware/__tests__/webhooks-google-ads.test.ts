@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock dependencies
 vi.mock('../lib/redis.js', () => ({
@@ -34,6 +34,7 @@ vi.mock('../lib/clients.js', () => ({
 
 import handler from '../api/webhooks/google-ads.js';
 import { markEventProcessed, trackWebhookProcessed } from '../lib/redis.js';
+import { getEnv } from '../lib/env.js';
 
 function makeReq(body: Record<string, unknown>, method = 'POST') {
   return { method, body } as any;
@@ -149,5 +150,59 @@ describe('google-ads webhook', () => {
     const body = res.json.mock.calls[0][0];
     expect(body.status).toBe('skipped');
     expect(body.reason).toBe('no_phone');
+  });
+});
+
+describe('google-ads webhook key check', () => {
+  const unsetKeyEnv = {
+    googleAds: { webhookKey: null },
+    quo: { phoneNumber: '+15550001111' },
+    notifications: { alertPhoneNumber: '+15559999999' },
+  };
+  const originalVercelEnv = process.env.VERCEL_ENV;
+
+  afterEach(() => {
+    if (originalVercelEnv === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = originalVercelEnv;
+  });
+
+  it('returns 503 and processes nothing when the key is unset in production', async () => {
+    process.env.VERCEL_ENV = 'production';
+    vi.mocked(getEnv).mockReturnValueOnce(unsetKeyEnv as ReturnType<typeof getEnv>);
+    const res = makeRes();
+    await handler(makeReq(makePayload({ google_key: 'anything' })), res);
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(markEventProcessed).not.toHaveBeenCalled();
+    expect(mockPipedrive.createPerson).not.toHaveBeenCalled();
+    expect(mockQuo.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('still accepts when the key is unset outside production (preview/local)', async () => {
+    process.env.VERCEL_ENV = 'preview';
+    vi.mocked(getEnv).mockReturnValueOnce(unsetKeyEnv as ReturnType<typeof getEnv>);
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+    expect(res.status).not.toHaveBeenCalledWith(503);
+    expect(res.json.mock.calls[0][0].status).toBe('processed');
+  });
+
+  it('returns 401 in production when google_key is missing or wrong', async () => {
+    process.env.VERCEL_ENV = 'production';
+    for (const google_key of [undefined, '', 'test-ke', 'test-key-extra']) {
+      const res = makeRes();
+      await handler(makeReq(makePayload({ google_key })), res);
+      expect(res.status, String(google_key)).toHaveBeenCalledWith(401);
+    }
+    expect(markEventProcessed).not.toHaveBeenCalled();
+  });
+
+  it('processes the lead in production with the right key', async () => {
+    process.env.VERCEL_ENV = 'production';
+    const res = makeRes();
+    await handler(makeReq(makePayload()), res);
+    expect(res.status).not.toHaveBeenCalledWith(401);
+    expect(res.status).not.toHaveBeenCalledWith(503);
+    expect(mockPipedrive.createPerson).toHaveBeenCalledOnce();
+    expect(res.json.mock.calls[0][0].status).toBe('processed');
   });
 });

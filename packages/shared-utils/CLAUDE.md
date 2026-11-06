@@ -27,5 +27,6 @@ that ALL other packages, apps, and tools depend on.
 | `redis.ts` | Key schema builders, TTL constants |
 | `inbound-settle.ts` | Inbound router settle rule: `settleDueAt` (last + 2 min, capped at first + 10 min) |
 | `qbo-tokens.ts` | `qboTokenStore(redis)`: the shared QBO token slot + refresh lock, as QuickBooksClient callbacks |
+| `webhook-signature.ts` | `verifyOpenPhoneWebhookSignature` (Quo HMAC), `timingSafeEqualString` (constant-time secret/bearer compare, fails closed on empty) |
 | `logger.ts` | Structured JSON logging |
 | `types.ts` | Shared TypeScript interfaces (Lead, Estimate, WebhookEvent, etc.) |
