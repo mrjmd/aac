@@ -56,12 +56,16 @@ describe('health endpoint', () => {
     expect(body.metrics.webhooks.googleAds).toBeDefined();
     expect(body.metrics.webhooks.qb).toBeDefined();
     expect(body.metrics.sync).toBeDefined();
-    expect(body.metrics.errors).toEqual([]);
+    expect(body.metrics.errorCounts).toEqual({ recent: 0, lastHour: 0 });
+    expect(body.metrics.errors).toBeUndefined();
   });
 
-  it('includes parsed errors from Redis', async () => {
+  it('returns error counts only, never the error details (public endpoint)', async () => {
+    const recent = new Date(Date.now() - 10 * 60_000).toISOString();
     mockRedis.lrange.mockResolvedValue([
-      JSON.stringify({ timestamp: '2026-03-31T10:00:00Z', source: 'pipedrive', message: 'API timeout' }),
+      JSON.stringify({ timestamp: recent, source: 'qb-reconcile', message: 'QBO fault 3200', details: { estimateId: '1587' } }),
+      { timestamp: '2026-03-31T10:00:00Z', source: 'pipedrive', message: 'API timeout', details: { pipedriveId: 5225 } },
+      'not json',
     ]);
 
     const res = makeRes();
@@ -69,8 +73,10 @@ describe('health endpoint', () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     const body = res.json.mock.calls[0][0];
-    expect(body.metrics.errors).toHaveLength(1);
-    expect(body.metrics.errors[0].source).toBe('pipedrive');
+    expect(body.status).toBe('healthy');
+    expect(body.metrics.errorCounts).toEqual({ recent: 3, lastHour: 1 });
+    const text = JSON.stringify(body);
+    for (const leak of ['qb-reconcile', 'QBO fault', '1587', 'API timeout', '5225']) expect(text).not.toContain(leak);
   });
 
   it('writes heartbeat on success', async () => {
@@ -85,7 +91,7 @@ describe('health endpoint', () => {
     expect(heartbeatCall).toBeDefined();
   });
 
-  it('reads back what the shared health writers store (key + value-shape contract the command center depends on)', async () => {
+  it('reads back what the shared health writers store (key + value-shape contract; error entries are counted, not returned)', async () => {
     const strings = new Map<string, string>();
     const list: string[] = [];
     const writer: HealthRedis = {
@@ -126,13 +132,9 @@ describe('health endpoint', () => {
     expect(body.metrics.webhooks.quo).toEqual({ processed24h: 2, lastProcessed: strings.get('webhooks:quo:last') });
     expect(body.metrics.webhooks.googleAds.processed24h).toBe(1);
     expect(body.metrics.webhooks.pipedrive).toEqual({ processed24h: 0, lastProcessed: null });
-    expect(body.metrics.errors).toHaveLength(1);
-    expect(body.metrics.errors[0]).toMatchObject({
-      source: 'worker:sweep',
-      message: 'sweep failed',
-      details: { route: '/api/sweep' },
-    });
-    expect(Number.isNaN(Date.parse(body.metrics.errors[0].timestamp))).toBe(false);
+    // Counted (the entry's timestamp parses as recent), never echoed.
+    expect(body.metrics.errorCounts).toEqual({ recent: 1, lastHour: 1 });
+    expect(JSON.stringify(body)).not.toContain('sweep failed');
   });
 
   it('writes the heartbeat to health:middleware:ts', async () => {

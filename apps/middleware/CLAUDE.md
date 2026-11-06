@@ -26,6 +26,19 @@ drafting quotes, creating calendar placeholders.
 - **Fail safe.** Always return 200 to webhook senders to prevent retries that
   could cause duplicate processing. Log errors, don't throw them.
 
+## Observability
+
+- `api/health.ts` is public: status, webhook and sync counts, and
+  `errorCounts` only, never error details. The watchdog reads `status`; the
+  command center reads Redis directly.
+- Silent skips that cost the business something call `countCondition`
+  (`lib/redis.ts`, never throws, never on a dry run): invoice-create's jobs
+  not invoiced (with the event), reminders/followups with no person or
+  phone, PD webhook QB-disconnected and lost-lock, booking-sync errors, and
+  the scheduling dispatch's classifier rejections and skipped stubs (via
+  `schedulingStore.countCondition`). They show on the command center System
+  health page; they never text.
+
 ## What Does NOT Belong Here
 
 - SMS campaign management (→ `apps/marketing/`)

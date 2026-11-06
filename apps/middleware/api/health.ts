@@ -2,8 +2,10 @@
  * Health Endpoint
  *
  * Returns operational metrics for the middleware: webhook processing counts,
- * cross-system sync mappings, and recent errors. Consumed by the Command
- * Center dashboard.
+ * cross-system sync mappings, and health-error COUNTS. Unauthenticated, so
+ * it never returns error details (PD ids, estimate ids, QBO fault text):
+ * the command center reads those from Redis behind its session. Readers:
+ * the watchdog (status === 'healthy') and uptime checks.
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -36,12 +38,8 @@ interface HealthMetrics {
   schedulingClassifier: {
     byEventType: Record<string, { classified: number; directivesWritten: number }>;
   };
-  errors: Array<{
-    timestamp: string;
-    source: string;
-    message: string;
-    details?: string;
-  }>;
+  /** How many entries `health:errors` holds (of the last 50 read), and how many are under an hour old. No details. */
+  errorCounts: { recent: number; lastHour: number };
 }
 
 async function getSchedulingClassifierMetrics(): Promise<
@@ -146,26 +144,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       getSchedulingClassifierMetrics(),
     ]);
 
-    // Parse error entries
-    const errors = rawErrors
-      .map((entry) => {
-        try {
-          const parsed =
-            typeof entry === 'string' ? JSON.parse(entry) : entry;
-          return parsed as {
-            timestamp: string;
-            source: string;
-            message: string;
-            details?: string;
-          };
-        } catch {
-          return null;
-        }
-      })
-      .filter(
-        (e): e is { timestamp: string; source: string; message: string; details?: string } =>
-          e !== null
-      );
+    // Counts only: timestamps are read to age the entries, nothing else leaves.
+    const hourAgo = Date.now() - 3_600_000;
+    const timestamps = rawErrors.map((entry) => {
+      try {
+        const parsed = (typeof entry === 'string' ? JSON.parse(entry) : entry) as { timestamp?: string };
+        return parsed?.timestamp ? Date.parse(parsed.timestamp) : NaN;
+      } catch {
+        return NaN;
+      }
+    });
+    const errorCounts = {
+      recent: rawErrors.length,
+      lastHour: timestamps.filter((t) => Number.isFinite(t) && t > hourAgo).length,
+    };
 
     const metrics: HealthMetrics = {
       webhooks: {
@@ -182,7 +174,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       schedulingClassifier: {
         byEventType: schedulingClassifierByType,
       },
-      errors,
+      errorCounts,
     };
 
     // Write heartbeat
