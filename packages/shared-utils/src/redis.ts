@@ -450,8 +450,9 @@ export const keys = {
   /**
    * Booking → QBO acceptance sync outcome for a green calendar event
    * (`accepted:{estimateId}`, `covered:{estimateId}`, `none`, `ambiguous`).
-   * Final outcomes have no TTL; `none`/`ambiguous` expire after a day so
-   * the event is looked at again (@aac/scheduling booking-sync).
+   * Final outcomes expire after ttl.bookingSyncFinal (the sync only reads
+   * events starting in the next 60 days); `none`/`ambiguous` expire after a
+   * day so the event is looked at again (@aac/scheduling booking-sync).
    */
   bookingSyncEvent: (eventId: string) => `scheduling:booking-sync:${eventId}` as const,
 
@@ -568,4 +569,5 @@ export const ttl = {
   triageVerdict: 604_800,   // 7d — bounds how long a verdict outlives calendar/estimate changes
   healthConditions: 1_209_600, // 14d of daily silent-skip counts (System health page, 7-day view)
   healthConditionRecent: 7_200, // 2h of rolling-window occurrences (watchdog reads the last hour)
+  bookingSyncFinal: 31_536_000, // 1y; booking sync only reads events starting in the next 60 days
 } as const;

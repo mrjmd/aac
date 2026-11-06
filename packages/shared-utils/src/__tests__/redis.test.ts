@@ -173,4 +173,9 @@ describe('ttl', () => {
     expect(ttl.campaign).toBe(7_776_000);     // 90 days
     expect(ttl.attribution).toBe(31_536_000); // 1 year
   });
+
+  it('keeps a final booking-sync outcome far past the 60-day window the sync reads', () => {
+    expect(ttl.bookingSyncFinal).toBe(31_536_000);
+    expect(ttl.bookingSyncFinal).toBeGreaterThan(5 * 60 * 86_400);
+  });
 });
