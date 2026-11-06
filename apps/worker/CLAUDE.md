@@ -28,9 +28,13 @@ Plain Vercel Serverless Functions (no framework) that run the
   gmail.readonly on the Google token.
 - `api/watchdog.ts` — 5-min cron: outside-in pipe checks (`@aac/watchdog`).
   Texts Matt from the agent line only when a pipe is down (Quo webhook,
-  middleware crons, worker heartbeats, middleware health), every 6h while
-  it lasts, and once on recovery. Env: `MATT_PERSONAL_PHONE_NUMBER`
-  (required), `QUO_AGENT_PHONE_NUMBER`, `MIDDLEWARE_HEALTH_URL`.
+  middleware and worker crons, the agent's error-surface, worker
+  heartbeats, quote-drafter lock/assets, middleware health), every 6h
+  while it lasts, and once on recovery. When the Quo send throws, the alert
+  goes by Gmail instead (`lib/watchdog-deps.ts`, the worker's Google token,
+  needs gmail.send, compose or modify) to `WATCHDOG_ALERT_EMAIL` or the
+  token's own mailbox. Env: `MATT_PERSONAL_PHONE_NUMBER` (required),
+  `QUO_AGENT_PHONE_NUMBER`, `MIDDLEWARE_HEALTH_URL`, `WATCHDOG_ALERT_EMAIL`.
 - `api/ads-conversions.ts` — daily cron (11:00 UTC): Google Ads offline
   conversions (`@aac/ads-conversions`). Matches ad taps to new callers and
   uploads Real lead / Quote sent / Won job. Gated by `ADS_CONVERSIONS_MODE`
@@ -68,7 +72,10 @@ Plain Vercel Serverless Functions (no framework) that run the
   canary failed) is recorded too. Needs the Redis, QBO, Quo, Gemini and
   Google env (`skipped: 'no-<group>-env'` otherwise); maxDuration 800 /
   memory 1024.
-- `api/health.ts` — liveness.
+- `api/health.ts` — for an outside uptime pinger: 200 `{status: 'ok'}`
+  only while Redis answers and `health:watchdog:ts` is under 15 min old,
+  else 503 `{status: 'down'}`. Unauthenticated, no details. The one alert
+  path that shares no fate with Vercel crons, Upstash or Quo.
 
 ## Health bookkeeping
 
@@ -83,10 +90,16 @@ Plain Vercel Serverless Functions (no framework) that run the
   a triage run that finished blind).
   One entry per source per 10 min (`keys.healthErrorThrottle`) so a
   per-minute failure can't flood the 100-entry list; the log gets them all.
-- **Last run**: sweep, inbound-tick, quote-email-tick, stale-quotes and triage stamp
-  `cron:<route>:last-run` (+ daily result) after a run that did its work;
-  tick and quote-tick keep their heartbeats, ads-conversions and watchdog
-  stamp in their packages. The watchdog reads none of the new ones yet.
+- **Stamps mean work happened** (the watchdog reads every one):
+  sweep, inbound-tick, quote-email-tick, stale-quotes and triage stamp
+  `cron:<route>:last-run` (+ daily result) only after a run that did its
+  work (not on a skip, a 500, or an inbound tick whose every read failed);
+  ads-conversions stamps in its package (not on a skip or a wholly rejected
+  upload). tick writes `health:worker:ts`; quote-tick writes
+  `health:quote-drafter:ts` only when the tick ran (not off, locked or
+  no-assets), and keeps its skip streak in `quote-drafter:skip`
+  (`lib/quote-skip.ts`) for the watchdog's "locked 15 ticks" and
+  "no asset manifest" conditions.
 
 ## Rules
 

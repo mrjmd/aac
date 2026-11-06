@@ -59,6 +59,36 @@ export async function recordFailure(route: string, message: string, details?: Re
   await health.logHealthError(redis, source, message.slice(0, 500), details);
 }
 
+/** /api/health is 200 only while the watchdog beat this recently. */
+export const WATCHDOG_FRESH_MIN = 15;
+const WATCHDOG_READ_TIMEOUT_MS = 8_000;
+
+/**
+ * The outside pinger's signal: Redis answers and the watchdog
+ * (`health:watchdog:ts`) ran in the last WATCHDOG_FRESH_MIN minutes.
+ * False on no Upstash env, a Redis error or a slow read. Never throws.
+ */
+export async function watchdogFresh(now: number = Date.now()): Promise<boolean> {
+  const redis = healthRedis();
+  if (!redis) return false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const last = await Promise.race([
+      redis.get<string>(keys.heartbeat('watchdog')),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('redis read timed out')), WATCHDOG_READ_TIMEOUT_MS);
+      }),
+    ]);
+    const at = last ? Date.parse(last) : NaN;
+    return Number.isFinite(at) && now - at < WATCHDOG_FRESH_MIN * 60_000;
+  } catch (err) {
+    log.warn('health: watchdog heartbeat unreadable', { error: (err as Error).message });
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Stamp `cron:<route>:last-run` and today's result counts. */
 export async function recordRun(route: string, result: health.CronRunResult): Promise<void> {
   const redis = healthRedis();

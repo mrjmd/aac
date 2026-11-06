@@ -8,6 +8,7 @@ vi.mock('googleapis', () => {
   const mockDraftsCreate = vi.fn();
   const mockDraftsDelete = vi.fn();
   const mockDraftsUpdate = vi.fn();
+  const mockMessagesSend = vi.fn();
   const MockOAuth2 = vi.fn(() => ({
     setCredentials: vi.fn(),
   }));
@@ -16,6 +17,7 @@ vi.mock('googleapis', () => {
       messages: {
         list: mockMessagesList,
         get: mockMessagesGet,
+        send: mockMessagesSend,
         attachments: { get: mockAttachmentsGet },
       },
       drafts: { create: mockDraftsCreate, delete: mockDraftsDelete, update: mockDraftsUpdate },
@@ -36,6 +38,7 @@ vi.mock('googleapis', () => {
       mockDraftsCreate,
       mockDraftsDelete,
       mockDraftsUpdate,
+      mockMessagesSend,
       MockOAuth2,
       mockGmail,
     },
@@ -45,7 +48,7 @@ vi.mock('googleapis', () => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let mocks: any;
 
-import { GmailClient, plainTextToGmailHtml } from '../gmail.js';
+import { GmailClient, isInsufficientScopeError, plainTextToGmailHtml } from '../gmail.js';
 
 const config = {
   oauth: { clientId: 'cid', clientSecret: 'secret', refreshToken: 'rt' },
@@ -341,5 +344,30 @@ describe('GmailClient.updateDraft', () => {
     const mime = Buffer.from(call.requestBody.message.raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
     expect(mime).toContain('filename="quote.pdf"');
     expect(mime).toContain(Buffer.from('PDF2').toString('base64'));
+  });
+});
+
+describe('GmailClient.sendMessage', () => {
+  it('sends a plain + HTML message to the recipients and returns its id', async () => {
+    mocks.mockMessagesSend.mockResolvedValue({ data: { id: 'sent-1' } });
+    const client = new GmailClient(config);
+    const out = await client.sendMessage({ to: ['matt@example.com'], subject: 'AAC watchdog alert', body: 'Quo pipe DOWN' });
+    expect(out).toEqual({ messageId: 'sent-1' });
+    const call = mocks.mockMessagesSend.mock.calls[0][0];
+    expect(call.userId).toBe('me');
+    const raw = Buffer.from(call.requestBody.raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    expect(raw).toContain('To: matt@example.com');
+    expect(raw).toContain('Subject: AAC watchdog alert');
+    expect(raw).toContain(Buffer.from('Quo pipe DOWN', 'utf8').toString('base64'));
+    expect(call.requestBody.threadId).toBeUndefined();
+  });
+
+  it('throws when Google refuses, and the error reads as a missing scope', async () => {
+    const err = Object.assign(new Error('Request had insufficient authentication scopes.'), { code: 403 });
+    mocks.mockMessagesSend.mockRejectedValue(err);
+    const client = new GmailClient(config);
+    await expect(client.sendMessage({ to: ['m@x.com'], subject: 's', body: 'b' })).rejects.toThrow(/insufficient/);
+    expect(isInsufficientScopeError(err)).toBe(true);
+    expect(isInsufficientScopeError(Object.assign(new Error('Backend Error'), { code: 500 }))).toBe(false);
   });
 });

@@ -1,12 +1,15 @@
 /**
- * Gmail client — read-only message listing and retrieval.
+ * Gmail client: message listing and retrieval, drafts, and one send path.
  *
  * First consumer: the triage dashboard email sweep (quote requests and
- * customer replies that arrive by email instead of SMS). Read-only by
- * design — nothing in the system sends email through this client.
+ * customer replies that arrive by email instead of SMS). Customer email is
+ * never sent through this client, only drafted. The one send,
+ * `sendMessage`, is for alerts to Matt himself (the worker watchdog's
+ * fallback when a Quo text fails).
  *
  * Auth: OAuth2 refresh token (same pattern as GoogleCalendarClient).
- * Requires the gmail.readonly scope on the token.
+ * Reads need gmail.readonly; drafts gmail.compose (or modify); sending
+ * gmail.send, gmail.compose or gmail.modify.
  *
  * Uses the `googleapis` package.
  */
@@ -88,6 +91,21 @@ export interface CreateDraftOptions {
   /** RFC 822 Message-ID of the message being replied to, e.g. '<abc@mail.gmail.com>'. */
   inReplyTo?: string;
   attachments?: DraftAttachment[];
+}
+
+export interface SendMessageOptions {
+  to: string[];
+  /** Keep it ASCII: the header is not RFC 2047 encoded. */
+  subject: string;
+  /** Plain-text body. */
+  body: string;
+}
+
+/** True when Google refused a call because the token lacks the scope (403 insufficient permissions/scope). */
+export function isInsufficientScopeError(err: unknown): boolean {
+  const e = err as { code?: number | string; status?: number; response?: { status?: number }; message?: string };
+  const status = Number(e.code ?? e.status ?? e.response?.status ?? NaN);
+  return (status === 403 || Number.isNaN(status)) && /insufficient|scope/i.test(e.message ?? '');
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -302,6 +320,22 @@ export class GmailClient {
     const messageId = res.data.message?.id ?? '';
     log.info('Created Gmail draft', { draftId, to: options.to, attachments: options.attachments?.length ?? 0 });
     return { draftId, messageId };
+  }
+
+  /**
+   * Send a plain-text email now. For alerts to Matt only (never customers;
+   * customer email is always a draft). Throws on failure, including a token
+   * without a send-capable scope (see isInsufficientScopeError).
+   */
+  async sendMessage(options: SendMessageOptions): Promise<{ messageId: string }> {
+    const gmail = this.getClient();
+    const raw = this.buildRawMessage(options);
+    const res = await this.withRetry('messages.send', () =>
+      gmail.users.messages.send({ userId: 'me', requestBody: { raw } }),
+    );
+    const messageId = res.data.id ?? '';
+    log.info('Sent Gmail message', { messageId, to: options.to });
+    return { messageId };
   }
 
   /** RFC 822 message (plain + HTML body, attachments), base64url for the drafts API. */
