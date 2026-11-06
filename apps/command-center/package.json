@@ -20,7 +20,7 @@
     "@aac/ui": "workspace:*",
     "@upstash/redis": "^1.34.3",
     "lucide-react": "^0.511.0",
-    "next": "^15",
+    "next": "15.5.28",
     "react": "^19",
     "react-dom": "^19",
     "sortablejs": "1.15.2"
