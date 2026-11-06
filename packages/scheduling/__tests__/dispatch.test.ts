@@ -19,21 +19,30 @@ const {
   mockStorePipedriveToQbMapping: vi.fn(),
 }));
 
-vi.mock('../lib/redis.js', () => ({
+import {
+  dispatchSchedulingIntent as dispatchWithStore,
+  extractClassifierInputs,
+  type SchedulingDispatchContext,
+  type SchedulingDispatchDeps,
+} from '../src/dispatch.js';
+
+// Persistence is injected (moved from vi.mock('../lib/redis.js') in
+// apps/middleware). Every call below goes through this wrapper, which adds
+// the mocked store to the deps each test builds.
+const store = {
   writePendingDirective: mockWritePendingDirective,
   logHealthError: mockLogHealthError,
   trackSchedulingClassification: mockTrackSchedulingClassification,
   getQbCustomerIdFromPipedrive: mockGetQbCustomerIdFromPipedrive,
   getDirectiveIdByEstimate: mockGetDirectiveIdByEstimate,
   storePipedriveToQbMapping: mockStorePipedriveToQbMapping,
-  SCHEDULING_AUTO_PROPOSE_THRESHOLD: 0.7,
-}));
-
-import {
-  dispatchSchedulingIntent,
-  extractClassifierInputs,
-  type SchedulingDispatchContext,
-} from '../lib/scheduling-dispatch.js';
+};
+function dispatchSchedulingIntent(
+  deps: Omit<SchedulingDispatchDeps, 'store'>,
+  context: SchedulingDispatchContext,
+) {
+  return dispatchWithStore({ store, ...deps }, context);
+}
 
 // ── Fixtures ──────────────────────────────────────────────────────
 

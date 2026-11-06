@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { QuoteApprovedDirective } from '@aac/scheduling';
+import type { QuoteApprovedDirective } from '../src/types.js';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const { mockGetPendingDirective, mockLogHealthError } = vi.hoisted(() => ({
@@ -7,12 +7,13 @@ const { mockGetPendingDirective, mockLogHealthError } = vi.hoisted(() => ({
   mockLogHealthError: vi.fn(),
 }));
 
-vi.mock('../lib/redis.js', () => ({
+// Persistence is injected (moved from vi.mock('../lib/redis.js') in apps/middleware).
+const store = {
   getPendingDirective: mockGetPendingDirective,
   logHealthError: mockLogHealthError,
-}));
+};
 
-import { buildProposalForDirective, type ProposalBuilderDeps } from '../lib/proposal-builder.js';
+import { buildProposalForDirective, type ProposalBuilderDeps } from '../src/proposal-builder.js';
 
 function makeDirective(over: Partial<QuoteApprovedDirective> = {}): QuoteApprovedDirective {
   return {
@@ -44,6 +45,7 @@ function makeDirective(over: Partial<QuoteApprovedDirective> = {}): QuoteApprove
 
 function makeDeps(over: Partial<ProposalBuilderDeps> = {}): ProposalBuilderDeps {
   const base: ProposalBuilderDeps = {
+    store,
     pd: {
       getPerson: vi.fn().mockResolvedValue({
         id: 9001,

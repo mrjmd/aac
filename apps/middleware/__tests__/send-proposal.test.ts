@@ -13,7 +13,8 @@ const {
   mockVerifyCronAuth: vi.fn(() => true),
 }));
 
-vi.mock('../lib/proposal-builder.js', () => ({
+vi.mock('@aac/scheduling', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aac/scheduling')>()),
   buildProposalForDirective: mockBuildProposalForDirective,
 }));
 vi.mock('../lib/agent-proposal-post.js', () => ({
@@ -46,6 +47,7 @@ vi.mock('../lib/env.js', () => ({
 }));
 
 import handler from '../api/scheduling/send-proposal.js';
+import { schedulingStore } from '../lib/scheduling-store.js';
 
 function makeReq(opts: { method?: string; body?: unknown; query?: Record<string, string> }): VercelRequest {
   return {
@@ -134,6 +136,8 @@ describe('POST /api/scheduling/send-proposal', () => {
     await handler(makeReq({ method: 'GET', query: { directiveId: 'dir_1' } }), res);
     expect(res._status).toBe(200);
     expect(mockBuildProposalForDirective).toHaveBeenCalled();
+    // Persistence for the package-side builder is the middleware's store.
+    expect(mockBuildProposalForDirective.mock.calls[0][0].store).toBe(schedulingStore);
   });
 
   it('returns 404 when directive not found', async () => {

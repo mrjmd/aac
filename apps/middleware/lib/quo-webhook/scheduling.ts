@@ -14,8 +14,9 @@ import {
   type DialogueEntry,
   type SchedulingDispatchContext,
   type SchedulingEventType,
-} from '../scheduling-dispatch.js';
+} from '@aac/scheduling';
 import { maybePostSuggestionNote } from '../suggestion-note.js';
+import { schedulingStore } from '../scheduling-store.js';
 import type { QuoEvent, QuoEventData } from './types.js';
 
 const log = createLogger('quo-webhook');
@@ -91,6 +92,7 @@ export function deferSchedulingDispatch(
       try {
         const summary = await dispatchSchedulingIntent(
           {
+            store: schedulingStore,
             pd,
             cal: getCalendar(),
             gemini: getGemini(),

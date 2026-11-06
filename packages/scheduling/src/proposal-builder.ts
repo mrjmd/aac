@@ -1,7 +1,10 @@
 /**
- * Proposal builder — middleware-side orchestration that turns a
- * SchedulingDirective in the shadow queue into a ready-to-send
- * ProposalPayload + posts it to the agent.
+ * Proposal builder — orchestration that turns a SchedulingDirective in
+ * the shadow queue into a ready-to-send ProposalPayload (the middleware's
+ * send-proposal trigger posts it to the agent).
+ *
+ * Moved from apps/middleware/lib/proposal-builder.ts; persistence is
+ * injected via `deps.store` (see store.ts).
  *
  * Walk #6.3 wires this behind the admin `/api/scheduling/send-proposal`
  * trigger so Matt can pull-test the loop. Walk #7 will gate auto-fire
@@ -14,7 +17,6 @@
  */
 
 import { randomUUID } from 'crypto';
-import type { Redis } from '@upstash/redis';
 import { createLogger } from '@aac/shared-utils/logger';
 import type { GeminiClient } from '@aac/api-clients';
 import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
@@ -25,22 +27,33 @@ import type { QuoClient } from '@aac/api-clients/quo';
 import { selectBusyEvents } from '@aac/shared-utils/calendar';
 import {
   buildEventDescription,
-  DEFAULT_HOME_ADDRESS,
-  DEFAULT_POLICY,
-  getTravelLeg,
-  suggestSlot,
   type EventDescriptionLineItem,
   type EventDescriptionMessage,
-  type ProposalPayload,
-  type SchedulingDirective,
+} from './build-event-description.js';
+import {
+  DEFAULT_POLICY,
+  suggestSlot,
   type SuggestSlotTravelDeps,
-  type TravelLeg,
-} from '@aac/scheduling';
-import { getPendingDirective, logHealthError } from './redis.js';
+} from './suggest-slot.js';
+import { DEFAULT_HOME_ADDRESS, getTravelLeg, type TravelLeg } from './travel-time.js';
+import type { ProposalPayload } from './proposal.js';
+import type { SchedulingDirective } from './types.js';
+import type { SchedulingStore } from './store.js';
 
 const log = createLogger('proposal-builder');
 
+/**
+ * The slice of an Upstash Redis client the travel-leg cache uses. Upstash's
+ * `Redis` satisfies it structurally; the package never constructs one.
+ */
+export interface TravelCacheRedis {
+  get<TData>(key: string): Promise<TData | null>;
+  set<TData>(key: string, value: TData, opts: { ex: number }): Promise<unknown>;
+}
+
 export interface ProposalBuilderDeps {
+  /** Shadow-queue read + health errors. */
+  store: Pick<SchedulingStore, 'getPendingDirective' | 'logHealthError'>;
   pd: PipedriveClient;
   qb: QuickBooksClient;
   quo: QuoClient;
@@ -55,7 +68,7 @@ export interface ProposalBuilderDeps {
    * Upstash Redis client for caching travel-leg estimates. Optional — when
    * absent, every leg call hits Distance Matrix fresh.
    */
-  redis?: Redis;
+  redis?: TravelCacheRedis;
   /** Override for tests. Defaults to {@link DEFAULT_HOME_ADDRESS}. */
   homeAddress?: string;
   /**
@@ -92,7 +105,7 @@ export async function buildProposalForDirective(
   deps: ProposalBuilderDeps,
   directiveId: string,
 ): Promise<ProposalBuilderResult | null> {
-  const directive = await getPendingDirective<SchedulingDirective>(directiveId);
+  const directive = await deps.store.getPendingDirective(directiveId);
   if (!directive) {
     log.warn('Directive not found in shadow queue', { directiveId });
     return null;
@@ -169,7 +182,9 @@ export async function buildProposalForDirective(
 // ── helpers ──────────────────────────────────────────────────────────────
 
 export async function fetchCustomer(
-  deps: Pick<ProposalBuilderDeps, 'pd' | 'qb'>,
+  deps: Pick<ProposalBuilderDeps, 'pd' | 'qb'> & {
+    store: Pick<SchedulingStore, 'logHealthError'>;
+  },
   directive: SchedulingDirective,
 ): Promise<{
   customerName: string;
@@ -184,7 +199,7 @@ export async function fetchCustomer(
       const person = await deps.pd.getPerson(directive.pdPersonId);
       if (person?.name) customerName = person.name;
     } catch (err) {
-      await logHealthError(
+      await deps.store.logHealthError(
         'proposal-builder',
         `PD person lookup failed: ${(err as Error).message}`,
         { directiveId: directive.id, pdPersonId: directive.pdPersonId },
@@ -209,7 +224,7 @@ export async function fetchCustomer(
         if (parts.length > 0) customerAddress = parts.join(', ');
       }
     } catch (err) {
-      await logHealthError(
+      await deps.store.logHealthError(
         'proposal-builder',
         `QB customer lookup failed: ${(err as Error).message}`,
         { directiveId: directive.id, qbCustomerId: directive.qbCustomerId },
@@ -239,7 +254,7 @@ async function fetchLineItems(
       .filter((d) => d.length > 0)
       .map((description) => ({ description }));
   } catch (err) {
-    await logHealthError(
+    await deps.store.logHealthError(
       'proposal-builder',
       `QB estimate fetch failed: ${(err as Error).message}`,
       { qbEstimateId },
@@ -269,7 +284,7 @@ async function fetchConversation(
       }))
       .reverse(); // oldest → newest for the LLM
   } catch (err) {
-    await logHealthError(
+    await deps.store.logHealthError(
       'proposal-builder',
       `Quo conversation fetch failed: ${(err as Error).message}`,
       { customerPhone },
@@ -285,7 +300,9 @@ async function fetchConversation(
  * (proposal preview) or bail (anything that creates holds/notes).
  */
 export async function fetchBusyEvents(
-  deps: Pick<ProposalBuilderDeps, 'calendar' | 'technicianEmails'>,
+  deps: Pick<ProposalBuilderDeps, 'calendar' | 'technicianEmails'> & {
+    store: Pick<SchedulingStore, 'logHealthError'>;
+  },
   directiveId: string,
   now: Date,
 ): Promise<CalendarEvent[] | null> {
@@ -303,7 +320,7 @@ export async function fetchBusyEvents(
     });
     return selectBusyEvents(all, techEmails);
   } catch (err) {
-    await logHealthError(
+    await deps.store.logHealthError(
       'proposal-builder',
       `Calendar listEvents failed: ${(err as Error).message}`,
       { directiveId },

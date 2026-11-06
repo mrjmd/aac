@@ -1,6 +1,10 @@
 /**
  * Scheduling-intent dispatch for the Quo webhook.
  *
+ * Moved from apps/middleware/lib/scheduling-dispatch.ts; persistence is
+ * injected via `deps.store` (see store.ts) instead of imported from the
+ * middleware's Redis module.
+ *
  * The Quo webhook calls `dispatchSchedulingIntent` once per qualifying
  * event (inbound text, outbound text, or completed call transcript).
  * This helper:
@@ -37,38 +41,34 @@ import {
   type PipedrivePerson,
 } from '@aac/api-clients/pipedrive';
 import type { QuoClient } from '@aac/api-clients/quo';
+import { estimateDuration } from '@aac/quoting';
 import {
   buildEventDescription,
-  collectEmailPhotoAttachments,
-  collectFieldPhotoAttachments,
-  collectStubPhotoAttachments,
-  enrichStubEvent,
-  estimateDuration,
-  mergePhotoAttachments,
-  executeHoldEvent,
-  executeStubEvent,
-  getActionableSlot,
-  getOfferedSlot,
-  normalizeAppointmentConfirmed,
-  normalizeManualSchedule,
-  normalizeQuoCustomerIntent,
-  resolveCallbackParent,
   type EventDescriptionMessage,
+} from './build-event-description.js';
+import { collectEmailPhotoAttachments } from './email-photos.js';
+import {
+  collectFieldPhotoAttachments,
   type FieldCompletionRecord,
+} from './field-photos.js';
+import {
+  collectStubPhotoAttachments,
+  mergePhotoAttachments,
+  type StubPhotoAttachment,
+} from './stub-photos.js';
+import { executeHoldEvent, getOfferedSlot } from './execute-hold.js';
+import { enrichStubEvent, executeStubEvent, getActionableSlot } from './execute-stub.js';
+import { normalizeAppointmentConfirmed } from './normalize-appointment-confirmed.js';
+import { normalizeManualSchedule } from './normalize-manual-schedule.js';
+import {
+  normalizeQuoCustomerIntent,
   type QuoCallbackParent,
   type QuoCustomerIntentLabel,
-  type SchedulingDirective,
-  type StubPhotoAttachment,
-} from '@aac/scheduling';
-import {
-  getDirectiveIdByEstimate,
-  getQbCustomerIdFromPipedrive,
-  logHealthError,
-  SCHEDULING_AUTO_PROPOSE_THRESHOLD,
-  storePipedriveToQbMapping,
-  trackSchedulingClassification,
-  writePendingDirective,
-} from './redis.js';
+} from './normalize-quo-customer.js';
+import { resolveCallbackParent } from './resolve-callback-parent.js';
+import type { SchedulingDirective } from './types.js';
+import { SCHEDULING_AUTO_PROPOSE_THRESHOLD } from './constants.js';
+import type { SchedulingStore } from './store.js';
 import { EASTERN_TZ } from '@aac/shared-utils/eastern';
 
 const log = createLogger('scheduling-dispatch');
@@ -114,6 +114,16 @@ export interface SchedulingDispatchContext {
 }
 
 export interface SchedulingDispatchDeps {
+  /** Shadow-queue writes, PD↔QB id cache, health errors, counters. */
+  store: Pick<
+    SchedulingStore,
+    | 'logHealthError'
+    | 'writePendingDirective'
+    | 'getDirectiveIdByEstimate'
+    | 'getQbCustomerIdFromPipedrive'
+    | 'storePipedriveToQbMapping'
+    | 'trackSchedulingClassification'
+  >;
   pd: PipedriveClient;
   cal: GoogleCalendarClient;
   gemini: GeminiClient;
@@ -249,7 +259,7 @@ export async function dispatchSchedulingIntent(
       // Aug 2026).
       const reason = result.reason instanceof ExtractionError ? result.reason.reason : null;
       if (reason === 'api_error') {
-        await logHealthError(
+        await deps.store.logHealthError(
           'scheduling-dispatch',
           `Gemini classifier api_error: ${(result.reason as Error).message.substring(0, 200)}`,
           { eventId: context.eventId },
@@ -298,7 +308,7 @@ export async function dispatchSchedulingIntent(
         );
         if (estimate) {
           const estimateId = estimate.Id;
-          const existing = await getDirectiveIdByEstimate(estimateId);
+          const existing = await deps.store.getDirectiveIdByEstimate(estimateId);
           if (existing) {
             summary.crossPathDuplicates++;
             log.info('quote_approved already covered by QB-path directive — skipped', {
@@ -341,7 +351,7 @@ export async function dispatchSchedulingIntent(
         }
       }
 
-      await writePendingDirective(directive);
+      await deps.store.writePendingDirective(directive);
       summary.directivesWritten++;
       const queue =
         directive.confidence.score >= SCHEDULING_AUTO_PROPOSE_THRESHOLD
@@ -403,7 +413,7 @@ export async function dispatchSchedulingIntent(
         eventId: context.eventId,
         intent: classification!.intent,
       });
-      await logHealthError(
+      await deps.store.logHealthError(
         'quo',
         `Directive build failed: ${(err as Error).message}`,
         { eventId: context.eventId, intent: classification!.intent ?? 'unknown' },
@@ -411,7 +421,7 @@ export async function dispatchSchedulingIntent(
     }
   }
 
-  await trackSchedulingClassification(context.eventType, summary);
+  await deps.store.trackSchedulingClassification(context.eventType, summary);
 
   return summary;
 }
@@ -516,7 +526,7 @@ async function createStubForDirective(
 ): Promise<boolean> {
   try {
     const now = deps.now ?? (() => new Date());
-    const info = await fetchPdPersonInfo(deps.pd, context.pdPersonId);
+    const info = await fetchPdPersonInfo(deps.pd, deps.store, context.pdPersonId);
     const customerName = info.name ?? `PD ${context.pdPersonId}`;
     const technicianEmails = deps.stub?.technicianEmails ?? [];
 
@@ -553,7 +563,7 @@ async function createStubForDirective(
     return true;
   } catch (err) {
     log.error('Stub creation failed', err as Error, { directiveId: directive.id });
-    await logHealthError(
+    await deps.store.logHealthError(
       'scheduling-dispatch',
       `Stub creation failed: ${(err as Error).message.substring(0, 200)}`,
       { directiveId: directive.id },
@@ -685,7 +695,7 @@ async function createHoldForDirective(
 ): Promise<boolean> {
   try {
     const now = deps.now ?? (() => new Date());
-    const info = await fetchPdPersonInfo(deps.pd, context.pdPersonId);
+    const info = await fetchPdPersonInfo(deps.pd, deps.store, context.pdPersonId);
     const customerName = info.name ?? `PD ${context.pdPersonId}`;
 
     const result = await executeHoldEvent(
@@ -711,7 +721,7 @@ async function createHoldForDirective(
     return false;
   } catch (err) {
     log.error('Hold creation failed', err as Error, { directiveId: directive.id });
-    await logHealthError(
+    await deps.store.logHealthError(
       'scheduling-dispatch',
       `Hold creation failed: ${(err as Error).message.substring(0, 200)}`,
       { directiveId: directive.id },
@@ -810,7 +820,7 @@ async function buildDirective(
       });
       return null;
     }
-    const info = await fetchPdPersonInfo(deps.pd, context.pdPersonId);
+    const info = await fetchPdPersonInfo(deps.pd, deps.store, context.pdPersonId);
     return normalizeAppointmentConfirmed(normalizerDeps, {
       classification: {
         score: classification.score,
@@ -827,7 +837,7 @@ async function buildDirective(
     });
   }
 
-  const personInfo = await fetchPdPersonInfo(deps.pd, context.pdPersonId);
+  const personInfo = await fetchPdPersonInfo(deps.pd, deps.store, context.pdPersonId);
   const customerName = personInfo.name;
 
   let callbackParent: QuoCallbackParent | undefined;
@@ -878,6 +888,7 @@ async function buildDirective(
  */
 async function fetchPdPersonInfo(
   pd: PipedriveClient,
+  store: Pick<SchedulingStore, 'getQbCustomerIdFromPipedrive' | 'storePipedriveToQbMapping'>,
   pdPersonId: number,
 ): Promise<{
   name: string | null;
@@ -902,13 +913,13 @@ async function fetchPdPersonInfo(
   const rawAddress = rawPerson?.[PIPEDRIVE_CROSS_SYSTEM_FIELDS.PERSONAL_ADDRESS];
   const address = typeof rawAddress === 'string' && rawAddress.length > 0 ? rawAddress : null;
 
-  const cachedQbId = await getQbCustomerIdFromPipedrive(String(pdPersonId));
+  const cachedQbId = await store.getQbCustomerIdFromPipedrive(String(pdPersonId));
   if (cachedQbId) return { name, qbCustomerId: cachedQbId, address, emails };
 
   const rawField = rawPerson?.[PIPEDRIVE_CROSS_SYSTEM_FIELDS.QB_CUSTOMER_ID];
   const qbCustomerId = typeof rawField === 'string' && rawField.length > 0 ? rawField : null;
   if (qbCustomerId) {
-    await storePipedriveToQbMapping(String(pdPersonId), qbCustomerId);
+    await store.storePipedriveToQbMapping(String(pdPersonId), qbCustomerId);
   }
   return { name, qbCustomerId, address, emails };
 }

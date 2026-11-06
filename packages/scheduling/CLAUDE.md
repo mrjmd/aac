@@ -14,11 +14,33 @@ the pipeline; the pipeline does the scheduling work and emits results
 
 ## Entry points that call this package
 
-- `apps/middleware/api/quo-webhook` — when intent extraction detects a scheduling intent in a customer message or Matt's outbound text
+- `apps/middleware/api/webhooks/quo` (via `lib/quo-webhook/scheduling.ts`) — `dispatchSchedulingIntent` on every customer text / transcript
+- `apps/middleware/api/scheduling/send-proposal` — `buildProposalForDirective`
+- `apps/middleware/lib/suggestion-note.ts` (QB webhook, reconcile cron, Quo dispatch) — `postSuggestionNoteForDirective`
 - `apps/middleware/api/qb-webhook` — when a QB Estimate Update event arrives (TxnStatus → Accepted)
 - `apps/middleware/api/cron/qb-reconcile` — daily backstop in case QB drops a webhook
 - (future) `apps/website` — instant-quote-from-photos UI
 - (future) `apps/partner-app` — realtor / inspector entry surface
+
+## Dispatch layer (moved from apps/middleware)
+
+- `dispatch.ts` — `dispatchSchedulingIntent`: classify a Quo text or
+  transcript, normalize to directives, write the shadow queue, create
+  STUB / HOLD events (create first, enrich after), post the suggestion note.
+- `proposal-builder.ts` — `buildProposalForDirective` plus the shared
+  `fetchCustomer` / `fetchBusyEvents` / `buildTravelDeps` helpers.
+- `suggestion-note.ts` — `postSuggestionNoteForDirective` (suggestSlot +
+  HOLD + Quo contact note, at-most-once per QB estimate).
+- `store.ts` — `SchedulingStore`: every Redis read/write these need is
+  injected as `deps.store`. The middleware wires it in
+  `apps/middleware/lib/scheduling-store.ts`. Never import a Redis client or
+  hardcode a key here.
+- `constants.ts` — `SCHEDULING_AUTO_PROPOSE_THRESHOLD`, also exported on the
+  `@aac/scheduling/constants` subpath so the middleware's `lib/redis.ts`
+  (imported by every function) can read it without loading the pipeline.
+- Logger module names (`scheduling-dispatch`, `proposal-builder`,
+  `suggestion-note`) and health-error sources predate the move; keep them,
+  dashboards and the error-surface agent key on them.
 
 ## Rules
 

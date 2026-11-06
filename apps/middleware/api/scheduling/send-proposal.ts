@@ -27,7 +27,8 @@ import {
   getCalendar,
   getMaps,
 } from '../../lib/clients.js';
-import { buildProposalForDirective } from '../../lib/proposal-builder.js';
+import { buildProposalForDirective } from '@aac/scheduling';
+import { schedulingStore } from '../../lib/scheduling-store.js';
 import { postProposalToAgent } from '../../lib/agent-proposal-post.js';
 import { getRedis, logHealthError } from '../../lib/redis.js';
 
@@ -70,6 +71,7 @@ export default async function handler(
   try {
     const built = await buildProposalForDirective(
       {
+        store: schedulingStore,
         pd: getPipedrive(),
         qb: getQuickBooks(),
         quo: getQuo(),

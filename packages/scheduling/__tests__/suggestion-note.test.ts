@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { QuoteApprovedDirective } from '@aac/scheduling';
+import type { QuoteApprovedDirective } from '../src/types.js';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
 
 const { mockMarkCronAction, mockLogHealthError, mockGetPendingDirective } = vi.hoisted(() => ({
@@ -8,18 +8,16 @@ const { mockMarkCronAction, mockLogHealthError, mockGetPendingDirective } = vi.h
   mockGetPendingDirective: vi.fn(),
 }));
 
-vi.mock('../lib/redis.js', () => ({
-  getPendingDirective: mockGetPendingDirective,
+// Persistence is injected (moved from vi.mock('../lib/redis.js') in apps/middleware).
+const store = {
   logHealthError: mockLogHealthError,
   markCronAction: mockMarkCronAction,
-  SCHEDULING_AUTO_PROPOSE_THRESHOLD: 0.7,
-  getRedis: vi.fn(),
-}));
+};
 
 import {
   postSuggestionNoteForDirective,
   type SuggestionNoteDeps,
-} from '../lib/suggestion-note.js';
+} from '../src/suggestion-note.js';
 
 const NOW = new Date('2026-06-01T13:00:00.000Z'); // Monday 9am EDT
 
@@ -88,6 +86,7 @@ function makeDeps(opts: DepsOptions = {}): SuggestionNoteDeps & {
   const createContactNote = vi.fn().mockResolvedValue({ id: 'note-1' });
 
   const deps: SuggestionNoteDeps = {
+    store,
     pd: {
       getPerson: vi.fn().mockResolvedValue({ id: 9001, name: 'John Smith' }),
     } as unknown as SuggestionNoteDeps['pd'],

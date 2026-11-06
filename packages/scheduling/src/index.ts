@@ -6,7 +6,8 @@
  * reception, signature verification, intent classification).
  *
  * Called from:
- *   - apps/middleware  Quo webhook intent extraction
+ *   - apps/middleware  Quo webhook intent extraction (dispatch.ts: classify,
+ *                      write directives, create stubs / holds)
  *   - apps/middleware  QB Estimate.Update webhook
  *   - apps/middleware  daily QB reconciliation backstop cron
  *   - (future) apps/website  instant-quote → schedule flow
@@ -28,10 +29,15 @@ export * from './normalize-quo-customer.js';
 export * from './resolve-callback-parent.js';
 export * from './replay.js';
 export * from './suggest-slot.js';
-// Duration prediction for directives — the Quo path resolves the estimate in
-// middleware's dispatch layer, so the predictor must be reachable from there.
+// Duration prediction for directives (the Quo-path dispatch resolves the
+// estimate itself; re-exported for callers that need the predictor).
 export { estimateDuration } from '@aac/quoting';
 export * from './build-event-description.js';
 export * from './proposal.js';
 export * from './travel-time.js';
 export * from './booking-sync.js';
+export * from './constants.js';
+export * from './store.js';
+export * from './dispatch.js';
+export * from './proposal-builder.js';
+export * from './suggestion-note.js';

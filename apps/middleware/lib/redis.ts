@@ -13,6 +13,7 @@ import { Redis } from '@upstash/redis';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { createLogger } from '@aac/shared-utils/logger';
 import { settleDueAt } from '@aac/shared-utils/inbound-settle';
+import { SCHEDULING_AUTO_PROPOSE_THRESHOLD } from '@aac/scheduling/constants';
 import { getEnv } from './env.js';
 
 const log = createLogger('redis');
@@ -306,17 +307,8 @@ export async function writeHeartbeat(): Promise<void> {
 }
 
 // ── Scheduling Pipeline ─────────────────────────────────────────────
-
-/**
- * Confidence threshold for routing a directive onto the auto-propose path.
- * Directives at or above this score land on `scheduling:pending:list`;
- * below it they land on `scheduling:pending-review:list` so Matt can
- * triage manually (no auto-fire SMS).
- *
- * Calibrated against the Walk #6 smoke-test (Margie's directive scored
- * ~0.55 and shouldn't have auto-fired).
- */
-export const SCHEDULING_AUTO_PROPOSE_THRESHOLD = 0.7;
+// SCHEDULING_AUTO_PROPOSE_THRESHOLD lives in @aac/scheduling/constants so
+// the queue routing here and the dispatch's stub/hold gate share one value.
 
 /**
  * Write a SchedulingDirective to the Crawl shadow queue.

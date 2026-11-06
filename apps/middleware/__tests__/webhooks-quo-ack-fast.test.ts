@@ -37,7 +37,8 @@ vi.mock('../lib/env.js', () => ({
 
 const dispatchStarted = vi.hoisted(() => ({ resolve: undefined as undefined | (() => void) }));
 const dispatchMock = vi.hoisted(() => vi.fn());
-vi.mock('../lib/scheduling-dispatch.js', () => ({
+vi.mock('@aac/scheduling', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aac/scheduling')>()),
   dispatchSchedulingIntent: dispatchMock,
 }));
 vi.mock('../lib/suggestion-note.js', () => ({ maybePostSuggestionNote: vi.fn() }));
