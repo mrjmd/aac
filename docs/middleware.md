@@ -21,7 +21,7 @@ Quo/OpenPhone (telephony), QuickBooks (accounting), and Google Ads (lead capture
 | `/api/webhooks/quo` | POST | Receives call/SMS events, logs activities in Pipedrive, extracts entities via AI |
 | `/api/webhooks/google-ads` | POST | Receives Google Ads lead form submissions, creates Pipedrive person + follow-up task + SMS alert |
 | `/api/health` | GET | Returns operational metrics (webhook counts, sync mappings, errors, heartbeat) |
-| `/api/auth/quickbooks/connect` | GET | Initiates QuickBooks OAuth flow |
+| `/api/auth/quickbooks/connect?key=<CRON_SECRET>` | GET | Initiates QuickBooks OAuth flow (owner-only) |
 | `/api/auth/quickbooks/callback` | GET | Completes QuickBooks OAuth flow, stores tokens in Redis |
 
 ### Pipedrive Webhook (`/api/webhooks/pipedrive`)
@@ -106,9 +106,20 @@ Returns JSON with:
 
 ### QuickBooks OAuth (`/api/auth/quickbooks/connect` + `callback`)
 
-Developer-facing OAuth flow:
-- `connect` redirects to QuickBooks authorization page
-- `callback` exchanges auth code for tokens, stores in Redis
+Owner-only OAuth flow. To reconnect QBO, open in a browser:
+
+```
+https://aac-middleware-monorepo.vercel.app/api/auth/quickbooks/connect?key=<CRON_SECRET>
+```
+
+(`Authorization: Bearer <CRON_SECRET>` also works; without either, 401.)
+
+- `connect` checks the key (timing-safe), stores a one-time random `state`
+  in Redis (`keys.qbOAuthState`, 10-minute TTL), and redirects to QuickBooks
+- `callback` consumes that state (unknown/expired/reused → 400), refuses any
+  `realmId` other than `QUICKBOOKS_REALM_ID` (no tokens saved), then exchanges
+  the code and stores tokens in Redis. Finish within 10 minutes of opening
+  `connect`, or start again.
 - Tokens auto-refresh via the QuickBooks client (5-minute buffer before expiry)
 
 ---

@@ -10,8 +10,13 @@ import { createLogger } from '@aac/shared-utils/logger';
 import { getEnv } from '../../../lib/env.js';
 import { qboTokenStore } from '@aac/shared-utils/qbo-tokens';
 import { getRedis } from '../../../lib/redis.js';
+import { keys } from '@aac/shared-utils/redis';
 
 const log = createLogger('quickbooks-oauth-callback');
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
 
 interface TokenResponse {
   access_token: string;
@@ -29,21 +34,28 @@ export default async function handler(
 
   const { code, state, realmId, error, error_description } = req.query;
 
+  res.setHeader('Cache-Control', 'no-store');
+
   // Check for errors from QuickBooks
   if (error) {
     log.error('OAuth error from QuickBooks', new Error(String(error_description || error)));
     res.status(400).send(`
       <h1>QuickBooks Authorization Failed</h1>
-      <p>Error: ${error}</p>
-      <p>${error_description || ''}</p>
+      <p>Error: ${escapeHtml(String(error))}</p>
+      <p>${escapeHtml(String(error_description || ''))}</p>
     `);
     return;
   }
 
-  // Validate state (CSRF protection)
-  if (state !== 'aac-middleware') {
-    log.warn('Invalid OAuth state', { state });
-    res.status(400).send('<h1>Invalid state parameter</h1>');
+  // Validate state (CSRF protection): the one-time nonce /connect stored.
+  // DEL is the existence check, so a nonce can't be used twice.
+  const stateOk =
+    typeof state === 'string' &&
+    state.length > 0 &&
+    (await getRedis().del(keys.qbOAuthState(state))) === 1;
+  if (!stateOk) {
+    log.warn('Invalid or expired OAuth state');
+    res.status(400).send('<h1>Invalid or expired state. Start again from /api/auth/quickbooks/connect.</h1>');
     return;
   }
 
@@ -51,6 +63,19 @@ export default async function handler(
   if (!code || typeof code !== 'string') {
     log.warn('Missing authorization code');
     res.status(400).send('<h1>Missing authorization code</h1>');
+    return;
+  }
+
+  // Only the configured company: tokens for any other realm would break
+  // every QBO call until the next reconnect.
+  if (realmId !== env.quickbooks.realmId) {
+    log.warn('QuickBooks callback for a different realm; tokens not saved', {
+      realmId: typeof realmId === 'string' ? realmId : null,
+    });
+    res.status(400).send(`
+      <h1>Wrong QuickBooks company</h1>
+      <p>This company doesn't match QUICKBOOKS_REALM_ID. No tokens were saved.</p>
+    `);
     return;
   }
 
@@ -83,8 +108,7 @@ export default async function handler(
       });
       res.status(500).send(`
         <h1>Token Exchange Failed</h1>
-        <p>Status: ${tokenResponse.status}</p>
-        <pre>${errorText}</pre>
+        <p>Status: ${tokenResponse.status}. Details are in the middleware logs.</p>
       `);
       return;
     }
@@ -110,16 +134,11 @@ export default async function handler(
       refreshExpiresIn: tokens.x_refresh_token_expires_in,
     });
 
-    // Check if realmId matches what we have configured
-    const realmIdMatch = realmId === env.quickbooks.realmId;
-
     res.status(200).send(`
       <h1>QuickBooks Connected Successfully!</h1>
-      <p>Access token expires in: ${Math.round(tokens.expires_in / 60)} minutes</p>
-      <p>Refresh token expires in: ${Math.round(tokens.x_refresh_token_expires_in / 86400)} days</p>
-      <p>Realm ID from callback: <strong>${realmId}</strong></p>
-      <p>Realm ID in env: <strong>${env.quickbooks.realmId}</strong></p>
-      ${!realmIdMatch ? '<p style="color: red;"><strong>WARNING: Realm IDs do not match! Update QUICKBOOKS_REALM_ID env var.</strong></p>' : '<p style="color: green;">Realm IDs match</p>'}
+      <p>Access token expires in: ${Math.round(Number(tokens.expires_in) / 60)} minutes</p>
+      <p>Refresh token expires in: ${Math.round(Number(tokens.x_refresh_token_expires_in) / 86400)} days</p>
+      <p style="color: green;">Realm ID matches QUICKBOOKS_REALM_ID</p>
       <p>You can close this window.</p>
     `);
   } catch (error) {

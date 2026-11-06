@@ -27,7 +27,8 @@
 - **New redirect URI:** `https://aac-middleware-monorepo.vercel.app/api/auth/quickbooks/callback`
 - Both are registered in the Intuit Developer Portal
 - Tokens are stored in shared Redis — both old and new middleware can use them
-- To roll back: visit `https://aac-middleware.vercel.app/api/auth/quickbooks/connect` to re-authorize with the old redirect URI
+- To roll back: visit `https://aac-middleware.vercel.app/api/auth/quickbooks/connect` to re-authorize with the old redirect URI (legacy aac-slim deployment, no key)
+- To reconnect on the monorepo middleware: `https://aac-middleware-monorepo.vercel.app/api/auth/quickbooks/connect?key=<CRON_SECRET>` (owner-only since 2026-11; finish within 10 minutes)
 
 ## Google Ads Webhook Key
 

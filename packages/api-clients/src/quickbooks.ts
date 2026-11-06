@@ -295,7 +295,7 @@ export class QuickBooksClient {
     const tokens = await this.config.getTokens();
 
     if (!tokens) {
-      throw new Error('QuickBooks not connected. Visit /api/auth/quickbooks/connect to authorize.');
+      throw new Error('QuickBooks not connected. Visit /api/auth/quickbooks/connect?key=<CRON_SECRET> on the middleware to authorize.');
     }
 
     // Check if access token is expired (with 5 minute buffer)

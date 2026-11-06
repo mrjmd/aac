@@ -69,6 +69,13 @@ export const keys = {
    */
   qbRefreshLock: 'oauth:quickbooks:refresh-lock' as const,
 
+  /**
+   * One-time CSRF state nonce for the QB OAuth connect → callback round
+   * trip (middleware /api/auth/quickbooks). Set by /connect, deleted by
+   * /callback; 10-minute TTL.
+   */
+  qbOAuthState: (state: string) => `oauth:quickbooks:state:${state}` as const,
+
   // ── To-Do Items ────────────────────────────────────────────────────
 
   /** Individual to-do item (JSON blob) */
@@ -468,6 +475,7 @@ export const ttl = {
   loopPrevention: 60,        // 60 seconds
   contactCreateLock: 30,     // 30 seconds
   qbRefreshLock: 30,         // 30 seconds — refresh round-trip is ~1s; TTL only guards crashes
+  qbOAuthState: 600,         // 10 minutes (connect → Intuit consent → callback)
   webhookCount: 172_800,     // 48 hours (keep yesterday + today)
   campaign: 7_776_000,       // 90 days
   attribution: 31_536_000,   // 1 year

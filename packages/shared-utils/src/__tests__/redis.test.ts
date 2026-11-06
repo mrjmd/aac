@@ -56,6 +56,11 @@ describe('keys', () => {
     it('has QB OAuth tokens key', () => {
       expect(keys.qbOAuthTokens).toBe('oauth:quickbooks:tokens');
     });
+
+    it('builds the OAuth state nonce key with a 10-minute TTL', () => {
+      expect(keys.qbOAuthState('abc123')).toBe('oauth:quickbooks:state:abc123');
+      expect(ttl.qbOAuthState).toBe(600);
+    });
   });
 
   describe('campaign state', () => {
