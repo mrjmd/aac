@@ -369,13 +369,17 @@ export async function getBookingSyncOutcome(eventId: string): Promise<string | n
   return (await getRedis().get<string>(keys.bookingSyncEvent(eventId))) ?? null;
 }
 
-/** Final outcomes stick; `none` / `ambiguous` expire in a day so the event is re-checked. */
+/**
+ * Final outcomes stick for ttl.bookingSyncFinal (a year; the sync only reads
+ * events starting in the next 60 days, so a marker is long past use by then);
+ * `none` / `ambiguous` expire in a day so the event is re-checked.
+ */
 export async function setBookingSyncOutcome(
   eventId: string,
   outcome: string,
   final: boolean,
 ): Promise<void> {
-  await getRedis().set(keys.bookingSyncEvent(eventId), outcome, final ? undefined : { ex: 86_400 });
+  await getRedis().set(keys.bookingSyncEvent(eventId), outcome, { ex: final ? ttl.bookingSyncFinal : 86_400 });
 }
 
 /**
