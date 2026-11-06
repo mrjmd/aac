@@ -17,6 +17,7 @@ import { draftOne, prepareRun, type RunContext } from './drafter.js';
 import { loadFieldChannel, type FieldChannel } from './field-context.js';
 import { runScopeGate, type GateVerdict } from './gate.js';
 import { flagScopeChange } from './flags.js';
+import type { OpenQuoteEntry } from '@aac/shared-utils/types';
 import { getOpenQuote, syncOpenQuoteIndex } from './open-quotes.js';
 import {
   classify,
@@ -33,7 +34,9 @@ import {
   type DrafterAssets,
   type DrafterDeps,
   type DrafterMode,
+  routerOwnsEvent,
   type DraftRunRecord,
+  type RoutedQuoteJob,
   type TriggerEvent,
   type TriggerRunlogEntry,
 } from './types.js';
@@ -102,10 +105,28 @@ async function appendRunlog(deps: DrafterDeps, entry: TriggerRunlogEntry): Promi
 }
 
 /**
+ * The inbound router hands a settled burst's quote decision to the loop:
+ * the next tick drafts it under the run lock (doc numbers, ownership and
+ * modes stay here), skipping the debounce and the T4 gate.
+ */
+export async function enqueueRoutedQuote(
+  redis: DrafterDeps['redis'],
+  phone: string,
+  job: RoutedQuoteJob,
+): Promise<void> {
+  await redis.hset(keys.quoteTriggerRouted, { [phone]: JSON.stringify(job) });
+  await redis.zadd(keys.quoteTriggerDue, { score: new Date(job.at).getTime(), member: phone });
+}
+
+/**
  * Drain the webhook-fed queue into the per-phone pending buffer and arm
  * the debounce clock. Returns the drain count and any debrief marker.
+ * Events the inbound router owns are dropped when its quote route is live.
  */
-async function drainQueue(deps: DrafterDeps): Promise<{ drained: number; debriefAt: string | null }> {
+async function drainQueue(
+  deps: DrafterDeps,
+  routerOwnsInbound: boolean,
+): Promise<{ drained: number; debriefAt: string | null }> {
   let drained = 0;
   let debriefAt: string | null = null;
   for (;;) {
@@ -118,9 +139,12 @@ async function drainQueue(deps: DrafterDeps): Promise<{ drained: number; debrief
       continue;
     }
     if (INTERNAL.has(ev.phone)) continue;
+    if (routerOwnsInbound && routerOwnsEvent(ev)) continue;
     const existing = (await deps.redis.hget<TriggerEvent[]>(keys.quoteTriggerPending, ev.phone)) ?? [];
     existing.push(ev);
     await deps.redis.hset(keys.quoteTriggerPending, { [ev.phone]: JSON.stringify(existing) });
+    // A routed job is due now; Matt's own text must not push it out.
+    if (routerOwnsInbound && (await deps.redis.hget(keys.quoteTriggerRouted, ev.phone))) continue;
     // GT: a newer event pushes the settle window out; an out-of-order
     // older event never pulls it in.
     const dueAt = new Date(ev.at).getTime() + DEBOUNCE_MS;
@@ -180,8 +204,8 @@ async function evaluateT4(
     return null;
   }
 
-  const lastDone = await deps.redis.hget<string>(keys.quoteTriggerT4Done, open.estimateId);
-  if (lastDone && now - new Date(lastDone).getTime() < T4_DEDUPE_H * 3_600_000) {
+  const lastDone = await t4Deduped(deps, open);
+  if (lastDone) {
     await logEntry({ trigger: 'none', why: `T4 deduped — #${open.docNumber} actioned ${lastDone}` });
     return null;
   }
@@ -277,14 +301,40 @@ async function evaluateT4(
     return null;
   }
 
+  return actOnScopeChange(deps, mode, phone, events.length, open, verdict.reason, channelsOf(inbound), logEntry);
+}
+
+/** One T4 action per estimate per window. */
+async function t4Deduped(deps: DrafterDeps, open: OpenQuoteEntry): Promise<string | null> {
+  const lastDone = await deps.redis.hget<string>(keys.quoteTriggerT4Done, open.estimateId);
+  return lastDone && deps.now() - new Date(lastDone).getTime() < T4_DEDUPE_H * 3_600_000 ? lastDone : null;
+}
+
+type T4Log = (entry: Omit<TriggerRunlogEntry, 'at' | 'mode' | 'phone' | 'events'>) => Promise<void>;
+
+/**
+ * A scope-relevant change on an open quote (the gate's or the router's
+ * verdict): bot-owned → a draft job; otherwise flag, never touching the
+ * estimate.
+ */
+async function actOnScopeChange(
+  deps: DrafterDeps,
+  mode: 'shadow' | 'live',
+  phone: string,
+  eventCount: number,
+  open: OpenQuoteEntry,
+  reason: string,
+  channel: string,
+  logEntry: T4Log,
+): Promise<DraftExecution | null> {
+  const at = new Date(deps.now()).toISOString();
   await deps.redis.hset(keys.quoteTriggerT4Done, { [open.estimateId]: at });
-  const channel = channelsOf(inbound);
   if (open.botOwned) {
     return {
       phone,
       trigger: 'T4',
-      why: verdict.reason,
-      events: events.length,
+      why: reason,
+      events: eventCount,
       hasNewInbound: true,
       customer: open.customer,
       channel,
@@ -301,19 +351,19 @@ async function evaluateT4(
       docNumber: open.docNumber,
       estimateId: open.estimateId,
       total: open.total,
-      reason: verdict.reason,
+      reason,
       channel,
     },
     { dryRun: mode === 'shadow' },
   );
   await logEntry({
     trigger: 'T4',
-    why: verdict.reason,
+    why: reason,
     record: {
       phone,
       customer: open.customer,
       outcome: 'flagged',
-      detail: `#${open.docNumber} ($${open.total}) via ${channel}: ${verdict.reason}`,
+      detail: `#${open.docNumber} ($${open.total}) via ${channel}: ${reason}`,
       estimateId: open.estimateId,
       docNumber: open.docNumber,
       total: open.total,
@@ -390,11 +440,43 @@ async function executeDraft(
   return entry;
 }
 
+/** A routed T4: the router's read already judged the burst scope-relevant, so no gate call. */
+async function routedT4(
+  deps: DrafterDeps,
+  mode: 'shadow' | 'live',
+  phone: string,
+  eventCount: number,
+  job: RoutedQuoteJob,
+): Promise<DraftExecution | null> {
+  const logEntry: T4Log = (entry) =>
+    appendRunlog(deps, { at: new Date(deps.now()).toISOString(), mode, phone, events: eventCount, ...entry });
+  const open = await getOpenQuote(deps.redis, phone);
+  if (!open) {
+    await logEntry({ trigger: 'none', why: 'router T4: open quote no longer indexed' });
+    return null;
+  }
+  const lastDone = await t4Deduped(deps, open);
+  if (lastDone) {
+    await logEntry({ trigger: 'none', why: `T4 deduped — #${open.docNumber} actioned ${lastDone}` });
+    return null;
+  }
+  return actOnScopeChange(deps, mode, phone, eventCount, open, `${job.why} (inbound router)`, job.channel, logEntry);
+}
+
+export interface TickOptions {
+  /**
+   * The inbound router's quote route is live: drop the customer events it
+   * owns at drain time (texts, photos, voicemails); its decisions arrive as
+   * routed jobs instead.
+   */
+  routerOwnsInbound?: boolean;
+}
+
 /**
  * One trigger pass. Cheap when idle (a queue pop + a ZRANGE); only
  * prepares the QBO run context when something is actually due.
  */
-export async function runTick(deps: DrafterDeps, envMode: DrafterMode): Promise<TickSummary> {
+export async function runTick(deps: DrafterDeps, envMode: DrafterMode, opts: TickOptions = {}): Promise<TickSummary> {
   const mode = await resolveMode(deps, envMode);
   const summary: TickSummary = { mode, drained: 0, due: 0, settling: 0, drafted: 0, records: [] };
   if (mode === 'off') {
@@ -413,7 +495,7 @@ export async function runTick(deps: DrafterDeps, envMode: DrafterMode): Promise<
 
   try {
     const t4Mode = await resolveT4Mode(deps, mode);
-    const { drained, debriefAt } = await drainQueue(deps);
+    const { drained, debriefAt } = await drainQueue(deps, opts.routerOwnsInbound ?? false);
     summary.drained = drained;
 
     const now = deps.now();
@@ -430,6 +512,32 @@ export async function runTick(deps: DrafterDeps, envMode: DrafterMode): Promise<
       // consume BEFORE drafting (a wedged draft must not loop forever)
       await deps.redis.zrem(keys.quoteTriggerDue, phone);
       await deps.redis.hdel(keys.quoteTriggerPending, phone);
+      const rawRouted = await deps.redis.hget<RoutedQuoteJob | string>(keys.quoteTriggerRouted, phone);
+      if (rawRouted) {
+        // The router judged this burst; any buffered events (Matt's own
+        // texts) ride along in the same draft.
+        await deps.redis.hdel(keys.quoteTriggerRouted, phone);
+        const routed: RoutedQuoteJob = typeof rawRouted === 'string' ? JSON.parse(rawRouted) : rawRouted;
+        if (routed.trigger === 'T4') {
+          if (t4Mode === 'off') {
+            await appendRunlog(deps, { at: new Date(now).toISOString(), mode, phone, trigger: 'none', why: 'router T4, T4 off', events: events.length + 1 });
+            continue;
+          }
+          const t4Job = await routedT4(deps, t4Mode, phone, events.length + 1, routed);
+          if (t4Job) jobs.push(t4Job);
+          continue;
+        }
+        jobs.push({
+          phone,
+          trigger: routed.trigger,
+          why: `${routed.why} (inbound router)`,
+          events: events.length + 1,
+          hasNewInbound: true,
+          customer: null,
+          channel: routed.channel,
+        });
+        continue;
+      }
       const verdict = classify(events);
       if (!verdict) {
         // T4: no photo-burst/quote-promise, but an open quote may make this

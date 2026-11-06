@@ -152,7 +152,19 @@ Each phase is its own commit set and its own push, with your approval.
    clears the old intake queue; the 10-min sweep re-arms the router for any
    customer message newer than its saved read (also retries failed reads).
    Drafts land about 2 min after the burst settles instead of the old 10-min
-   preemption window. Quote and referral next.
+   preemption window.
+   Built (quote): with `quote` live the router hands each quote or
+   quote-gate route to the quote loop as a routed job (`quote-trigger:routed`,
+   due now): T1 photos, T3 Matt's promise inside the burst, T4 a scope change
+   on an open quote, judged by the read instead of the gate call. The quote
+   tick drafts it under its run lock, modes (including T4 shadow), ownership
+   and dedupe rules, and drops the customer's texts, photos and voicemails at
+   drain time. It still triggers on what the router can't see: Matt's
+   outbound promises, emails, call transcripts, Mike's debriefs. A declined
+   or need-info burst no longer gets a quote draft. The drafter still reads
+   the photos itself (its area pre-pass grounds prices in past quotes; the
+   router's one-line photo descriptions don't replace it), so this step
+   saves the T4 gate call, not the photo read. Referral next.
 5. **Scheduling** (after cleanup step 4 moves stub/hold dispatch into
    `@aac/scheduling`).
 

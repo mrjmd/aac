@@ -5,9 +5,16 @@
  * - intake: first-touch intake, CT routing, and a first-touch decline go to
  *   message-drafts' processRoutedIntake with this read, so intake makes one
  *   draft-only call instead of classifying and reading the photos again.
+ * - quote: a quote or quote-gate route is handed to the quote loop as a
+ *   routed job (T1 photos, T3 Matt's promise, T4 scope change on an open
+ *   quote). The loop drafts it on its next tick under its own lock, with no
+ *   debounce and no T4 gate call; it stops judging the customer's texts,
+ *   photos and voicemails itself. A declined or need-info burst never gets
+ *   a quote draft.
  */
 import { keys } from '@aac/shared-utils/redis';
 import { processRoutedIntake, type RoutedIntake } from '@aac/message-drafts';
+import { enqueueRoutedQuote, type RoutedQuoteJob } from '@aac/quote-drafter';
 import type { Referral } from '@aac/quoting';
 import type { Thread } from './read.js';
 import { LIVE_ROUTES, type Acted, type InboundRead, type LiveRoute, type Route, type RouterDeps, type ThreadState } from './types.js';
@@ -76,8 +83,7 @@ export async function act(
   },
 ): Promise<Acted[]> {
   const acted: Acted[] = [];
-  if (!deps.drafts) return acted;
-  if (live.has('intake')) {
+  if (live.has('intake') && deps.drafts) {
     // A decline before Matt has said anything is intake's (the kind first reply).
     const firstReply = !ctx.state.mattEngaged && !ctx.state.intakeDone;
     const r = ctx.routes.find(
@@ -92,5 +98,30 @@ export async function act(
       acted.push({ route: r.route, outcome: o.kind, ...(o.kind === 'drafted' ? {} : { reason: o.reason }) });
     }
   }
+  if (live.has('quote')) {
+    const r = ctx.routes.find((x) => x.route === 'quote' || x.route === 'quote-gate');
+    if (r) {
+      await enqueueRoutedQuote(deps.redis, phone, routedQuote(r, ctx.state, ctx.thread, ctx.burstFromMs, deps.now?.() ?? Date.now()));
+      acted.push({ route: r.route, outcome: 'queued' });
+    }
+  }
   return acted;
+}
+
+/** The quote loop's job for this burst. */
+export function routedQuote(route: Route, state: ThreadState, thread: Thread, burstFromMs: number, nowMs: number): RoutedQuoteJob {
+  const inBurst = (at: string) => new Date(at).getTime() >= burstFromMs;
+  const texts = thread.messages.filter((m) => m.direction === 'incoming' && inBurst(m.createdAt));
+  const voicemail = thread.calls.some((c) => c.direction === 'incoming' && inBurst(c.createdAt) && thread.voicemails.has(c.id));
+  const channel = [
+    state.newPhotos ? 'photos' : '',
+    texts.some((m) => (m.text ?? '').trim()) ? 'text' : '',
+    voicemail ? 'voicemail' : '',
+  ].filter(Boolean).join(' + ') || 'text';
+  return {
+    trigger: route.route === 'quote-gate' ? 'T4' : state.newPhotos ? 'T1' : 'T3',
+    why: route.why,
+    channel,
+    at: new Date(nowMs).toISOString(),
+  };
 }

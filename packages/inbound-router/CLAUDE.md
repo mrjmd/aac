@@ -21,8 +21,12 @@ live route posts the same draft notes the old path did.
   message-drafts `processRoutedIntake` (one draft-only call from this read).
   The worker then clears the old intake queue and its sweep calls
   `sweepInbound` (`sweep.ts`: re-arms phones whose newest customer message is
-  newer than the saved read) instead of `sweepIntake`. `quote` and `referral`
-  are not wired yet.
+  newer than the saved read) instead of `sweepIntake`. `quote`: a quote or
+  quote-gate route becomes a routed job for the quote loop
+  (`enqueueRoutedQuote`: T1 photos, T3 Matt's promise in the burst, T4 scope
+  change on an open quote, no gate call); the quote tick drafts it under its
+  own lock and modes, and stops judging customer texts, photos and
+  voicemails itself. `referral` is not wired yet.
 - Mode: Redis `inbound-router:mode`. Unset/`off` clears settled bursts unread
   (no Gemini); `shadow` reads and logs. Tuning is done by replaying past leads
   (`tools/src/scratch`), not by running shadow in production.

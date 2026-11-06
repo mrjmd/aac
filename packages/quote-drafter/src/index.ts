@@ -17,12 +17,14 @@ export {
   MAX_PHOTOS,
   POST_SEND_RE,
   QUOTE_PROMISE_RE,
+  routerOwnsEvent,
   SKIP_IF_RECENT_ESTIMATE_DAYS,
   type DrafterAssets,
   type DrafterDeps,
   type DrafterMode,
   type DraftRunRecord,
   type QuoteFinding,
+  type RoutedQuoteJob,
   type TriggerEvent,
   type TriggerRunlogEntry,
   type TriggerVerdict,
@@ -42,4 +44,12 @@ export {
 } from './open-quotes.js';
 export { draftOne, prepareRun, type DraftOneOptions, type RunContext } from './drafter.js';
 export { loadFieldChannel, fetchFieldContext, type FieldChannel } from './field-context.js';
-export { runTick, resolveMode, resolveT4Mode, resolveVisitCustomers, type TickSummary } from './trigger.js';
+export {
+  enqueueRoutedQuote,
+  runTick,
+  resolveMode,
+  resolveT4Mode,
+  resolveVisitCustomers,
+  type TickOptions,
+  type TickSummary,
+} from './trigger.js';

@@ -25,7 +25,7 @@ vi.mock('@aac/quote-drafter', async (importOriginal) => ({
   ...mockDrafter,
 }));
 
-const redisMock = { set: vi.fn() };
+const redisMock = { set: vi.fn(), get: vi.fn().mockResolvedValue(null) };
 vi.mock('../lib/quote-deps.js', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getQuoteDeps: vi.fn(() => ({ redis: redisMock })),
@@ -59,17 +59,23 @@ describe('quote-tick', () => {
 
   it('passes the env mode through and reports the summary', async () => {
     const res = await quoteTick(req({ authorization: 'Bearer cron-secret' }));
-    expect(mockDrafter.runTick).toHaveBeenCalledWith(expect.anything(), 'shadow');
+    expect(mockDrafter.runTick).toHaveBeenCalledWith(expect.anything(), 'shadow', { routerOwnsInbound: false });
     expect(await res.json()).toMatchObject({ status: 'ok', mode: 'live' });
+  });
+
+  it('tells the loop the router owns customer events once quote is live', async () => {
+    redisMock.get.mockResolvedValueOnce('intake,quote');
+    await quoteTick(req({ authorization: 'Bearer cron-secret' }));
+    expect(mockDrafter.runTick).toHaveBeenLastCalledWith(expect.anything(), 'shadow', { routerOwnsInbound: true });
   });
 
   it('defaults to off when QUOTE_DRAFTER_MODE is unset or garbage', async () => {
     delete process.env.QUOTE_DRAFTER_MODE;
     await quoteTick(req({ authorization: 'Bearer cron-secret' }));
-    expect(mockDrafter.runTick).toHaveBeenLastCalledWith(expect.anything(), 'off');
+    expect(mockDrafter.runTick).toHaveBeenLastCalledWith(expect.anything(), 'off', { routerOwnsInbound: false });
     process.env.QUOTE_DRAFTER_MODE = 'LIVE!!';
     await quoteTick(req({ authorization: 'Bearer cron-secret' }));
-    expect(mockDrafter.runTick).toHaveBeenLastCalledWith(expect.anything(), 'off');
+    expect(mockDrafter.runTick).toHaveBeenLastCalledWith(expect.anything(), 'off', { routerOwnsInbound: false });
   });
 
   it('skips the heartbeat when the drafter is off', async () => {

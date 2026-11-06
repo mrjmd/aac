@@ -84,6 +84,25 @@ export const SKIP_IF_RECENT_ESTIMATE_DAYS = 30;
 
 // ── classification ─────────────────────────────────────────────────────
 
+/** The inbound router's quote decision for one settled customer burst (phase 4). */
+export interface RoutedQuoteJob {
+  /** T1 photos, T3 Matt's quote promise inside the burst, T4 scope change on an open quote. */
+  trigger: 'T1' | 'T3' | 'T4';
+  why: string;
+  /** Inbound channel(s) of the burst, for scope-flag notes. */
+  channel: string;
+  at: string;
+}
+
+/**
+ * With the router's quote route live, a customer's texts, photos and
+ * voicemails are the router's to judge; the loop keeps Matt's outbound
+ * texts (T3), emails, call transcripts and Mike's debriefs.
+ */
+export function routerOwnsEvent(e: TriggerEvent): boolean {
+  return e.direction === 'incoming' && (!e.kind || e.kind === 'message' || e.kind === 'voicemail');
+}
+
 export interface TriggerVerdict {
   trigger: 'T1' | 'T3';
   why: string;

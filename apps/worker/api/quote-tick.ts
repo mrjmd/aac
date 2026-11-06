@@ -9,10 +9,16 @@
  *
  * Mode: Redis `quote-drafter:mode` overrides QUOTE_DRAFTER_MODE
  * (off | shadow | live); off short-circuits before touching the queue.
+ *
+ * With `quote` in Redis `inbound-router:live`, the inbound router judges
+ * the customer's texts, photos and voicemails and hands its quote decisions
+ * over as routed jobs; this loop drops those events and keeps Matt's own
+ * texts (T3), emails, call transcripts and Mike's debriefs (T2).
  */
 import { createLogger } from '@aac/shared-utils/logger';
 import { keys } from '@aac/shared-utils/redis';
 import { runTick } from '@aac/quote-drafter';
+import { liveRoutes } from '@aac/inbound-router';
 import { getQuoteDeps, envMode } from '../lib/quote-deps.js';
 import { isCronRequest, isMiddlewareRequest, json } from '../lib/auth.js';
 
@@ -24,7 +30,8 @@ export async function GET(request: Request): Promise<Response> {
   }
   try {
     const deps = getQuoteDeps();
-    const summary = await runTick(deps, envMode());
+    const routerOwnsInbound = (await liveRoutes(deps)).has('quote');
+    const summary = await runTick(deps, envMode(), { routerOwnsInbound });
     if (summary.mode !== 'off') {
       await deps.redis.set(keys.heartbeat('quote-drafter'), new Date().toISOString());
     }

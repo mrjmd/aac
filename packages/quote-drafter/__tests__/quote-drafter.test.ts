@@ -2,9 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import type { Redis } from '@upstash/redis';
 import { keys } from '@aac/shared-utils/redis';
 import type { OpenQuoteEntry } from '@aac/shared-utils/types';
-import { classify, type TriggerEvent, type DrafterDeps } from '../src/types.js';
+import { classify, routerOwnsEvent, type TriggerEvent, type DrafterDeps } from '../src/types.js';
 import { draftOne, type DraftOneOptions, type RunContext } from '../src/drafter.js';
-import { runTick, resolveVisitCustomers } from '../src/trigger.js';
+import { enqueueRoutedQuote, runTick, resolveVisitCustomers } from '../src/trigger.js';
 import { loadAssets, clearAssetCache } from '../src/assets.js';
 import { parseGateVerdict, buildScopeGatePrompt } from '../src/gate.js';
 import {
@@ -81,9 +81,11 @@ class MiniRedis {
   }
   async zadd(
     key: string,
-    opts: { gt?: boolean },
-    member: { score: number; member: string },
+    optsOrMember: { gt?: boolean } | { score: number; member: string },
+    maybeMember?: { score: number; member: string },
   ): Promise<number> {
+    const opts: { gt?: boolean } = maybeMember ? optsOrMember : {};
+    const member = maybeMember ?? (optsOrMember as { score: number; member: string });
     const z = this.zsets.get(key) ?? new Map<string, number>();
     const prev = z.get(member.member);
     if (opts.gt && prev !== undefined && prev >= member.score) {
@@ -732,6 +734,86 @@ describe('runTick T4', () => {
     expect(gen.mock.calls[0][0]).toContain('drywall everywhere');
     const flags = (redis.lists.get(keys.quoteScopeFlags) ?? []).map((r) => JSON.parse(r as string));
     expect(flags[0]).toMatchObject({ channel: 'voicemail' });
+  });
+});
+
+describe('runTick with the inbound router quote route live', () => {
+  const routed = (over: Partial<Parameters<typeof enqueueRoutedQuote>[2]> = {}) => ({
+    trigger: 'T1' as const,
+    why: 'T1 2 photo(s)',
+    channel: 'photos',
+    at: '2026-10-21T15:58:00Z',
+    ...over,
+  });
+
+  it('the router owns customer texts, photos and voicemails; the loop keeps the rest', () => {
+    expect(routerOwnsEvent(ev({ hasMedia: true }))).toBe(true);
+    expect(routerOwnsEvent(ev({ kind: 'voicemail', callId: 'c1' }))).toBe(true);
+    expect(routerOwnsEvent(ev({ direction: 'outgoing', snippet: "I'll get you a quote" }))).toBe(false);
+    expect(routerOwnsEvent(ev({ kind: 'email' }))).toBe(false);
+    expect(routerOwnsEvent(ev({ kind: 'call-transcript', callId: 'c1' }))).toBe(false);
+  });
+
+  it('drops router-owned events at drain time and buffers the rest', async () => {
+    const { deps, redis } = makeDeps();
+    await redis.lpush(keys.quoteTriggerQueue, JSON.stringify(ev({ at: '2026-10-21T15:55:00Z', hasMedia: true })));
+    await redis.lpush(
+      keys.quoteTriggerQueue,
+      JSON.stringify(ev({ phone: '+15085550101', direction: 'outgoing', at: '2026-10-21T15:55:00Z', snippet: "I'll write up a quote" })),
+    );
+    const summary = await runTick(deps, 'live', { routerOwnsInbound: true });
+    expect(summary.drained).toBe(2);
+    expect(await redis.hget(keys.quoteTriggerPending, '+15083611747')).toBeNull();
+    expect(await redis.hget(keys.quoteTriggerPending, '+15085550101')).not.toBeNull();
+  });
+
+  it('drafts a routed T1 on the next tick without the debounce, with buffered events riding along', async () => {
+    const { deps, redis } = makeDeps();
+    await redis.hset(keys.quoteDrafterAssets, { ruleset: 'https://blob.test/r.md', updatedAt: 'v1' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('SECTION 0')));
+    await redis.lpush(
+      keys.quoteTriggerQueue,
+      JSON.stringify(ev({ direction: 'outgoing', at: '2026-10-21T15:57:00Z', snippet: 'got them, thanks' })),
+    );
+    await enqueueRoutedQuote(redis as unknown as Redis, '+15083611747', routed());
+    try {
+      const summary = await runTick(deps, 'live', { routerOwnsInbound: true });
+      expect(summary.due).toBe(1);
+      expect(summary.drafted).toBe(1);
+      expect(summary.records[0]).toMatchObject({ trigger: 'T1', why: 'T1 2 photo(s) (inbound router)', events: 2 });
+      expect(await redis.hget(keys.quoteTriggerRouted, '+15083611747')).toBeNull();
+      expect(await redis.hget(keys.quoteTriggerPending, '+15083611747')).toBeNull();
+      expect(await redis.zcard(keys.quoteTriggerDue)).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+      clearAssetCache();
+    }
+  });
+
+  it('a routed T4 on a human-owned quote flags it with no gate call', async () => {
+    const { deps, redis } = makeDeps();
+    await redis.set(keys.quoteDrafterT4Mode, 'live');
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry({ botOwned: false }));
+    await enqueueRoutedQuote(redis as unknown as Redis, '+15083611747', routed({ trigger: 'T4', why: 'T4 open quote: scope change', channel: 'text' }));
+    await runTick(deps, 'live', { routerOwnsInbound: true }); // default gemini mock rejects — a gate call would fail
+    const flags = (redis.lists.get(keys.quoteScopeFlags) ?? []).map((r) => JSON.parse(r as string));
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ docNumber: '1576', channel: 'text', reason: 'T4 open quote: scope change (inbound router)' });
+    expect(await redis.hget(keys.quoteTriggerT4Done, '77')).toBeTruthy();
+  });
+
+  it('a routed T4 respects the 24h dedupe and T4 off', async () => {
+    const { deps, redis } = makeDeps();
+    await upsertOpenQuote(redis as unknown as Redis, '+15083611747', openEntry());
+    await redis.hset(keys.quoteTriggerT4Done, { '77': '2026-10-21T10:00:00Z' });
+    await enqueueRoutedQuote(redis as unknown as Redis, '+15083611747', routed({ trigger: 'T4' }));
+    await runTick(deps, 'live', { routerOwnsInbound: true });
+    await redis.set(keys.quoteDrafterT4Mode, 'off');
+    await enqueueRoutedQuote(redis as unknown as Redis, '+15083611747', routed({ trigger: 'T4' }));
+    await runTick(deps, 'live', { routerOwnsInbound: true });
+    const log = (redis.lists.get(keys.quoteDrafterRunlog) ?? []).map((r) => JSON.parse(r as string));
+    expect(log.map((l) => l.why)).toEqual(['router T4, T4 off', 'T4 deduped — #1576 actioned 2026-10-21T10:00:00Z']);
+    expect(redis.lists.get(keys.quoteScopeFlags)).toBeUndefined();
   });
 });
 

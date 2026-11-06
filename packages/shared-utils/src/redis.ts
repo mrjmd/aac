@@ -112,6 +112,14 @@ export const keys = {
    */
   quoteTriggerDue: 'quote-trigger:due' as const,
 
+  /**
+   * HASH: phone → JSON RoutedQuoteJob. The inbound router's quote decision
+   * for a settled customer burst (phase 4, `inbound-router:live` includes
+   * quote); the phone is also put due now, and the next quote tick drafts it
+   * under its own lock instead of classifying the burst again.
+   */
+  quoteTriggerRouted: 'quote-trigger:routed' as const,
+
   /** HASH: phone → ISO of last T2 (Mike-debrief) draft — 24h dedupe. */
   quoteTriggerT2Done: 'quote-trigger:t2-done' as const,
 

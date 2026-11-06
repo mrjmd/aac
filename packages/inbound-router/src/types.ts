@@ -95,7 +95,8 @@ export const LIVE_ROUTES: readonly LiveRoute[] = ['intake', 'quote', 'referral']
 /** What a live route did. */
 export interface Acted {
   route: RouteName;
-  outcome: 'drafted' | 'skipped' | 'retry-later';
+  /** queued = handed to the quote loop, which drafts it on its next tick. */
+  outcome: 'drafted' | 'skipped' | 'retry-later' | 'queued';
   reason?: string;
 }
 

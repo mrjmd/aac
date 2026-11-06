@@ -566,6 +566,31 @@ describe('live routes', () => {
     expect(routed).not.toHaveBeenCalled();
   });
 
+  it('quote live: hands quote and quote-gate routes to the quote loop as T1, T3 or T4; nothing else', async () => {
+    const { deps, redis } = makeDeps({ messages: [] });
+    const live = new Set(['quote'] as const);
+    const job = async () => {
+      const raw = await redis.hget<string>(keys.quoteTriggerRouted, PHONE);
+      return raw === null ? null : typeof raw === 'string' ? JSON.parse(raw) : raw;
+    };
+    expect(await act(deps, PHONE, live, ctx([{ route: 'intake', why: '' }, { route: 'quote', why: 'T1 2 photo(s)' }], st({ newPhotos: 2 })))).toEqual([
+      { route: 'quote', outcome: 'queued' },
+    ]);
+    expect(await job()).toMatchObject({ trigger: 'T1', why: 'T1 2 photo(s)', channel: 'photos + text + voicemail' });
+    expect(await redis.zscore(keys.quoteTriggerDue, PHONE)).toBe(NOW);
+
+    await act(deps, PHONE, live, ctx([{ route: 'quote', why: 'T3 quote promised' }], st({ quotePromised: true })));
+    expect((await job()).trigger).toBe('T3');
+    await act(deps, PHONE, live, ctx([{ route: 'quote-gate', why: 'T4 open quote: scope change' }], st({ openQuote: true })));
+    expect((await job()).trigger).toBe('T4');
+
+    redis.hashes.delete(keys.quoteTriggerRouted);
+    expect(await act(deps, PHONE, live, ctx([{ route: 'decline', why: '' }]))).toEqual([]);
+    expect(await act(deps, PHONE, live, ctx([{ route: 'scheduling', why: '' }]))).toEqual([]);
+    expect(await job()).toBeNull();
+    expect(routed).not.toHaveBeenCalled();
+  });
+
   it('tick with intake live: drafts, logs what it did; a retry re-arms without another read', async () => {
     const messages = [msg('m1', 'incoming', 4, 'Water coming in my bulkhead'), msg('m2', 'incoming', 3, '', 2)];
     const { deps, redis, prompts } = makeDeps({ messages, answer: ANSWER });

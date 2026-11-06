@@ -30,6 +30,13 @@ estimates. It runs in `apps/worker` (per-minute cron) with
   (triage section). T4 stages via `quote-drafter:t4-mode` — DEFAULT
   SHADOW, independent of the global mode. Flip with
   `tools/src/quote-trigger/mode.ts t4 live`.
+- **Inbound router (phase 4):** with `quote` in Redis `inbound-router:live`,
+  `runTick(..., { routerOwnsInbound: true })` drops customer texts, photos
+  and voicemails at drain time; the router's decision arrives as a routed job
+  (`quote-trigger:routed`, put due now) and is drafted without the debounce
+  or the T4 gate. Matt's outbound texts (T3), emails, call transcripts and
+  Mike's debriefs still trigger here. All modes, ownership and dedupe rules
+  apply to routed jobs too.
 - **Mode kill-switch:** Redis `quote-drafter:mode` overrides the worker's
   `QUOTE_DRAFTER_MODE` env — `off` | `shadow` (dry-run) | `live`.
 - `strict: true`; tests for new logic; run `pnpm test` after changes.

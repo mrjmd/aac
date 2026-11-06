@@ -44,7 +44,10 @@ Plain Vercel Serverless Functions (no framework) that run the
   `inbound-router:mode` = `shadow` reads each one once and logs the routes it
   would take to `inbound:shadow`. Routes in Redis `inbound-router:live` run
   their drafters; with `intake` live, `/api/tick` clears the old intake queue
-  and `/api/sweep` re-arms the router instead of sweeping intake.
+  and `/api/sweep` re-arms the router instead of sweeping intake; with `quote`
+  live, `/api/quote-tick` drops the customer's texts, photos and voicemails
+  and drafts the router's routed jobs instead (Matt's texts, emails, call
+  transcripts and debriefs still trigger as before).
 - `api/health.ts` — liveness.
 
 ## Rules
