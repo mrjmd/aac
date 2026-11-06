@@ -191,6 +191,7 @@ interface GeminiResponse {
     };
     finishReason: string;
   }>;
+  usageMetadata?: { thoughtsTokenCount?: number };
 }
 
 interface ImagenResponse {
@@ -637,6 +638,15 @@ export class GeminiClient {
 
     if (!text) {
       throw new Error('No text in Gemini response');
+    }
+    if (data.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
+      // Thinking can overrun its budget and use up the cap; the text is cut off.
+      log.warn('Gemini response truncated (MAX_TOKENS)', {
+        model,
+        maxOutputTokens: options?.maxOutputTokens ?? 8192,
+        thoughtsTokenCount: data.usageMetadata?.thoughtsTokenCount ?? null,
+        responseLength: text.length,
+      });
     }
 
     log.debug('Generated content', {

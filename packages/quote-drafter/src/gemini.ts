@@ -12,7 +12,9 @@ export function generateWithRetry(
   return gemini.generateContent(prompt, {
     systemPrompt: opts.systemPrompt,
     temperature: 0,
-    maxOutputTokens: 8192,
+    // The thinking budget is soft: one ·6362 run thought for 7,860 tokens and
+    // ran out of an 8192 cap mid-JSON (11/05). Only used tokens are billed.
+    maxOutputTokens: 16384,
     thinkingBudget: 4096,
     timeoutMs: 120_000,
     imageParts: opts.imageParts?.length ? opts.imageParts : undefined,

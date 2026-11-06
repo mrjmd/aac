@@ -222,6 +222,19 @@ describe('GeminiClient', () => {
       expect(url).toContain('generateContent');
     });
 
+    it('returns a truncated (MAX_TOKENS) response as before; the caller decides', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          candidates: [{ content: { parts: [{ text: '{"lines": [' }] }, finishReason: 'MAX_TOKENS' }],
+          usageMetadata: { thoughtsTokenCount: 7860 },
+        }),
+      }));
+      expect(await client.generateContent('draft a quote', { maxOutputTokens: 8192 })).toBe('{"lines": [');
+    });
+
     it('honors a timeoutMs override via the fetch AbortSignal', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(mockContentResponse('ok'));
