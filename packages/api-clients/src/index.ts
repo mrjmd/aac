@@ -28,6 +28,8 @@ export type {
   GenerateImageOptions,
   GeneratedImage,
   ImageAspectRatio,
+  ImagePromptOptions,
+  ImagePromptResult,
 } from './gemini.js';
 
 export { GoogleCalendarClient } from './google-calendar.js';

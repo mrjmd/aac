@@ -168,6 +168,23 @@ export function parseJsonObject<T>(raw: string): T {
   return JSON.parse(cleaned.slice(start, end + 1)) as T;
 }
 
+export interface ImagePromptOptions {
+  temperature: number;
+  maxOutputTokens: number;
+  /** Attaches thinkingConfig when set. */
+  thinkingBudget?: number;
+  timeoutMs: number;
+}
+
+/**
+ * Result of generateFromImage. A non-2xx answer comes back as
+ * `{ ok: false, status }` (body unread) so callers pick their own fallback;
+ * network errors, timeouts and unparseable JSON throw.
+ */
+export type ImagePromptResult =
+  | { ok: true; text: string }
+  | { ok: false; status: number };
+
 export type ImageAspectRatio = '1:1' | '3:4' | '4:3' | '16:9' | '9:16';
 
 export interface GenerateImageOptions {
@@ -656,6 +673,51 @@ export class GeminiClient {
     });
 
     return text;
+  }
+
+  /**
+   * One image plus one text prompt to the text model, as a single attempt:
+   * no retry, no thinkingConfig fallback, no logging, no API-key guard.
+   * Built for small vision checks whose callers fall back to a default on
+   * any failure (marketing's image quality gate and focal-point detection).
+   * The answer is the first candidate's first text part, or '' when absent.
+   */
+  async generateFromImage(
+    prompt: string,
+    image: { mimeType: string; base64: string },
+    options: ImagePromptOptions,
+  ): Promise<ImagePromptResult> {
+    const model = this.config.textModel ?? DEFAULT_TEXT_MODEL;
+    const response = await fetch(
+      `${API_BASE}/${model}:generateContent?key=${this.config.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { inlineData: { mimeType: image.mimeType, data: image.base64 } },
+                { text: prompt },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: options.temperature,
+            maxOutputTokens: options.maxOutputTokens,
+            ...(options.thinkingBudget !== undefined
+              ? { thinkingConfig: { thinkingBudget: options.thinkingBudget } }
+              : {}),
+          },
+        }),
+        signal: AbortSignal.timeout(options.timeoutMs),
+      },
+    );
+
+    if (!response.ok) return { ok: false, status: response.status };
+
+    const data = (await response.json()) as GeminiResponse;
+    return { ok: true, text: data.candidates?.[0]?.content?.parts?.[0]?.text ?? '' };
   }
 
   // ── Embeddings ──────────────────────────────────────────────────────

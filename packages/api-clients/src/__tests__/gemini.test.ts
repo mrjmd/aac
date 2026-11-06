@@ -412,6 +412,73 @@ describe('GeminiClient', () => {
     });
   });
 
+  describe('generateFromImage', () => {
+    const image = { mimeType: 'image/png', base64: 'AAAA' };
+
+    it('sends one image + prompt with the given config', async () => {
+      mockFetch.mockReturnValueOnce(mockTruncatedResponse('X: 0.40'));
+      const result = await makeClient().generateFromImage('Where?', image, {
+        temperature: 0.1,
+        maxOutputTokens: 50,
+        thinkingBudget: 0,
+        timeoutMs: 10000,
+      });
+      expect(result).toEqual({ ok: true, text: 'X: 0.40' });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [url, init] = mockFetch.mock.calls[0];
+      expect(url).toBe(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=test-gemini-key',
+      );
+      expect(init.method).toBe('POST');
+      expect(init.headers).toEqual({ 'Content-Type': 'application/json' });
+      expect(init.body).toBe(JSON.stringify({
+        contents: [{ parts: [{ inlineData: { mimeType: 'image/png', data: 'AAAA' } }, { text: 'Where?' }] }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 50, thinkingConfig: { thinkingBudget: 0 } },
+      }));
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('omits thinkingConfig when no budget is given', async () => {
+      mockFetch.mockReturnValueOnce(mockTruncatedResponse('ok'));
+      await makeClient().generateFromImage('p', image, { temperature: 0.1, maxOutputTokens: 5, timeoutMs: 1000 });
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(body.generationConfig).toEqual({ temperature: 0.1, maxOutputTokens: 5 });
+    });
+
+    it('returns the status on a non-2xx answer without retrying or reading the body', async () => {
+      const text = vi.fn();
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 400, text });
+      const result = await makeClient().generateFromImage('p', image, {
+        temperature: 0.1, maxOutputTokens: 5, thinkingBudget: 0, timeoutMs: 1000,
+      });
+      expect(result).toEqual({ ok: false, status: 400 });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(text).not.toHaveBeenCalled();
+    });
+
+    it("returns '' when the answer has no text", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve({ candidates: [] }) });
+      const result = await makeClient().generateFromImage('p', image, { temperature: 0.1, maxOutputTokens: 5, timeoutMs: 1000 });
+      expect(result).toEqual({ ok: true, text: '' });
+    });
+
+    it('throws on network errors', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('ECONNRESET'));
+      await expect(
+        makeClient().generateFromImage('p', image, { temperature: 0.1, maxOutputTokens: 5, timeoutMs: 1000 }),
+      ).rejects.toThrow('ECONNRESET');
+    });
+
+    it('uses a configured textModel', async () => {
+      mockFetch.mockReturnValueOnce(mockTruncatedResponse('ok'));
+      await new GeminiClient({ apiKey: 'k', textModel: 'm-1' })
+        .generateFromImage('p', image, { temperature: 0.1, maxOutputTokens: 5, timeoutMs: 1000 });
+      expect(mockFetch.mock.calls[0][0]).toBe(
+        'https://generativelanguage.googleapis.com/v1beta/models/m-1:generateContent?key=k',
+      );
+    });
+  });
+
   describe('embedContent', () => {
     it('embeds a batch and returns vectors in order', async () => {
       const client = new GeminiClient({ apiKey: 'test-key' });
