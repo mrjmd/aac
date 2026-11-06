@@ -123,8 +123,12 @@ describe('watchdog ↔ vercel.json cron drift', () => {
       const schedule = scheduleOf(c.app, c.job);
       expect(schedule, c.job).toBeDefined();
       const [, hour, dom, mon, dow] = schedule!.split(' ');
-      expect([hour, dom, mon, dow], c.job).toEqual([String(c.hourUtc), '*', '*', '*']);
-      if (c.app === 'middleware') expect(schedule, c.job).toBe(`0 ${c.hourUtc} * * *`);
+      // A second, later hour is a retry run (middleware customer crons); the
+      // watchdog keys on the first.
+      const [first, ...retries] = hour.split(',');
+      expect([first, dom, mon, dow], c.job).toEqual([String(c.hourUtc), '*', '*', '*']);
+      expect(retries.every((h) => Number(h) > c.hourUtc), c.job).toBe(true);
+      if (c.app === 'middleware') expect(schedule, c.job).toMatch(new RegExp(`^0 ${c.hourUtc}(,\\d+)? \\* \\* \\*$`));
     }
   });
 
