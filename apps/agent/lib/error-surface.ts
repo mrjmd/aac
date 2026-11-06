@@ -20,6 +20,10 @@
  *   "N more errors suppressed" text naming their sources.
  * - A send that keeps failing is given up after 12h (logged), well inside
  *   the 24h claims, so the cursor can't stall into re-texting old entries.
+ * - Worker errors (`worker:*`) text only when ongoing (3+ from the same
+ *   route in the last hour; worker sources log at most one per 10 min) or
+ *   mission-critical (the watchdog itself). The rest stay on the command
+ *   center's System page and count as done.
  *
  * First-run policy: on cold boot (no cursor), stamp the newest timestamp as
  * the cursor and exit (no backlog flood).
@@ -74,6 +78,12 @@ export const GIVE_UP_AFTER_MS = 12 * 3_600_000;
  */
 const FINGERPRINT_MESSAGE_CHARS = 60;
 
+/** A worker route with this many errors inside the window is ongoing. */
+export const WORKER_ONGOING_COUNT = 3;
+export const WORKER_ONGOING_WINDOW_MS = 3_600_000;
+/** Worker sources that text on their first error: the alarm itself being broken. */
+export const WORKER_CRITICAL_SOURCES: ReadonlySet<string> = new Set(['worker:watchdog']);
+
 export interface SurfaceResult {
   scanned: number;
   surfaced: number;
@@ -86,6 +96,8 @@ export interface SurfaceResult {
   suppressed: number;
   /** Sends that kept failing past GIVE_UP_AFTER_MS, dropped. */
   given_up: number;
+  /** Worker errors neither ongoing nor critical: System page only. */
+  worker_quiet: number;
   errors: number;
   newest_timestamp: string | null;
 }
@@ -137,15 +149,35 @@ export function formatSuppressedSms(entries: HealthErrorEntry[]): string {
   return `[errors] ${n} more error${n === 1 ? '' : 's'} suppressed (${MAX_SURFACED_PER_TICK}-text cap per run). Sources: ${sources}. Full list: health:errors.`;
 }
 
-type Status = 'sent' | 'deduped' | 'suppressed' | 'held' | 'failed' | 'given-up';
-const DONE: ReadonlySet<Status> = new Set<Status>(['sent', 'deduped', 'suppressed', 'given-up']);
+type Status = 'sent' | 'deduped' | 'suppressed' | 'held' | 'failed' | 'given-up' | 'quiet';
+const DONE: ReadonlySet<Status> = new Set<Status>(['sent', 'deduped', 'suppressed', 'given-up', 'quiet']);
+
+/**
+ * Errors from this entry's worker route in the hour up to it (itself
+ * included), or null for a non-worker source.
+ */
+export function workerErrorsInWindow(entry: HealthErrorEntry, all: HealthErrorEntry[]): number | null {
+  if (!entry.source.startsWith('worker:')) return null;
+  const at = Date.parse(entry.timestamp);
+  return all.filter((e) => {
+    if (e.source !== entry.source) return false;
+    const t = Date.parse(e.timestamp);
+    return t <= at && at - t < WORKER_ONGOING_WINDOW_MS;
+  }).length;
+}
+
+/** Whether an entry texts at all: everything except a one-off, non-critical worker error. */
+export function shouldText(entry: HealthErrorEntry, all: HealthErrorEntry[]): boolean {
+  const n = workerErrorsInWindow(entry, all);
+  return n === null || n >= WORKER_ONGOING_COUNT || WORKER_CRITICAL_SOURCES.has(entry.source);
+}
 
 /**
  * Format a single error entry into an SMS body. Kept terse — readable
  * on a phone, includes the source + truncated message + ISO timestamp.
  * Walk-phase will replace this with diagnostic-agent output.
  */
-export function formatErrorSms(entry: HealthErrorEntry): string {
+export function formatErrorSms(entry: HealthErrorEntry, workerErrors: number | null = null): string {
   const ts = entry.timestamp;
   const msg = entry.message.length > 280 ? `${entry.message.slice(0, 277)}...` : entry.message;
   const details =
@@ -153,7 +185,8 @@ export function formatErrorSms(entry: HealthErrorEntry): string {
       ? `\nctx: ${JSON.stringify(entry.details).slice(0, 200)}`
       : '';
   const app = entry.source.startsWith('worker:') ? 'worker' : 'middleware';
-  return `[${app} error]\nsrc: ${entry.source}\nat: ${ts}\n${msg}${details}`;
+  const ongoing = workerErrors !== null && workerErrors >= WORKER_ONGOING_COUNT ? `\nongoing: ${workerErrors} errors from this route in the last hour` : '';
+  return `[${app} error]\nsrc: ${entry.source}\nat: ${ts}\n${msg}${details}${ongoing}`;
 }
 
 /** Never throws: a Redis read failing is treated as "not claimed / not seen" (text rather than swallow). */
@@ -183,6 +216,7 @@ export async function runErrorSurfaceTick(deps: SurfaceDeps): Promise<SurfaceRes
     held_night: 0,
     suppressed: 0,
     given_up: 0,
+    worker_quiet: 0,
     errors: 0,
     newest_timestamp: cursor,
   };
@@ -228,6 +262,12 @@ export async function runErrorSurfaceTick(deps: SurfaceDeps): Promise<SurfaceRes
   // 1. Classify: already texted, a repeat held overnight, or a candidate.
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
+    // Before grouping, so a worker route's third error in the hour isn't
+    // folded into its quiet first one.
+    if (!shouldText(entry, head)) {
+      status[i] = 'quiet';
+      continue;
+    }
     const sha = entry.commitSha || 'unknown';
     const fingerprint = errorFingerprint(entry);
     const key = `${sha}:${fingerprint}`;
@@ -256,7 +296,7 @@ export async function runErrorSurfaceTick(deps: SurfaceDeps): Promise<SurfaceRes
     const sha = entry.commitSha || 'unknown';
     const fingerprint = errorFingerprint(entry);
     try {
-      await deps.quo.sendMessage(deps.recipient, formatErrorSms(entry), deps.sender);
+      await deps.quo.sendMessage(deps.recipient, formatErrorSms(entry, workerErrorsInWindow(entry, head)), deps.sender);
     } catch (err) {
       result.errors += 1;
       status[i] = 'failed';
@@ -304,6 +344,7 @@ export async function runErrorSurfaceTick(deps: SurfaceDeps): Promise<SurfaceRes
     if (status[i] === 'deduped') result.skipped_deduped += 1;
     if (status[i] === 'held') result.held_night += 1;
     if (status[i] === 'suppressed') result.suppressed += 1;
+    if (status[i] === 'quiet') result.worker_quiet += 1;
   }
 
   // 6. Advance the cursor across the contiguous done prefix only.

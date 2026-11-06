@@ -269,6 +269,66 @@ describe('runErrorSurfaceTick', () => {
     expect(setCronCursor).not.toHaveBeenCalled();
   });
 
+  describe('worker errors', () => {
+    const w = (ts: string, source = 'worker:quote-tick') => makeError(`2026-05-28T${ts}Z`, source, 'quote draft failed');
+
+    it('a one-off worker error stays quiet; the cursor passes it', async () => {
+      readRecentHealthErrors.mockResolvedValue([w('15:00:00'), makeError('2026-05-28T14:00:00Z', 'worker:quote-tick', 'old')]);
+      getCronCursor.mockResolvedValue('2026-05-28T14:30:00Z');
+      const quo = makeQuo();
+      const result = await tick(quo);
+      expect(quo.sendMessage).not.toHaveBeenCalled();
+      expect(result.worker_quiet).toBe(1);
+      expect(setCronCursor).toHaveBeenCalledWith('error-surface', '2026-05-28T15:00:00Z');
+      expect(trackCronRun).toHaveBeenCalled();
+    });
+
+    it('texts the third error from one route inside an hour, marked ongoing', async () => {
+      readRecentHealthErrors.mockResolvedValue([w('15:20:00'), w('15:10:00'), w('15:00:00')]);
+      getCronCursor.mockResolvedValue('2026-05-28T15:15:00Z');
+      const quo = makeQuo();
+      const result = await tick(quo);
+      expect(quo.sendMessage).toHaveBeenCalledTimes(1);
+      expect(quo.sendMessage.mock.calls[0][1]).toContain('ongoing: 3 errors from this route in the last hour');
+      expect(result.surfaced).toBe(1);
+    });
+
+    it('three arriving in one tick text once, for the third', async () => {
+      readRecentHealthErrors.mockResolvedValue([w('15:20:00'), w('15:10:00'), w('15:00:00')]);
+      getCronCursor.mockResolvedValue('2026-05-28T14:00:00Z');
+      const quo = makeQuo();
+      const result = await tick(quo);
+      expect(quo.sendMessage).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ surfaced: 1, worker_quiet: 2 });
+      expect(setCronCursor).toHaveBeenCalledWith('error-surface', '2026-05-28T15:20:00Z');
+    });
+
+    it('errors spread over more than an hour, or across routes, are not ongoing', async () => {
+      readRecentHealthErrors.mockResolvedValue([w('16:05:00'), w('15:30:00', 'worker:sweep'), w('15:10:00'), w('15:00:00')]);
+      getCronCursor.mockResolvedValue('2026-05-28T16:00:00Z');
+      const quo = makeQuo();
+      await tick(quo);
+      expect(quo.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('the watchdog failing texts on its first error', async () => {
+      readRecentHealthErrors.mockResolvedValue([w('15:00:00', 'worker:watchdog')]);
+      getCronCursor.mockResolvedValue('2026-05-28T14:00:00Z');
+      const quo = makeQuo();
+      await tick(quo);
+      expect(quo.sendMessage).toHaveBeenCalledTimes(1);
+      expect(quo.sendMessage.mock.calls[0][1]).not.toContain('ongoing');
+    });
+
+    it('middleware errors are unaffected', async () => {
+      readRecentHealthErrors.mockResolvedValue([makeError('2026-05-28T15:00:00Z', 'cron:invoice-create')]);
+      getCronCursor.mockResolvedValue('2026-05-28T14:00:00Z');
+      const quo = makeQuo();
+      await tick(quo);
+      expect(quo.sendMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('daytime rule', () => {
     it('isDaytime is 8 AM to 9 PM Eastern', () => {
       expect(isDaytime(new Date('2026-05-28T11:59:00Z'))).toBe(false); // 7:59 AM EDT
@@ -279,7 +339,7 @@ describe('runErrorSurfaceTick', () => {
 
     it('a first occurrence texts at night; a repeat is held and blocks the cursor', async () => {
       const repeat = makeError('2026-05-29T05:00:00Z', 'quo', 'Pipedrive 502', 'sha-new');
-      const fresh = makeError('2026-05-29T05:30:00Z', 'worker:sweep', 'sweep failed');
+      const fresh = makeError('2026-05-29T05:30:00Z', 'cron:sweep', 'sweep failed');
       readRecentHealthErrors.mockResolvedValue([fresh, repeat]);
       getCronCursor.mockResolvedValue('2026-05-29T04:00:00Z');
       wasErrorFingerprintSurfaced.mockImplementation(async (fp: string) => fp === errorFingerprint(repeat));
@@ -287,7 +347,7 @@ describe('runErrorSurfaceTick', () => {
       const result = await tick(quo, NIGHT);
       expect(result.held_night).toBe(1);
       expect(result.surfaced).toBe(1);
-      expect(quo.sendMessage.mock.calls[0][1]).toContain('worker:sweep');
+      expect(quo.sendMessage.mock.calls[0][1]).toContain('cron:sweep');
       expect(markErrorFingerprintSurfaced).toHaveBeenCalledWith(errorFingerprint(fresh));
       // The held repeat is older than the sent one: the cursor stays before it.
       expect(setCronCursor).not.toHaveBeenCalled();

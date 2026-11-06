@@ -50,6 +50,8 @@ See `docs/projects/agent-vision.md` for the long-term destination.
   (held until then); at most 5 error texts per tick, the newest five, plus
   one "N more errors suppressed (sources)" text; the cursor never passes a
   failed send or a held repeat (a send still failing 12h on is given up).
+  Worker errors (`worker:*`) text only when ongoing (3+ from one route in
+  an hour) or from the watchdog itself; the rest show on the CC System page.
   A tick that delivered everything it owed stamps
   `cron:error-surface:last-run`; the worker watchdog texts if that goes
   25 min stale, and this cron texts if the watchdog's heartbeat does.
