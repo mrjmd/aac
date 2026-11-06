@@ -5,10 +5,14 @@ Status: BUILT, not live (2026-11-05). Follows 3a (stale quotes in
 and voicemail methods, the thin CLIs, `seed-store.ts`, `dismiss.ts` and
 `apps/worker/api/triage.ts` (cron 13:05 UTC, `triage:mode` unset = off) are
 built and tested. Not done: seeding the store in prod, the worker `dry` run,
-flipping to `live`, unloading `com.aac.triage`. Local worker dry run
-(real APIs, no prod writes) took 863s (collect 104s, analyze 758s), over
-the route's 720s budget and the 800s ceiling; the laptop's last two weeks
-ran 550-680s. Decision 2's verdict cache likely has to ship before `live`.
+flipping to `live`, unloading `com.aac.triage`. Decision 2's verdict
+cache is built too (`triage:verdict:*`, 7-day TTL). Local worker dry runs
+(real APIs, no prod writes): cold cache 814-863s, over the route's 720s
+budget and the 800s ceiling (the laptop's last two weeks ran 550-680s);
+warm cache 113s (collect 99s, analyze 14s, 205 of 206 verdicts reused).
+A cold prod cache's first run will likely time out unpublished but warms
+the cache as it goes; a manual laptop run (same store) or a forced second
+run warms it too.
 
 ## Goal
 
