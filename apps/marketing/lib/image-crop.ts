@@ -4,12 +4,11 @@
  * then crops to each platform's aspect ratio centered on that point.
  */
 import sharp from "sharp";
+import { GeminiClient } from "@aac/api-clients";
 
-// "latest" alias — pinned model names churn (2.5-flash retired 2026-08).
+// Model: the client's default text model (the gemini-flash-latest alias).
 // thinkingBudget 0 keeps the thinking models from eating the small
 // maxOutputTokens budget before emitting the answer (see mw 3e06d7d).
-const VISION_MODEL = "gemini-flash-latest";
-const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 interface FocalPoint {
   x: number; // 0–1, left to right
@@ -25,20 +24,8 @@ export async function detectFocalPoint(
   apiKey: string,
 ): Promise<FocalPoint> {
   try {
-    const response = await fetch(
-      `${API_BASE}/${VISION_MODEL}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  inlineData: { mimeType: "image/png", data: imageBase64 },
-                },
-                {
-                  text: `This image will be cropped to different aspect ratios for social media posts. Identify the main visual subject or area of interest.
+    const result = await new GeminiClient({ apiKey }).generateFromImage(
+      `This image will be cropped to different aspect ratios for social media posts. Identify the main visual subject or area of interest.
 
 Return the focal point as two decimal numbers between 0 and 1:
 - X: horizontal position (0 = left edge, 0.5 = center, 1 = right edge)
@@ -47,20 +34,13 @@ Return the focal point as two decimal numbers between 0 and 1:
 Respond in exactly this format, nothing else:
 X: 0.XX
 Y: 0.XX`,
-                },
-              ],
-            },
-          ],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 50, thinkingConfig: { thinkingBudget: 0 } },
-        }),
-        signal: AbortSignal.timeout(10000),
-      },
+      { mimeType: "image/png", base64: imageBase64 },
+      { temperature: 0.1, maxOutputTokens: 50, thinkingBudget: 0, timeoutMs: 10000 },
     );
 
-    if (!response.ok) return { x: 0.5, y: 0.5 };
+    if (!result.ok) return { x: 0.5, y: 0.5 };
 
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const text = result.text;
 
     const xMatch = text.match(/X:\s*([\d.]+)/i);
     const yMatch = text.match(/Y:\s*([\d.]+)/i);

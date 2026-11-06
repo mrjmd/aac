@@ -4,11 +4,11 @@
  * irrelevance, and obvious artifacts before presenting to the user.
  */
 
-// "latest" alias — pinned model names churn (2.5-flash retired 2026-08).
+import { GeminiClient } from "@aac/api-clients";
+
+// Model: the client's default text model (the gemini-flash-latest alias).
 // thinkingBudget 0 keeps the thinking models from eating the small
 // maxOutputTokens budget before emitting the answer (see mw 3e06d7d).
-const VISION_MODEL = "gemini-flash-latest";
-const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 interface QualityResult {
   passed: boolean;
@@ -27,23 +27,8 @@ export async function checkImageQuality(
   apiKey: string,
 ): Promise<QualityResult> {
   try {
-    const response = await fetch(
-      `${API_BASE}/${VISION_MODEL}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: "image/png",
-                    data: imageBase64,
-                  },
-                },
-                {
-                  text: `Analyze this AI-generated background image for a social media post. Answer these questions:
+    const result = await new GeminiClient({ apiKey }).generateFromImage(
+      `Analyze this AI-generated background image for a social media post. Answer these questions:
 
 1. TEXT_CHECK: Does this image contain ANY visible text, letters, words, numbers, labels, watermarks, or writing of any kind? Look carefully — even partial or blurry text counts. Answer YES or NO.
 
@@ -56,27 +41,16 @@ TEXT: YES or NO
 RELEVANT: YES or NO
 QUALITY: YES or NO
 REASON: One sentence explaining any issues found`,
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 200,
-            thinkingConfig: { thinkingBudget: 0 },
-          },
-        }),
-        signal: AbortSignal.timeout(15000),
-      },
+      { mimeType: "image/png", base64: imageBase64 },
+      { temperature: 0.1, maxOutputTokens: 200, thinkingBudget: 0, timeoutMs: 15000 },
     );
 
-    if (!response.ok) {
+    if (!result.ok) {
       // If vision check fails, pass by default (don't block the pipeline)
       return { passed: true, hasText: false, isRelevant: true, reason: "Vision check unavailable" };
     }
 
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const text = result.text;
 
     const hasText = /TEXT:\s*YES/i.test(text);
     const isRelevant = /RELEVANT:\s*YES/i.test(text);
