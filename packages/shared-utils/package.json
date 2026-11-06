@@ -17,6 +17,7 @@
     "./logger": "./dist/logger.js",
     "./types": "./dist/types.js",
     "./webhook-signature": "./dist/webhook-signature.js",
+    "./request-secret": "./dist/request-secret.js",
     "./multiday": "./dist/multiday.js",
     "./inbound-settle": "./dist/inbound-settle.js",
     "./return-path": "./dist/return-path.js"

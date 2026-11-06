@@ -81,6 +81,20 @@ describe('POST /api/scheduling/proposal-decision', () => {
     expect(res2._status).toBe(401);
   });
 
+  it('checks the first value of a repeated secret header', async () => {
+    const first = makeReq({ body: validBody });
+    first.headers['x-scheduling-proposal-secret'] = ['shared-secret', 'wrong'];
+    const res = makeRes();
+    await handler(first, res);
+    expect(res._status).not.toBe(401);
+
+    const second = makeReq({ body: validBody });
+    second.headers['x-scheduling-proposal-secret'] = ['wrong', 'shared-secret'];
+    const res2 = makeRes();
+    await handler(second, res2);
+    expect(res2._status).toBe(401);
+  });
+
   it('returns 400 on missing proposalId', async () => {
     const { proposalId: _unused, ...bad } = validBody;
     const res = makeRes();

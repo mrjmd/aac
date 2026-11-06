@@ -18,6 +18,7 @@
  */
 
 import { createLogger } from '@aac/shared-utils/logger';
+import { hasHeaderSecret } from '@aac/shared-utils/request-secret';
 import type { ProposalPayload, StoredProposal } from '@aac/scheduling';
 import { getEnv } from '../lib/env.js';
 import { getQuo } from '../lib/clients.js';
@@ -62,8 +63,7 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: 'Proposal endpoint not configured' }, 503);
   }
 
-  const supplied = request.headers.get('x-scheduling-proposal-secret');
-  if (supplied !== env.scheduling.proposalSecret) {
+  if (!hasHeaderSecret(request.headers.get('x-scheduling-proposal-secret'), env.scheduling.proposalSecret)) {
     log.warn('Invalid proposal secret');
     return json({ error: 'Unauthorized' }, 401);
   }

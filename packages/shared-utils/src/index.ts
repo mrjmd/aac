@@ -8,3 +8,4 @@ export * from './logger.js';
 export * from './types.js';
 export * from './webhook-signature.js';
 export * from './multiday.js';
+export * from './request-secret.js';

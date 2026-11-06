@@ -4,16 +4,15 @@
  *  - middleware fast lane (draft-followup): `x-worker-secret` shared secret
  * Both secrets required in env; endpoints fail closed when unset.
  */
+
+import { hasBearerSecret, hasHeaderSecret } from '@aac/shared-utils/request-secret';
+
 export function isCronRequest(request: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  return request.headers.get('authorization') === `Bearer ${secret}`;
+  return hasBearerSecret(request.headers.get('authorization'), process.env.CRON_SECRET);
 }
 
 export function isMiddlewareRequest(request: Request): boolean {
-  const secret = process.env.WORKER_SHARED_SECRET;
-  if (!secret) return false;
-  return request.headers.get('x-worker-secret') === secret;
+  return hasHeaderSecret(request.headers.get('x-worker-secret'), process.env.WORKER_SHARED_SECRET);
 }
 
 export function json(data: Record<string, unknown>, status = 200): Response {

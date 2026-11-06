@@ -118,6 +118,17 @@ describe("/api/snapshots/warm stays on its cron bearer", () => {
     expect((await GET(new Request("https://hq.example.com/api/snapshots/warm"))).status).toBe(401);
     const wrong = new Request("https://hq.example.com/api/snapshots/warm", { headers: { authorization: "Bearer nope" } });
     expect((await GET(wrong)).status).toBe(401);
+    const lower = new Request("https://hq.example.com/api/snapshots/warm", { headers: { authorization: "bearer cron-secret" } });
+    expect((await GET(lower)).status).toBe(401);
+    expect(refreshCard).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when CRON_SECRET is unset", async () => {
+    delete process.env.CRON_SECRET;
+    const { GET } = await import("@/app/api/snapshots/warm/route");
+    const req = new Request("https://hq.example.com/api/snapshots/warm", { headers: { authorization: "Bearer undefined" } });
+    expect((await GET(req)).status).toBe(401);
+    expect((await GET(new Request("https://hq.example.com/api/snapshots/warm"))).status).toBe(401);
     expect(refreshCard).not.toHaveBeenCalled();
   });
 

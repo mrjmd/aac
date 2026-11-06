@@ -8,6 +8,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
+import { hasBearerSecret } from '@aac/shared-utils/request-secret';
 import { getEnv } from './env.js';
 
 const log = createLogger('agent:cron');
@@ -30,8 +31,7 @@ export function verifyCronAuth(req: VercelRequest, res: VercelResponse): boolean
     return false;
   }
 
-  const authHeader = req.headers.authorization;
-  if (authHeader !== `Bearer ${env.cron.secret}`) {
+  if (!hasBearerSecret(req.headers.authorization, env.cron.secret)) {
     log.warn('Cron auth failed — invalid or missing Authorization header');
     res.status(401).json({ error: 'Unauthorized' });
     return false;

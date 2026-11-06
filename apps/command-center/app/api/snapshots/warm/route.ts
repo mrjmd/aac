@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { hasBearerSecret } from "@aac/shared-utils/request-secret";
 import { cards, refreshCard } from "@/lib/cards";
 
 export const maxDuration = 300;
@@ -10,8 +11,7 @@ export const maxDuration = 300;
  * CRON_SECRET; the session middleware lets this one path through.
  */
 export async function GET(req: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (!hasBearerSecret(req.headers.get("authorization"), process.env.CRON_SECRET)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const shared = [cards.cash(), cards.techWeeks(), cards.customerIndex(), cards.calendarIndex(), cards.nudges(), cards.ci()];

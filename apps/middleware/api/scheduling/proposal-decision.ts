@@ -17,6 +17,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createLogger } from '@aac/shared-utils/logger';
+import { hasHeaderSecret } from '@aac/shared-utils/request-secret';
 import type { ProposalDecisionPayload } from '@aac/scheduling';
 import { getEnv } from '../../lib/env.js';
 import {
@@ -57,9 +58,7 @@ export default async function handler(
     return;
   }
 
-  const supplied = req.headers['x-scheduling-proposal-secret'];
-  const suppliedValue = Array.isArray(supplied) ? supplied[0] : supplied;
-  if (suppliedValue !== env.scheduling.proposalSecret) {
+  if (!hasHeaderSecret(req.headers['x-scheduling-proposal-secret'], env.scheduling.proposalSecret)) {
     log.warn('Invalid proposal secret on decision callback');
     res.status(401).json({ error: 'Unauthorized' });
     return;

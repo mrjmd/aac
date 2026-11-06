@@ -13,6 +13,7 @@ import crypto from 'crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { createLogger } from '@aac/shared-utils/logger';
+import { hasBearerSecret } from '@aac/shared-utils/request-secret';
 import { timingSafeEqualString } from '@aac/shared-utils/webhook-signature';
 import { getEnv } from '../../../lib/env.js';
 import { getRedis } from '../../../lib/redis.js';
@@ -34,10 +35,8 @@ export default async function handler(
     return;
   }
 
-  const authHeader = req.headers.authorization;
-  const bearer = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
   const key = typeof req.query.key === 'string' ? req.query.key : undefined;
-  if (!timingSafeEqualString(bearer, env.cron.secret) && !timingSafeEqualString(key, env.cron.secret)) {
+  if (!hasBearerSecret(req.headers.authorization, env.cron.secret) && !timingSafeEqualString(key, env.cron.secret)) {
     log.warn('QuickBooks connect: missing or invalid key');
     res.status(401).send('<h1>Unauthorized</h1>');
     return;
