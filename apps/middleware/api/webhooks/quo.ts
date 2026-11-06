@@ -26,7 +26,7 @@ import {
   scheduleIntakeDraft,
   scheduleInboundSettle,
 } from '../../lib/redis.js';
-import { defer } from '../../lib/defer.js';
+import { defer } from '@aac/shared-utils/defer';
 import { getEnv } from '../../lib/env.js';
 import type { QuoEventType, QuoWebhookPayload } from '../../lib/quo-webhook/types.js';
 import { extractRemotePhone } from '../../lib/quo-webhook/event-content.js';

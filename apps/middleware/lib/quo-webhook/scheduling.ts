@@ -6,7 +6,7 @@
 import { createLogger } from '@aac/shared-utils/logger';
 import type { PipedriveClient } from '@aac/api-clients/pipedrive';
 import { readFieldCompletion, logHealthError } from '../redis.js';
-import { defer } from '../defer.js';
+import { defer } from '@aac/shared-utils/defer';
 import type { EnvConfig } from '../env.js';
 import { getCalendar, getDrive, getGmail, getGemini, getQuickBooks, getQuo } from '../clients.js';
 import {

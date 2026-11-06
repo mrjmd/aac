@@ -18,6 +18,7 @@
     "./types": "./dist/types.js",
     "./webhook-signature": "./dist/webhook-signature.js",
     "./request-secret": "./dist/request-secret.js",
+    "./defer": "./dist/defer.js",
     "./multiday": "./dist/multiday.js",
     "./inbound-settle": "./dist/inbound-settle.js",
     "./return-path": "./dist/return-path.js"
@@ -30,6 +31,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@vercel/functions": "^3.10.2",
     "libphonenumber-js": "^1.10.54"
   },
   "devDependencies": {

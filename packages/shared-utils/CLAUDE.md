@@ -30,6 +30,7 @@ that ALL other packages, apps, and tools depend on.
 | `qbo-tokens.ts` | `qboTokenStore(redis)`: the shared QBO token slot + refresh lock, as QuickBooksClient callbacks |
 | `webhook-signature.ts` | `verifyOpenPhoneWebhookSignature` (Quo HMAC), `timingSafeEqualString` (constant-time secret/bearer compare, fails closed on empty) |
 | `request-secret.ts` | `hasBearerSecret` (`Authorization: Bearer <secret>`), `hasHeaderSecret` (custom secret header): every shared-secret endpoint gate; fail closed on unset secret, constant-time |
+| `defer.ts` | `defer(work)`: ack-fast, finish `work` after the response via Vercel `waitUntil` (detached outside Vercel), rejections swallowed. Subpath import only (pulls `@vercel/functions`) |
 | `return-path.ts` | `safeReturnPath(next, origin?)`: post-login return-to guard (same-origin path + query, else `/`) |
 | `logger.ts` | Structured JSON logging |
 | `types.ts` | Shared TypeScript interfaces (Lead, Estimate, WebhookEvent, etc.) |

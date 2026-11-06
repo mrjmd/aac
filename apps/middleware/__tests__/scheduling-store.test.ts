@@ -63,7 +63,7 @@ vi.mock('@aac/scheduling', async (importOriginal) => ({
 }));
 
 const deferred = vi.hoisted(() => ({ work: [] as Promise<unknown>[] }));
-vi.mock('../lib/defer.js', () => ({ defer: (p: Promise<unknown>) => deferred.work.push(p) }));
+vi.mock('@aac/shared-utils/defer', () => ({ defer: (p: Promise<unknown>) => deferred.work.push(p) }));
 
 import type { SchedulingDirective } from '@aac/scheduling';
 import type { PipedriveClient } from '@aac/api-clients/pipedrive';
