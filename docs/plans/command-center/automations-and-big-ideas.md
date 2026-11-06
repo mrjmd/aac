@@ -95,12 +95,33 @@ subscription as a routine.
 
 ### C. Cheap yes/no checks instead of full LLM calls
 
-Matt recalls a new Claude feature, said to copy an independent company's
-product, for very fast, cheap, deterministic yes/no decisions. Not identified
-yet (11/06 search found no such launch); get the name. Either way, audit the
-binary gates we send to Gemini today (router categories, needs-reply,
-solicitation, can-help, sent-match) for ones plain code or a small fast model
-can do.
+The startup is TypeSafe AI and the model is **Jev** (limited early access
+since 2026-09-15). It answers only fixed-answer questions (yes/no, pick one,
+a rating) and returns a probability per answer, claimed calibrated, in about
+70-500 ms. OpenAI reportedly has a "Decisions API" preview along the same
+lines (not officially documented as of 11/06).
+
+For AAC, speed and cost barely matter: our Gemini volume costs pennies. The
+gain is **calibrated confidence**, which is exactly what the readiness page
+and auto-send gates need (photo-quote self-reported confidence barely
+separates good from bad: 71% vs 56%).
+
+Fixed-answer decisions we ask Gemini today:
+- Stale quotes: `needsReply` (yes/no) and `intent` (declined /
+  went-elsewhere / later / engaged / none), `packages/stale-quotes/src/prompts.ts`.
+- Intake: lead / solicitation / other, and the can-help verdict,
+  `packages/message-drafts/src/voice.ts`.
+- Router: classification and intents, `packages/inbound-router/src/read.ts`
+  (bundled with extraction of name, address, photo notes, so only the
+  decision half would move).
+- Scheduling intent, `GeminiClient.classifySchedulingIntent`.
+- New: the grader's "is what Matt sent essentially the draft?".
+
+Next step if pursued: request early access, add a client in
+`@aac/api-clients`, and replay past labeled cases (stale-quote extractions,
+intake verdicts, quote edit labels) through it next to Gemini. Switch only
+where it is as accurate and its probabilities actually separate right from
+wrong. New vendor in early access, so not on any live path until then.
 
 ### D. Leaving Quo for our own phone system on Twilio (years out)
 
