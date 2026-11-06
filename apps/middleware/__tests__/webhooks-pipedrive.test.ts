@@ -63,7 +63,8 @@ vi.mock('../lib/env.js', () => ({
   getEnv: vi.fn(() => mockEnv),
 }));
 
-import handler, { buildQbDisplayName, isQbErrorCode } from '../api/webhooks/pipedrive.js';
+import handler from '../api/webhooks/pipedrive.js';
+import { buildQbDisplayName, isQbErrorCode } from '../lib/pipedrive-webhook/qb-sync.js';
 import { markEventProcessed, storePhoneMapping, trackWebhookProcessed } from '../lib/redis.js';
 
 function makeReq(
