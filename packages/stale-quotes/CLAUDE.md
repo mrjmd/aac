@@ -20,7 +20,10 @@ Plan: `analysis/02-strategy/stale-quote-followup-plan-2026-10.md`.
 
 - `stale-quotes:state` HASH estimate id → EstimateState (variant, suspends,
   extraction cache, touches). Live runs only; pruned when a quote leaves
-  Pending.
+  Pending. A run writes only the entries it changed, merged field by field
+  over the saved entry (`mergeEstimate`): a field someone else changed
+  since the run read it (an owner hand-set mid-run) keeps their value. A
+  prune only deletes entries the run loaded.
 - `stale-quotes:queue` the last live run's queue (to send, waiting, flags,
   skipped).
 - `stale-quotes:awaiting` quotes where the customer spoke last; every full

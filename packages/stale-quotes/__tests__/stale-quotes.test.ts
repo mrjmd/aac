@@ -14,6 +14,7 @@ import {
   type EstimateState,
   type StaleQuoteDeps,
 } from '../src/index.js';
+import { mergeEstimate } from '../src/state.js';
 
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-11-04T15:00:00Z'); // a Wednesday
@@ -582,6 +583,65 @@ describe('one draft per customer', () => {
     expect(r.queue.toSend.map((d) => d.doc)).toEqual(['1601']);
     expect(r.queue.skipped).toContainEqual(expect.objectContaining({ doc: '1600', reason: 'waiting on the unsent draft for #1601' }));
     expect(f.notes).toHaveLength(0);
+  });
+});
+
+describe('saving state', () => {
+  const base = (): EstimateState => ({
+    estimateId: '900', doc: '1600', customer: 'Pat Example', phone: '+16175550100', firstSeenAt: '2026-10-25T12:00:00.000Z',
+    seasonClass: 'injection', largeResurf: false, variant: { t1Days: 2, t2Days: 10 }, touches: [],
+  });
+  const handSet = { resumeAt: '2026-11-20', evidence: 'Owner: board review', channel: 'sms', extractedAt: new Date(NOW).toISOString() };
+
+  it('mergeEstimate keeps fields another writer changed and the run’s own changes', () => {
+    const mine = { ...base(), suspended: { reason: 'season' as const, detail: 'd', at: 'run' } };
+    const theirs = { ...base(), statedTiming: handSet };
+    expect(mergeEstimate(base(), mine, theirs)).toEqual({ ...base(), suspended: mine.suspended, statedTiming: handSet });
+    // Both changed the same field: theirs is the newer edit.
+    expect(mergeEstimate(base(), { ...base(), phone: 'mine' }, { ...base(), phone: 'theirs' }).phone).toBe('theirs');
+    // They removed a field: it stays removed.
+    const withTiming = { ...base(), statedTiming: handSet };
+    expect(mergeEstimate(withTiming, { ...withTiming, phone: 'x' }, base())).toEqual({ ...base(), phone: 'x' });
+    // Nothing saved anymore: the run's copy.
+    expect(mergeEstimate(base(), mine, undefined)).toBe(mine);
+  });
+
+  it('a hand edit made while the run is going survives its saves', async () => {
+    const f = fake();
+    f.store.state.estimates['900'] = base();
+    const listMessages = f.deps.quo.listMessages;
+    f.deps.quo.listMessages = async (args) => {
+      // The owner hand-sets a stated timing after the run loaded state.
+      f.store.state.estimates['900'] = { ...f.store.state.estimates['900'], statedTiming: handSet };
+      return listMessages(args);
+    };
+    const r = await runStaleQuotes(f.deps, { dryRun: false });
+    expect(r.draftedThisRun).toBe(1);
+    expect(f.store.state.estimates['900'].statedTiming).toEqual(handSet);
+    expect(f.store.state.estimates['900'].touches).toHaveLength(1);
+  });
+
+  it('writes only the entries the run changed, and prunes only entries it loaded', async () => {
+    const f = fake();
+    f.store.state.estimates['555'] = { ...base(), estimateId: '555', doc: '1555' }; // no longer Pending
+    await runStaleQuotes(f.deps, { dryRun: false });
+    expect(f.store.state.estimates['555']).toBeUndefined();
+
+    const saves: string[][] = [];
+    const saveEstimates = f.store.saveEstimates.bind(f.store);
+    f.store.saveEstimates = async (sts) => {
+      saves.push(sts.map((st) => st.estimateId));
+      return saveEstimates(sts);
+    };
+    const listMessages = f.deps.quo.listMessages;
+    f.deps.quo.listMessages = async (args) => {
+      // Written by someone else mid-run, for a quote this run never loaded.
+      f.store.state.estimates['777'] = { ...base(), estimateId: '777', doc: '1777' };
+      return listMessages(args);
+    };
+    await runStaleQuotes(f.deps, { dryRun: false }); // same-day rerun: nothing changes
+    expect(saves).toEqual([]);
+    expect(f.store.state.estimates['777']).toBeDefined();
   });
 });
 

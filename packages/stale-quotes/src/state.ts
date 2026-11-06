@@ -10,10 +10,11 @@ import type { AwaitingFile, EstimateState, FunnelStateFile, QueueFile, RunlogRow
 
 export interface StaleQuoteStore {
   loadState(): Promise<FunnelStateFile>;
-  /** Replace the saved state with this one (entries missing from it are dropped). */
-  saveState(state: FunnelStateFile): Promise<void>;
-  /** Write one estimate's entry now (a drafted touch survives a run that dies before saveState). */
-  saveEstimate(st: EstimateState): Promise<void>;
+  /** The saved entries for these estimate ids (missing ids are absent). */
+  loadEstimates(ids: string[]): Promise<Record<string, EstimateState>>;
+  /** Write these entries, leaving every other entry as it is. */
+  saveEstimates(sts: EstimateState[]): Promise<void>;
+  deleteEstimates(ids: string[]): Promise<void>;
   loadQueue(): Promise<QueueFile | null>;
   saveQueue(queue: QueueFile): Promise<void>;
   loadAwaiting(): Promise<AwaitingFile | null>;
@@ -22,6 +23,26 @@ export interface StaleQuoteStore {
 }
 
 const RUNLOG_MAX = 5000;
+
+/**
+ * Three-way merge of one estimate's entry, field by field. `base` is what
+ * this run last read or wrote, `mine` the run's copy, `theirs` what is saved
+ * now. A field someone else changed since `base` (an owner hand-set stated
+ * timing, a touch from an overlapping run) keeps their value; every other
+ * field takes the run's.
+ */
+export function mergeEstimate(base: EstimateState | undefined, mine: EstimateState, theirs: EstimateState | undefined): EstimateState {
+  if (!theirs) return mine;
+  const b = (base ?? {}) as unknown as Record<string, unknown>;
+  const t = theirs as unknown as Record<string, unknown>;
+  const out = { ...mine } as unknown as Record<string, unknown>;
+  for (const k of new Set([...Object.keys(b), ...Object.keys(t)])) {
+    if (JSON.stringify(t[k]) === JSON.stringify(b[k])) continue;
+    if (t[k] === undefined) delete out[k];
+    else out[k] = t[k];
+  }
+  return out as unknown as EstimateState;
+}
 
 /** Upstash hands back parsed JSON for JSON strings; older values may still be raw strings. */
 function parse<T>(v: unknown): T | null {
@@ -49,16 +70,24 @@ export class RedisStaleQuoteStore implements StaleQuoteStore {
     return { updatedAt: '', estimates };
   }
 
-  async saveState(state: FunnelStateFile): Promise<void> {
-    const entries = Object.fromEntries(Object.entries(state.estimates).map(([id, st]) => [id, JSON.stringify(st)]));
-    if (Object.keys(entries).length) await this.redis.hset(keys.staleQuotesState, entries);
-    const saved = await this.redis.hkeys(keys.staleQuotesState);
-    const gone = saved.filter((id) => !(id in state.estimates));
-    if (gone.length) await this.redis.hdel(keys.staleQuotesState, ...gone);
+  async loadEstimates(ids: string[]): Promise<Record<string, EstimateState>> {
+    const out: Record<string, EstimateState> = {};
+    if (!ids.length) return out;
+    const vals = await this.redis.hmget<Record<string, unknown>>(keys.staleQuotesState, ...ids);
+    for (const id of ids) {
+      const st = parse<EstimateState>(vals?.[id]);
+      if (st) out[id] = st;
+    }
+    return out;
   }
 
-  async saveEstimate(st: EstimateState): Promise<void> {
-    await this.redis.hset(keys.staleQuotesState, { [st.estimateId]: JSON.stringify(st) });
+  async saveEstimates(sts: EstimateState[]): Promise<void> {
+    if (!sts.length) return;
+    await this.redis.hset(keys.staleQuotesState, Object.fromEntries(sts.map((st) => [st.estimateId, JSON.stringify(st)])));
+  }
+
+  async deleteEstimates(ids: string[]): Promise<void> {
+    if (ids.length) await this.redis.hdel(keys.staleQuotesState, ...ids);
   }
 
   async loadQueue(): Promise<QueueFile | null> {
@@ -94,11 +123,14 @@ export class MemoryStaleQuoteStore implements StaleQuoteStore {
   async loadState(): Promise<FunnelStateFile> {
     return structuredClone(this.state);
   }
-  async saveState(state: FunnelStateFile): Promise<void> {
-    this.state = structuredClone(state);
+  async loadEstimates(ids: string[]): Promise<Record<string, EstimateState>> {
+    return structuredClone(Object.fromEntries(ids.filter((id) => this.state.estimates[id]).map((id) => [id, this.state.estimates[id]])));
   }
-  async saveEstimate(st: EstimateState): Promise<void> {
-    this.state.estimates[st.estimateId] = structuredClone(st);
+  async saveEstimates(sts: EstimateState[]): Promise<void> {
+    for (const st of sts) this.state.estimates[st.estimateId] = structuredClone(st);
+  }
+  async deleteEstimates(ids: string[]): Promise<void> {
+    for (const id of ids) delete this.state.estimates[id];
   }
   async loadQueue(): Promise<QueueFile | null> {
     return this.queue;

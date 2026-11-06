@@ -45,6 +45,7 @@ import {
   parseExtractionLoose,
   type Extraction,
 } from './prompts.js';
+import { mergeEstimate } from './state.js';
 import { analyzeThread, smsTailOf, type ThreadFacts } from './thread.js';
 import {
   DAY,
@@ -136,6 +137,29 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
   log(`  ${events.length} events; booking horizon: ${horizon.text}`);
 
   const state = await store.loadState();
+  // What this run last read or wrote per estimate: a save writes only the
+  // entries the run changed, merged field by field over anything another
+  // writer saved meanwhile (an owner hand-set mid-run survives).
+  const baseline = new Map(Object.entries(state.estimates).map(([id, st]) => [id, JSON.stringify(st)]));
+  const persist = async (sts: EstimateState[]): Promise<void> => {
+    const changed = sts.filter((st) => JSON.stringify(st) !== baseline.get(st.estimateId));
+    if (!changed.length) return;
+    const saved = await store.loadEstimates(changed.map((st) => st.estimateId));
+    const merged = changed.map((st) => {
+      const base = baseline.get(st.estimateId);
+      const m = mergeEstimate(base ? (JSON.parse(base) as EstimateState) : undefined, st, saved[st.estimateId]);
+      baseline.set(st.estimateId, JSON.stringify(m));
+      return m;
+    });
+    await store.saveEstimates(merged);
+    // The rest of the run sees the merged entry (same object the scan holds).
+    for (const m of merged) {
+      const st = state.estimates[m.estimateId];
+      if (!st) continue;
+      for (const k of Object.keys(st)) if (!(k in m)) delete (st as unknown as Record<string, unknown>)[k];
+      Object.assign(st, m);
+    }
+  };
   const fewShots = [...FEW_SHOTS];
   const queue: QueueFile = {
     generatedAt: new Date(now).toISOString(),
@@ -583,11 +607,9 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
 
     if (!dryRun) {
       // Save the touches before posting: a run killed mid-scan (maxDuration)
-      // never reaches saveState, and the next slot would draft it again.
-      for (const m of live) {
-        m.st.touches.push({ tier: m.tier, queuedAt: entry.queuedAt, draft, whyNow, ...(entry.docs ? { docs } : {}) });
-        await store.saveEstimate(m.st);
-      }
+      // never reaches the final save, and the next slot would draft it again.
+      for (const m of live) m.st.touches.push({ tier: m.tier, queuedAt: entry.queuedAt, draft, whyNow, ...(entry.docs ? { docs } : {}) });
+      await persist(live.map((m) => m.st));
       try {
         const contact = phone ? await quo.findContactByPhone(phone) : null;
         if (contact) {
@@ -608,13 +630,10 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
     }
   }
 
-  // prune state entries for estimates no longer Pending (converted/closed by Matt)
+  // prune state entries for estimates no longer Pending (converted/closed by
+  // Matt); only entries this run loaded, never one written since it began
   const pendingIds = new Set(pending.map((e) => e.Id));
-  if (!docArg) {
-    for (const id of Object.keys(state.estimates)) {
-      if (!pendingIds.has(id)) delete state.estimates[id];
-    }
-  }
+  const pruned = docArg ? [] : [...baseline.keys()].filter((id) => !pendingIds.has(id));
 
   // ── write outputs
   // awaiting-human is derived, read-only data — refresh it on every full scan
@@ -625,8 +644,8 @@ export async function runStaleQuotes(deps: StaleQuoteDeps, opts: RunOptions): Pr
     await store.saveAwaiting({ generatedAt: new Date(now).toISOString(), entries: awaitingHuman });
   }
   if (!dryRun) {
-    state.updatedAt = new Date(clock()).toISOString();
-    await store.saveState(state);
+    await persist(Object.values(state.estimates).filter((st) => !pruned.includes(st.estimateId)));
+    await store.deleteEstimates(pruned);
     if (!partial) await store.saveQueue(queue);
     await store.appendRunlog(runlog);
     log(`\nSaved queue + state (+${runlog.length} runlog rows)${partial ? ' (partial scan: queue kept from the last full run)' : ''}`);
