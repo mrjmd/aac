@@ -1197,14 +1197,24 @@ export class QuickBooksClient {
 
   /** Every payment received on or after `sinceDate` (TxnDate, YYYY-MM-DD), paged. */
   async listPaymentsSince(sinceDate: string): Promise<QBPayment[]> {
+    return this.queryAllSince<QBPayment>('Payment', sinceDate);
+  }
+
+  /** Every invoice dated on or after `sinceDate` (TxnDate, YYYY-MM-DD), paged. */
+  async listInvoicesSince(sinceDate: string): Promise<QBInvoice[]> {
+    return this.queryAllSince<QBInvoice>('Invoice', sinceDate);
+  }
+
+  /** All rows of one entity with TxnDate >= sinceDate, 1,000 a page until a short page. */
+  private async queryAllSince<T>(entity: 'Payment' | 'Invoice', sinceDate: string): Promise<T[]> {
     const pageSize = 1000;
-    const all: QBPayment[] = [];
+    const all: T[] = [];
     for (let start = 1; ; start += pageSize) {
-      const sql = `SELECT * FROM Payment WHERE TxnDate >= '${sinceDate}' STARTPOSITION ${start} MAXRESULTS ${pageSize}`;
-      const result = await this.request<{ QueryResponse?: { Payment?: QBPayment[] } }>(
+      const sql = `SELECT * FROM ${entity} WHERE TxnDate >= '${sinceDate}' STARTPOSITION ${start} MAXRESULTS ${pageSize}`;
+      const result = await this.request<{ QueryResponse?: Partial<Record<typeof entity, T[]>> }>(
         `/query?query=${encodeURIComponent(sql)}&minorversion=70`,
       );
-      const page = result.QueryResponse?.Payment ?? [];
+      const page = result.QueryResponse?.[entity] ?? [];
       all.push(...page);
       if (page.length < pageSize) break;
     }

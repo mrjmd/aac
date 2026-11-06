@@ -64,9 +64,9 @@ This week's 13-week scorecard (mockup's This week) reads `scorecard:latest`,
 which the worker's nightly `/api/scorecard` builds with `runScorecard` in
 `@aac/metrics` (row definitions, goals and date bases live there, one per
 row, shown under "How each row is counted"). Volume rows (contacts, quotes,
-\$ quoted, jobs) are judged per week against `targets`: the average-week goal
-times `SEASONAL_INDEX` for that month (funnel study §6, re-fit each January);
-rates, speeds and payments in stay flat. The page never fetches the
+\$ quoted, jobs, payments in) are judged per week against `targets`: the average-week goal
+times `SEASONAL_INDEX` for that month (funnel study §6, re-fit each January,
+payments in half a month late); rates and speeds stay flat. The page never fetches the
 sources. Cells are for reading trends and never become items.
 
 ## Day-One Features (Phase 1)

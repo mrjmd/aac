@@ -109,7 +109,7 @@ export function ScorecardCard({ card }: { card: Scorecard | null }) {
       <div className="note">
         The highlighted column is the week that just closed. This week so far isn&apos;t judged until it ends. Volume rows
         are judged against a seasonal target: the average week&apos;s goal times that month&apos;s index from the funnel study
-        (re-fit each January). Rates, speeds and payments in keep one goal all year. Goals are a first draft from the Aug-Oct
+        (re-fit each January); payments in follows it half a month late. Rates and speeds keep one goal all year. Goals are a first draft from the Aug-Oct
         baselines; tell me what to change.
       </div>
       <details className="fold">

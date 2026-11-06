@@ -637,6 +637,18 @@ describe('QuickBooksClient', () => {
     });
   });
 
+  describe('listInvoicesSince', () => {
+    it('filters invoices on TxnDate', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockResponse({ QueryResponse: { Invoice: [{ Id: 'i1', SyncToken: '0', CustomerRef: { value: 'c' }, Line: [] }] } }));
+
+      const result = await client.listInvoicesSince('2025-06-01');
+
+      expect(decodeURIComponent((mockFetch.mock.calls[0]![0] as string).split('query=')[1]!.split('&')[0]!)).toContain("FROM Invoice WHERE TxnDate >= '2025-06-01'");
+      expect(result.map((i) => i.Id)).toEqual(['i1']);
+    });
+  });
+
   describe('listRecentInvoices', () => {
     it('queries all invoices with optional sinceISODate', async () => {
       const client = makeClient();

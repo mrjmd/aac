@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CalendarEvent } from '@aac/api-clients/google-calendar';
-import type { QBEstimate } from '@aac/api-clients/quickbooks';
+import type { QBEstimate, QBInvoice, QBPayment } from '@aac/api-clients/quickbooks';
 import type { QuoCall, QuoMessage } from '@aac/api-clients/quo';
 import { buildScorecard, leadFactOf, quoteSentDay, quoteWon, refreshLeadFacts, SCORECARD_GOALS, scorecardWeeks, weekTarget, type LeadFact } from '../src/index.js';
 
@@ -15,7 +15,7 @@ const msg = (direction: 'incoming' | 'outgoing', createdAt: string): QuoMessage 
 const call = (direction: 'incoming' | 'outgoing', createdAt: string, answeredAt?: string): QuoCall =>
   ({ direction, createdAt, ...(answeredAt ? { answeredAt } : {}) }) as QuoCall;
 
-const base = { now, leads: {}, estimates: [], payments: [], events: [], techEmails: [MIKE], spend: [] };
+const base = { now, leads: {}, estimates: [], payments: [], invoices: [], events: [], techEmails: [MIKE], spend: [] };
 const row = (sc: ReturnType<typeof buildScorecard>, key: string) => sc.rows.find((r) => r.key === key)!;
 
 describe('scorecard weeks', () => {
@@ -39,14 +39,20 @@ describe('seasonal targets', () => {
     expect(weekTarget('assessments', null, '2026-11-02', 'int')).toBeNull();
   });
 
-  it('gives each seasonal row a target per week and for last year, and leaves payments flat', () => {
+  it('lags payments half a month behind the invoicing season', () => {
+    // December: half December's invoiced index (0.71), half November's (0.91) = 0.81.
+    expect(weekTarget('collected', 11.5, '2026-12-07', 'usdk')).toBe(9.3);
+  });
+
+  it('gives each seasonal row a target per week and for last year', () => {
     const sc = buildScorecard(base);
     const leads = row(sc, 'leads');
     expect(leads.seasonal).toBe(true);
     expect(leads.targets[12]).toBe(31);
     expect(leads.lastYearTarget).toBe(31);
-    expect(row(sc, 'collected').seasonal).toBeUndefined();
-    expect(row(sc, 'collected').targets.every((t) => t === SCORECARD_GOALS.collected)).toBe(true);
+    expect(row(sc, 'collected').seasonal).toBe(true);
+    expect(row(sc, 'close').seasonal).toBeUndefined();
+    expect(row(sc, 'close').targets.every((t) => t === SCORECARD_GOALS.close)).toBe(true);
   });
 });
 
@@ -79,6 +85,24 @@ describe('quotes', () => {
     expect(row(sc, 'quoted').values[12]).toBe(3.2);
     expect(row(sc, 'close').values[12]).toBe(50);
     expect(row(sc, 'close').values[0]).toBeNull();
+  });
+});
+
+describe('days to get paid', () => {
+  it('averages invoice-to-payment days by dollars over the 4 weeks ending each week', () => {
+    const inv = (Id: string, TxnDate: string) => ({ Id, TxnDate, SyncToken: '0', CustomerRef: { value: 'c' }, Line: [] }) as unknown as QBInvoice;
+    const pay = (TxnDate: string, lines: Array<[string, number]>) =>
+      ({ Id: TxnDate, SyncToken: '0', TxnDate, TotalAmt: 0, CustomerRef: { value: 'c' }, Line: lines.map(([TxnId, Amount]) => ({ Amount, LinkedTxn: [{ TxnId, TxnType: 'Invoice' }] })) }) as QBPayment;
+    const sc = buildScorecard({
+      ...base,
+      invoices: [inv('a', '2026-10-01'), inv('b', '2026-10-27')],
+      // $1,000 paid 30 days late, $3,000 paid the same day: (30×1000 + 0×3000) / 4000 = 7.5 → 8.
+      payments: [pay('2026-10-31', [['a', 1000]]), pay('2026-10-27', [['b', 3000]]), pay('2026-10-28', [['unknown', 500]])],
+    });
+    expect(row(sc, 'paylag').values[12]).toBe(8);
+    // Still inside the next week's 4-week window, gone 4 weeks later.
+    expect(row(sc, 'paylag').values[13]).toBe(8);
+    expect(row(sc, 'paylag').values[8]).toBeNull();
   });
 });
 

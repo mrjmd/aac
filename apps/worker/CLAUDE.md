@@ -91,7 +91,7 @@ Plain Vercel Serverless Functions (no framework) that run the
   runScorecard), cron 09:00 UTC. Brings the lead cache `scorecard:leads`
   (first contact and first reply per phone, seeded from the funnel study's
   ledger) up to date from Quo threads that moved since the last run, then
-  reads QBO estimates and payments, the calendar and Google Ads spend and
+  reads QBO estimates, payments and invoices, the calendar and Google Ads spend and
   saves every row to `scorecard:latest` for the command center's This
   week. Reads only; sends nothing. Once per Eastern day, `?force=1`
   (middleware secret) runs again; 500s budget for the Quo pass, a partial

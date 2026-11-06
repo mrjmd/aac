@@ -1,6 +1,6 @@
 import type { GoogleAdsClient } from '@aac/api-clients/google-ads';
 import type { CalendarEvent, GoogleCalendarClient } from '@aac/api-clients/google-calendar';
-import type { QBEstimate, QBPayment, QuickBooksClient } from '@aac/api-clients/quickbooks';
+import type { QBEstimate, QBInvoice, QBPayment, QuickBooksClient } from '@aac/api-clients/quickbooks';
 import type { QuoCall, QuoClient, QuoMessage } from '@aac/api-clients/quo';
 import { EVENT_CLASS_COLOR_IDS, HOLD_TITLE_PREFIX } from '@aac/shared-utils/calendar';
 import { easternDate } from '@aac/shared-utils/eastern';
@@ -26,7 +26,7 @@ export interface LeadFact {
   existing?: boolean;
 }
 
-export type RowFormat = 'int' | 'hours' | 'pct' | 'usdk' | 'weeks' | 'usd';
+export type RowFormat = 'int' | 'hours' | 'days' | 'pct' | 'usdk' | 'weeks' | 'usd';
 
 export interface ScoreRow {
   key: string;
@@ -66,8 +66,9 @@ const BOOKED_HORIZON_WEEKS = 8;
  * First-draft goals (11/06), for Matt to edit (README decision 3). Volume
  * rows are average-week goals, scaled each week by SEASONAL_INDEX (round-2
  * §4 hybrid): the Aug-Oct 2026 baselines divided by those months' mean
- * index. Rates and speeds are flat, as is Payments in: the charter's $50k
- * a month floor (about $11.5k a week) holds in winter too. Assessments have
+ * index. Payments in averages the charter's $50k a month (about $11.5k a
+ * week) and follows the season half a month late. Rates and speeds are
+ * flat. Assessments have
  * no goal (most quotes come from photos), nor Ads spend (the budget moves
  * with the season).
  */
@@ -82,6 +83,8 @@ export const SCORECARD_GOALS: Record<string, number> = {
   collected: 11.5,
 };
 
+const round = (n: number, dp: number) => Math.round(n * 10 ** dp) / 10 ** dp;
+
 /**
  * Month index Jan..Dec (1 = an average month), from the funnel study
  * (analysis/02-strategy/funnel-baseline-2026-11.md §6): two seasons of data,
@@ -93,19 +96,28 @@ export const SEASONAL_INDEX = {
   invoiced: [0.63, 0.81, 1.24, 0.9, 1.11, 1.46, 0.91, 1.31, 0.92, 1.34, 0.91, 0.71],
 } as const;
 
+/**
+ * Payments land about two weeks after the invoice (dollar-weighted mean,
+ * QBO Sept 2024-Nov 2026), so a month's payments index is half its own
+ * invoiced index and half the month before's.
+ */
+const PAYMENTS_INDEX = SEASONAL_INDEX.invoiced.map((v, i) => round((v + SEASONAL_INDEX.invoiced[(i + 11) % 12]!) / 2, 2));
+
 /** Which index scales each seasonal row; rows not listed keep a flat goal. */
-const SEASONAL_ROWS: Record<string, keyof typeof SEASONAL_INDEX> = {
+const SEASONAL_ROWS: Record<string, keyof typeof SEASONAL_INDEX | 'payments'> = {
   leads: 'leads',
   quotes: 'quotes',
   quoted: 'quotes',
   jobs: 'invoiced',
+  collected: 'payments',
 };
 
 /** A week's target: the goal scaled by the index of the month its Thursday falls in. */
 export function weekTarget(key: string, goal: number | null, monday: string, fmt: RowFormat): number | null {
   const series = SEASONAL_ROWS[key];
   if (goal == null || !series) return goal;
-  const t = goal * SEASONAL_INDEX[series][Number(addDays(monday, 3).slice(5, 7)) - 1]!;
+  const index = series === 'payments' ? PAYMENTS_INDEX : SEASONAL_INDEX[series];
+  const t = goal * index[Number(addDays(monday, 3).slice(5, 7)) - 1]!;
   return fmt === 'int' ? Math.round(t) : round(t, 1);
 }
 
@@ -114,6 +126,8 @@ export interface ScorecardInput {
   leads: Record<string, LeadFact>;
   estimates: QBEstimate[];
   payments: QBPayment[];
+  /** Invoices the payments link to (for days to get paid). */
+  invoices: QBInvoice[];
   events: CalendarEvent[];
   techEmails: readonly string[];
   /** Google Ads spend per day; null when Ads isn't wired. */
@@ -134,8 +148,8 @@ export function scorecardFrom(today: string): string {
   return addDays(lastYear < weeks[0]! ? lastYear : weeks[0]!, -56);
 }
 
+const dayDiff = (from: string, to: string) => Math.round((Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 86_400_000);
 const inWeek = (day: string | null | undefined, monday: string) => !!day && day >= monday && day < addDays(monday, 7);
-const round = (n: number, dp: number) => Math.round(n * 10 ** dp) / 10 ** dp;
 
 function p75(xs: number[]): number | null {
   if (!xs.length) return null;
@@ -167,6 +181,14 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
 
   const leadList = Object.values(input.leads).filter((l): l is LeadFact & { at: string } => !!l.at && !l.existing);
   const sent = input.estimates.map((e) => ({ e, day: quoteSentDay(e) })).filter((q): q is { e: QBEstimate; day: string } => !!q.day);
+  const invoiceDay = new Map(input.invoices.map((i) => [i.Id, i.TxnDate]));
+  const paid = input.payments.flatMap((p) =>
+    (p.Line ?? []).flatMap((l) =>
+      (l.LinkedTxn ?? [])
+        .filter((t) => t.TxnType === 'Invoice' && invoiceDay.get(t.TxnId) && p.TxnDate)
+        .map((t) => ({ day: p.TxnDate!, amt: l.Amount, days: Math.max(0, dayDiff(invoiceDay.get(t.TxnId)!, p.TxnDate!)) })),
+    ),
+  );
   const past = input.events.filter((e) => !e.summary.startsWith(HOLD_TITLE_PREFIX) && Date.parse(e.start.length === 10 ? `${e.start}T12:00:00Z` : e.start) <= nowMs);
 
   const fns: Array<Omit<ScoreRow, 'values' | 'lastYear' | 'targets' | 'lastYearTarget'> & { week: (m: string) => number | null }> = [
@@ -265,6 +287,19 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       goal: null,
       info: 'QBO payments received, by payment date. Received is not banked: a check counts the day it was recorded, deposited or not.',
       week: (m) => round(input.payments.filter((p) => inWeek(p.TxnDate, m)).reduce((n, p) => n + p.TotalAmt, 0) / 1000, 1),
+    },
+    {
+      key: 'paylag',
+      name: 'Days to get paid, 4-wk avg',
+      fmt: 'days',
+      dir: -1,
+      goal: null,
+      info: 'Days from invoice date to payment, averaged by dollars over the payments received in the 4 weeks ending that week (QBO payments linked to an invoice). Payments are dated when they were recorded, so until the books are reconciled a late entry reads as a slow payer.',
+      week: (m) => {
+        const ps = paid.filter((p) => p.day >= addDays(m, -21) && p.day < addDays(m, 7));
+        const total = ps.reduce((n, p) => n + p.amt, 0);
+        return total > 0 ? Math.round(ps.reduce((n, p) => n + p.days * p.amt, 0) / total) : null;
+      },
     },
     {
       key: 'spend',
@@ -387,7 +422,7 @@ export interface ScorecardRedis extends LeadRedis {
 export async function runScorecard(
   deps: {
     redis: ScorecardRedis;
-    qb: Pick<QuickBooksClient, 'listEstimatesUpdatedSince' | 'listPaymentsSince'>;
+    qb: Pick<QuickBooksClient, 'listEstimatesUpdatedSince' | 'listPaymentsSince' | 'listInvoicesSince'>;
     quo: Pick<QuoClient, 'listConversations' | 'listMessages' | 'listCalls'>;
     calendar: Pick<GoogleCalendarClient, 'listEvents'>;
     ads: Pick<GoogleAdsClient, 'dailySpend'> | null;
@@ -408,9 +443,11 @@ export async function runScorecard(
     return null;
   });
   const facts = leads?.facts ?? (await deps.redis.hgetall<Record<string, LeadFact>>(deps.keys.leads)) ?? {};
-  const [estimates, payments, events, spend] = await Promise.all([
+  const [estimates, payments, invoices, events, spend] = await Promise.all([
     deps.qb.listEstimatesUpdatedSince(`${from}T00:00:00Z`),
     deps.qb.listPaymentsSince(from),
+    // A payment can settle an invoice months older than it.
+    deps.qb.listInvoicesSince(addDays(from, -180)),
     deps.calendar.listEvents({
       timeMin: new Date(`${from}T00:00:00Z`).toISOString(),
       // Far enough ahead for the last week's booked-ahead window.
@@ -423,7 +460,7 @@ export async function runScorecard(
         })
       : Promise.resolve(null),
   ]);
-  const scorecard = buildScorecard({ now: opts.now, leads: facts, estimates, payments, events, techEmails: deps.techEmails, spend, gaps });
+  const scorecard = buildScorecard({ now: opts.now, leads: facts, estimates, payments, invoices, events, techEmails: deps.techEmails, spend, gaps });
   // A configured Ads source that failed is already named; don't also call it unconfigured.
   if (deps.ads && !spend) scorecard.gaps = scorecard.gaps.filter((g) => !g.includes('not configured'));
   await deps.redis.set(deps.keys.scorecard, JSON.stringify(scorecard));
