@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { authBypassEmail } from '@/lib/auth-bypass';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +14,7 @@ export default async function LoginPage({
   searchParams: Promise<SearchParams>;
 }) {
   // Preview mode skips login entirely — bounce straight in.
-  if (process.env.FIELD_AUTH_BYPASS_EMAIL) redirect('/');
+  if (authBypassEmail()) redirect('/');
 
   const { next, error } = await searchParams;
   const safeNext = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';

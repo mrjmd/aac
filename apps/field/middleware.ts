@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SESSION_COOKIE_NAME } from '@/lib/session-cookie';
+import { authBypassEmail } from '@/lib/auth-bypass';
 
 /**
  * Edge middleware — gate every request behind a session cookie.
@@ -17,9 +18,9 @@ export function middleware(req: NextRequest) {
   const passthroughHeaders = new Headers(req.headers);
   passthroughHeaders.set('x-pathname', req.nextUrl.pathname);
 
-  // Preview-mode short-circuit: when FIELD_AUTH_BYPASS_EMAIL is set, every
-  // request passes through. Removed by deleting the env var on Vercel.
-  if (process.env.FIELD_AUTH_BYPASS_EMAIL) {
+  // Preview-mode short-circuit: when FIELD_AUTH_BYPASS_EMAIL is set (and
+  // this isn't production), every request passes through.
+  if (authBypassEmail()) {
     return NextResponse.next({ request: { headers: passthroughHeaders } });
   }
 

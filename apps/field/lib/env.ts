@@ -6,6 +6,7 @@
  */
 
 import { technicianEmails } from '@aac/shared-utils/calendar';
+import { authBypassEmail } from './auth-bypass';
 
 export interface EnvConfig {
   google: {
@@ -98,7 +99,7 @@ let cached: EnvConfig | null = null;
 export function getEnv(): EnvConfig {
   if (cached) return cached;
 
-  const bypassEmail = process.env.FIELD_AUTH_BYPASS_EMAIL?.trim().toLowerCase() || undefined;
+  const bypassEmail = authBypassEmail();
 
   cached = {
     google: {

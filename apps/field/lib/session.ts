@@ -15,6 +15,7 @@ import { cookies } from 'next/headers';
 import { keys, ttl } from '@aac/shared-utils/redis';
 import { getRedis } from './clients';
 import { SESSION_COOKIE_NAME } from './session-cookie';
+import { authBypassEmail } from './auth-bypass';
 
 export { SESSION_COOKIE_NAME, sessionCookieAttributes } from './session-cookie';
 
@@ -52,9 +53,10 @@ export async function createSession(profile: {
  *
  * Preview short-circuit: when FIELD_AUTH_BYPASS_EMAIL is set, returns a
  * synthetic session with that email. No cookie or Redis lookup happens.
+ * Never honored in production (see lib/auth-bypass.ts).
  */
 export async function getCurrentSession(): Promise<FieldSession | null> {
-  const bypass = process.env.FIELD_AUTH_BYPASS_EMAIL?.trim().toLowerCase();
+  const bypass = authBypassEmail();
   if (bypass) {
     const now = new Date().toISOString();
     return {

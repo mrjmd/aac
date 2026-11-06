@@ -7,7 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@aac/api-clients": "workspace:*",
@@ -32,6 +33,7 @@
     "postcss": "^8",
     "tailwindcss": "^4",
     "tsx": "^4.19.2",
-    "typescript": "^5.8"
+    "typescript": "^5.8",
+    "vitest": "^3"
   }
 }

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { authBypassEmail } from "@/lib/auth-bypass";
 import LocationPermissionPrimer from "./location-permission-primer";
 import MobileActionBar from "./mobile-action-bar";
 import SessionHeader from "./session-header";
@@ -28,7 +29,7 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const bypass = process.env.FIELD_AUTH_BYPASS_EMAIL;
+  const bypass = authBypassEmail();
   return (
     <html lang="en">
       <body>
