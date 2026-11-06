@@ -72,7 +72,7 @@ Plain Vercel Serverless Functions (no framework) that run the
   canary failed) is recorded too. Needs the Redis, QBO, Quo, Gemini and
   Google env (`skipped: 'no-<group>-env'` otherwise); maxDuration 800 /
   memory 1024.
-- `api/health.ts` — for an outside uptime pinger: 200 `{status: 'ok'}`
+- `api/health.ts`: for an outside uptime pinger: 200 `{status: 'ok'}`
   only while Redis answers and `health:watchdog:ts` is under 15 min old,
   else 503 `{status: 'down'}`. Unauthenticated, no details. The one alert
   path that shares no fate with Vercel crons, Upstash or Quo.

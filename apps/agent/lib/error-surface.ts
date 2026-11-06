@@ -206,7 +206,7 @@ export async function runErrorSurfaceTick(deps: SurfaceDeps): Promise<SurfaceRes
     await setCronCursor(JOB_NAME, newest);
     result.skipped_first_run = head.length;
     result.newest_timestamp = newest;
-    log.info('First run — stamped cursor at newest, no backlog surfaced', { newest, backlog: head.length });
+    log.info('First run: stamped cursor at newest, no backlog surfaced', { newest, backlog: head.length });
     return finish();
   }
 
