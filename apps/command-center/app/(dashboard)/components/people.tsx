@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { isPending, TOPIC_STATUS_LABEL, type Person, type PersonEventKind, type TopicStatus } from "@aac/items/people";
+import { isPending, TOPIC_STATUS_LABEL, type Person, type PersonEventKind, type Topic, type TopicStatus } from "@aac/items/people";
 import { useItems } from "../items-context";
 import { usePeople } from "../people-context";
 
@@ -32,6 +32,21 @@ export function PersonCard({ person }: { person: Person }) {
       const saved = await change({ id: person.id, ...body });
       say(saved ? ok : "That didn't save");
       return saved;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // One topic touched on: off the agenda into today's Addressed entry, with Undo.
+  const address = async (t: Topic) => {
+    setBusy(true);
+    try {
+      const saved = await change({ id: person.id, op: "addressed", topicId: t.id });
+      if (!saved) return say("That didn't save");
+      const at = saved.history[0]?.at;
+      say(`Addressed: ${t.title}`, async () => {
+        if (!(await change({ id: person.id, op: "reopen", topic: t, at }))) say("Undo didn't save");
+      });
     } finally {
       setBusy(false);
     }
@@ -69,6 +84,15 @@ export function PersonCard({ person }: { person: Person }) {
       {person.topics.length ? (
         person.topics.map((t) => (
           <div key={t.id} className="topic">
+            <input
+              type="checkbox"
+              className="tick"
+              checked={false}
+              title="Addressed: check off just this one"
+              aria-label={`Addressed: ${t.title}`}
+              disabled={busy}
+              onChange={() => address(t)}
+            />
             <div className="n">
               {t.title}
               {t.why && <div className="why">{t.why}</div>}

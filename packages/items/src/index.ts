@@ -14,12 +14,14 @@ export { fromAwaitingQuote, fromBotDraft, fromFollowupDraft, fromFunnelFlag, fro
 export type { AwaitingQuote, BotDraft, FollowupDraft, FunnelFlag, InvoiceNudge, RuleReview } from './from-sections.js';
 export {
   addItemTopic,
+  addressTopic,
   addTopic,
   isPending,
   logConversation,
   newPerson,
   PeopleStore,
   removeTopic,
+  reopenTopic,
   setFacts,
   setTopicStatus,
   TOPIC_STATUS_LABEL,

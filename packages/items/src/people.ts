@@ -30,6 +30,8 @@ export interface PersonEvent {
   kind: PersonEventKind;
   title: string;
   detail?: string;
+  /** Titles of topics checked off one at a time that day (see `addressTopic`). */
+  addressed?: string[];
 }
 
 export interface Person {
@@ -137,6 +139,39 @@ export function logConversation(
     // Items behind settled topics are handled as far as this person goes.
     tagged: p.tagged.filter((k) => !settled.some((t) => t.itemKey === k)),
   };
+}
+
+/**
+ * Check off one topic: it leaves the agenda and joins that day's
+ * "Addressed" history entry (one per day, so a call that covers three of
+ * seven topics reads as one line). The item behind it is untagged.
+ */
+export function addressTopic(p: Person, topicId: string, at: string): Person {
+  const topic = p.topics.find((t) => t.id === topicId);
+  if (!topic) return p;
+  const [head, ...rest] = p.history;
+  const merged = head?.at === at ? head.addressed : undefined;
+  const addressed = [...(merged ?? []), topic.title];
+  const event: PersonEvent = { at, kind: 'note', title: `Addressed: ${addressed.join('; ')}`, addressed };
+  return {
+    ...p,
+    topics: p.topics.filter((t) => t.id !== topicId),
+    history: merged ? [event, ...rest] : [event, ...p.history],
+    tagged: topic.itemKey ? p.tagged.filter((k) => k !== topic.itemKey) : p.tagged,
+  };
+}
+
+/** Undo `addressTopic`: the topic goes back on the agenda and off that day's entry. */
+export function reopenTopic(p: Person, topic: Topic, at: string): Person {
+  if (p.topics.some((t) => t.id === topic.id)) return p;
+  const history = p.history.flatMap((e) => {
+    if (e.at !== at || !e.addressed?.includes(topic.title)) return [e];
+    const i = e.addressed.indexOf(topic.title);
+    const addressed = e.addressed.filter((_, n) => n !== i);
+    return addressed.length ? [{ ...e, title: `Addressed: ${addressed.join('; ')}`, addressed }] : [];
+  });
+  const tagged = topic.itemKey && !p.tagged.includes(topic.itemKey) ? [...p.tagged, topic.itemKey] : p.tagged;
+  return { ...p, topics: [...p.topics, topic], history, tagged };
 }
 
 export function setFacts(p: Person, facts: Array<[string, string]>): Person {

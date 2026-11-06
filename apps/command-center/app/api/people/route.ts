@@ -1,15 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   addItemTopic,
+  addressTopic,
   addTopic,
   logConversation,
   newPerson,
   removeTopic,
+  reopenTopic,
   setFacts,
   setTopicStatus,
   untag,
   type Person,
   type PersonEventKind,
+  type Topic,
   type TopicStatus,
 } from "@aac/items";
 import { getPeopleStore } from "@/lib/people";
@@ -29,6 +32,8 @@ type Op =
   | { op: "addItem"; id: string; item: { key: string; title: string; evidence?: string; detail?: string } }
   | { op: "topicStatus"; id: string; topicId: string; status: TopicStatus }
   | { op: "removeTopic"; id: string; topicId: string }
+  | { op: "addressed"; id: string; topicId: string; at?: string }
+  | { op: "reopen"; id: string; topic: Topic; at: string }
   | { op: "untag"; id: string; itemKey: string }
   | { op: "had"; id: string; kind: PersonEventKind; decided?: string; followUp?: string[]; at?: string }
   | { op: "facts"; id: string; facts: Array<[string, string]> }
@@ -71,6 +76,13 @@ export async function POST(request: NextRequest) {
       break;
     case "removeTopic":
       next = removeTopic(p, body.topicId);
+      break;
+    case "addressed":
+      next = addressTopic(p, body.topicId, body.at ?? easternDate(now));
+      break;
+    case "reopen":
+      if (!body.topic?.id || !body.topic.title || !STATUSES.has(body.topic.status) || !body.at) return bad("topic and at required");
+      next = reopenTopic(p, body.topic, body.at);
       break;
     case "untag":
       next = untag(p, body.itemKey);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addItemTopic, addTopic, isPending, logConversation, newPerson, setFacts, setTopicStatus } from '../src/people.js';
+import { addItemTopic, addressTopic, addTopic, isPending, logConversation, newPerson, reopenTopic, setFacts, setTopicStatus } from '../src/people.js';
 
 const now = new Date('2026-11-03T15:00:00Z');
 const mike = () => newPerson({ name: 'Mike', role: 'Tech' }, 0, now);
@@ -41,5 +41,35 @@ describe('people', () => {
     p = setTopicStatus(p, p.topics[0]!.id, 'ready');
     expect(p.topics[0]!.status).toBe('ready');
     expect(setFacts(p, [['Role', 'Tech'], ['', 'x'], ['Pay', ' ']]).facts).toEqual([['Role', 'Tech']]);
+  });
+
+  it('checks off one topic at a time into one entry per day, untagging its item', () => {
+    let p = addItemTopic(mike(), { key: 'd3:1', title: 'Janet Willy check' }, now);
+    p = addTopic(p, { title: 'ATM pulls' }, now);
+    p = addTopic(p, { title: 'Truck paperwork' }, now);
+    const [janet, atm] = p.topics;
+    p = addressTopic(p, janet!.id, '2026-11-08');
+    p = addressTopic(p, atm!.id, '2026-11-08');
+    expect(p.topics.map((t) => t.title)).toEqual(['Truck paperwork']);
+    expect(p.history).toHaveLength(1);
+    expect(p.history[0]).toMatchObject({ at: '2026-11-08', title: 'Addressed: Janet Willy check; ATM pulls' });
+    expect(p.tagged).toEqual([]);
+    p = addressTopic(p, p.topics[0]!.id, '2026-11-09');
+    expect(p.history.map((e) => e.title)).toEqual(['Addressed: Truck paperwork', 'Addressed: Janet Willy check; ATM pulls']);
+    expect(isPending(p)).toBe(false);
+  });
+
+  it('reopening undoes a check-off', () => {
+    let p = addItemTopic(mike(), { key: 'd3:1', title: 'Janet Willy check' }, now);
+    p = addTopic(p, { title: 'ATM pulls' }, now);
+    const [janet, atm] = p.topics;
+    p = addressTopic(addressTopic(p, janet!.id, '2026-11-08'), atm!.id, '2026-11-08');
+    p = reopenTopic(p, atm!, '2026-11-08');
+    expect(p.history[0]!.title).toBe('Addressed: Janet Willy check');
+    p = reopenTopic(p, janet!, '2026-11-08');
+    expect(p.history).toEqual([]);
+    expect(p.topics.map((t) => t.title).sort()).toEqual(['ATM pulls', 'Janet Willy check']);
+    expect(p.tagged).toEqual(['d3:1']);
+    expect(reopenTopic(p, janet!, '2026-11-08')).toBe(p);
   });
 });
