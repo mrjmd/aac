@@ -1,5 +1,6 @@
 import type { QBInvoice, QuickBooksClient } from '@aac/api-clients/quickbooks';
 import type { CashPosition } from './cash.js';
+import { SEASONAL_INDEX } from './scorecard.js';
 
 /**
  * This month: revenue by month against the charter's May 2027 test, and the
@@ -18,6 +19,32 @@ export const DECISION_WINDOW = ['2027-03', '2027-04', '2027-05'] as const;
 export const CHART_FROM = '2025-06';
 export const CHART_TO = '2027-05';
 
+/**
+ * Seasonal revenue goals. The charter's floor and target are averages over
+ * the decision window, so an average month's goal is goal ÷ the window's
+ * mean index, and a month's goal is that × its own index (invoiced dollars,
+ * the scorecard's `SEASONAL_INDEX`, re-fit each January). Over Mar-May the
+ * seasonal goals average exactly the charter's numbers.
+ */
+const INVOICED = SEASONAL_INDEX.invoiced;
+const indexOf = (month: string) => INVOICED[Number(month.slice(5, 7)) - 1]!;
+export const DECISION_INDEX = DECISION_WINDOW.reduce((s, m) => s + indexOf(m), 0) / DECISION_WINDOW.length;
+
+/** A month's share of a decision-window goal. */
+export function seasonalGoal(month: string, goal: number): number {
+  return Math.round((goal / DECISION_INDEX) * indexOf(month));
+}
+
+/** The seasonal goal averaged over a month and the two before it (May 2027 = the charter's number exactly). */
+export function rolling3Goal(month: string, goal: number): number {
+  return Math.round([month, addMonths(month, -1), addMonths(month, -2)].reduce((t, m) => t + seasonalGoal(m, goal), 0) / 3);
+}
+
+/** What a month's revenue would be in the decision window at the same level of demand. */
+export function windowEquivalent(month: string, revenue: number): number {
+  return Math.round((revenue / indexOf(month)) * DECISION_INDEX);
+}
+
 /** Tech #2 plan: winter revenue must beat last winter by this much. */
 export const WINTER_MULTIPLIER = 1.5;
 /** Booked this many weeks ahead, persistently. */
@@ -33,11 +60,19 @@ const HIRE_FUND_ACCOUNT = /^New Technician \(/;
 export interface RevenueMonth {
   month: string;
   revenue: number;
+  /** The charter's floor and target, seasonal (see `seasonalGoal`). */
+  floor: number;
+  target: number;
+  /** The same goals averaged over this month and the two before: what the rolling line is judged against. */
+  floor3: number;
+  target3: number;
   /** Rolling 3-month average ending this month; null until three months exist or while the month is open. */
   rolling3: number | null;
   lastYear: number | null;
   /** The current month, still open. */
   open: boolean;
+  /** Not started yet: only the seasonal goals (and last year) apply. */
+  future: boolean;
 }
 
 export interface MonthlyRevenue {
@@ -45,6 +80,11 @@ export interface MonthlyRevenue {
   months: RevenueMonth[];
   /** Rolling 3-month average of the last three closed months. */
   rolling3: number | null;
+  /** The seasonal floor and target averaged over those same three months. */
+  rolling3Floor: number | null;
+  rolling3Target: number | null;
+  /** Those three months taken to the decision window at the same level of demand: the pace for Mar-May. */
+  pace: number | null;
   /** Last 12 closed months. */
   ttm: number;
   ttmLastYear: number | null;
@@ -79,18 +119,30 @@ export function buildMonthlyRevenue(invoices: Pick<QBInvoice, 'TxnDate' | 'Total
     return {
       month,
       revenue: rev(month) ?? 0,
+      floor: seasonalGoal(month, CHARTER_FLOOR),
+      target: seasonalGoal(month, CHARTER_TARGET),
+      floor3: rolling3Goal(month, CHARTER_FLOOR),
+      target3: rolling3Goal(month, CHARTER_TARGET),
       rolling3: closed && last3.every((v) => v != null) ? round((last3 as number[]).reduce((s, v) => s + v, 0) / 3) : null,
       lastYear: addMonths(month, -12) <= current ? rev(addMonths(month, -12)) : null,
       open: month === current,
+      future: month > current,
     };
-  }).filter((m) => m.month <= current);
+  });
   const lastClosed = addMonths(current, -1);
+  const window3 = [addMonths(lastClosed, -2), addMonths(lastClosed, -1), lastClosed];
+  const avg = (f: (m: string) => number) => round(window3.reduce((t, m) => t + f(m), 0) / 3);
   const sum = (from: string, to: string) => monthsBetween(from, to).reduce((s, m) => s + (byMonth.get(m) ?? 0), 0);
   const earliest = [...byMonth.keys()].sort()[0] ?? current;
+  const rolling3 = months.find((m) => m.month === lastClosed)?.rolling3 ?? null;
   return {
     asOf: today,
+    // Future months stay for their seasonal goals; their revenue is 0 and the chart draws no bar.
     months,
-    rolling3: months.find((m) => m.month === lastClosed)?.rolling3 ?? null,
+    rolling3,
+    rolling3Floor: rolling3 == null ? null : rolling3Goal(lastClosed, CHARTER_FLOOR),
+    rolling3Target: rolling3 == null ? null : rolling3Goal(lastClosed, CHARTER_TARGET),
+    pace: rolling3 == null ? null : avg((m) => windowEquivalent(m, byMonth.get(m) ?? 0)),
     ttm: round(sum(addMonths(lastClosed, -11), lastClosed)),
     ttmLastYear: earliest <= addMonths(lastClosed, -23) ? round(sum(addMonths(lastClosed, -23), addMonths(lastClosed, -12))) : null,
   };

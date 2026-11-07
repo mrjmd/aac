@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildMonthlyRevenue, buildTech2Gates, winterMonths } from '../src/index.js';
+import { buildMonthlyRevenue, buildTech2Gates, DECISION_INDEX, DECISION_WINDOW, seasonalGoal, windowEquivalent, winterMonths } from '../src/index.js';
 import type { CashAccount } from '../src/index.js';
 
 const inv = (TxnDate: string, TotalAmt: number) => ({ TxnDate, TotalAmt });
@@ -22,8 +22,10 @@ describe('buildMonthlyRevenue', () => {
     expect(oct.revenue).toBe(41_845);
     expect(oct.rolling3).toBe(Math.round((29_600 + 49_275 + 41_845) / 3));
     expect(oct.lastYear).toBe(33_000);
-    const nov = r.months[r.months.length - 1]!;
-    expect(nov).toMatchObject({ month: '2026-11', revenue: 275, open: true, rolling3: null });
+    const nov = r.months.find((m) => m.month === '2026-11')!;
+    expect(nov).toMatchObject({ month: '2026-11', revenue: 275, open: true, future: false, rolling3: null });
+    const may = r.months[r.months.length - 1]!;
+    expect(may).toMatchObject({ month: '2027-05', revenue: 0, future: true, rolling3: null });
     expect(r.rolling3).toBe(40_240);
     expect(r.months[0]!.month).toBe('2025-06');
   });
@@ -31,6 +33,33 @@ describe('buildMonthlyRevenue', () => {
   it('TTM is the last 12 closed months', () => {
     const r = buildMonthlyRevenue(invoices, '2026-11-07');
     expect(r.ttm).toBe(29_600 + 49_275 + 41_845);
+  });
+});
+
+describe('seasonal goals', () => {
+  it('average exactly the charter numbers over the decision window', () => {
+    const avg = (goal: number) => DECISION_WINDOW.reduce((t, m) => t + seasonalGoal(m, goal), 0) / 3;
+    expect(Math.abs(avg(50_000) - 50_000)).toBeLessThan(2);
+    expect(Math.abs(avg(80_000) - 80_000)).toBeLessThan(2);
+  });
+
+  it('the rolling goal for May 2027 is the charter number', () => {
+    const r = buildMonthlyRevenue([], '2026-11-07');
+    const may = r.months.find((m) => m.month === '2027-05')!;
+    expect(Math.abs(may.floor3 - 50_000)).toBeLessThan(2);
+    expect(Math.abs(may.target3 - 80_000)).toBeLessThan(2);
+  });
+
+  it('a slow month gets a smaller share, a busy one a bigger share', () => {
+    expect(seasonalGoal('2026-12', 50_000)).toBe(Math.round((50_000 / DECISION_INDEX) * 0.71));
+    expect(seasonalGoal('2026-06', 50_000)).toBeGreaterThan(seasonalGoal('2026-12', 50_000) * 2);
+  });
+
+  it('pace takes the last three closed months to the window at the same demand', () => {
+    const r = buildMonthlyRevenue([inv('2026-08-01', 29_600), inv('2026-09-01', 49_275), inv('2026-10-01', 41_845)], '2026-11-07');
+    const expected = Math.round((windowEquivalent('2026-08', 29_600) + windowEquivalent('2026-09', 49_275) + windowEquivalent('2026-10', 41_845)) / 3);
+    expect(r.pace).toBe(expected);
+    expect(r.rolling3Floor).toBe(Math.round((seasonalGoal('2026-08', 50_000) + seasonalGoal('2026-09', 50_000) + seasonalGoal('2026-10', 50_000)) / 3));
   });
 });
 

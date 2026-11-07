@@ -3,7 +3,6 @@ import {
   buildMonthlyRevenue,
   buildTech2Gates,
   CHARTER_FLOOR,
-  CHARTER_TARGET,
   WINTER_MULTIPLIER,
   type RevenueMonth,
   type Scorecard,
@@ -81,7 +80,7 @@ export default async function MonthPage() {
     bookedWeeks: bookedRow ? bookedRow.values.slice(0, -1) : [],
     today,
   });
-  const cur = rev.months[rev.months.length - 1] as RevenueMonth;
+  const cur = rev.months.find((m) => m.open) as RevenueMonth;
   const r3 = rev.rolling3;
   const w = gates.winter;
   const winterLabel = `${monthName(w.months[0]!, { month: "short", year: "numeric" })} to ${monthName(w.months[3]!, { month: "short", year: "numeric" })}`;
@@ -91,11 +90,18 @@ export default async function MonthPage() {
       {header}
       <div className="tiles">
         <Tile
+          k="Pace for Mar-May 2027"
+          v={rev.pace == null ? "n/a" : `${usdK(rev.pace)} / mo`}
+          s={rev.pace == null ? "" : rev.pace >= CHARTER_FLOOR ? `${usdK(rev.pace - CHARTER_FLOOR)} over the $${CHARTER_FLOOR / 1000}k floor` : `${usdK(CHARTER_FLOOR - rev.pace)} under the $${CHARTER_FLOOR / 1000}k floor`}
+          tone={rev.pace == null ? undefined : rev.pace >= CHARTER_FLOOR ? "good" : "bad"}
+          def="The last 3 closed months with the season taken out, then put back for March to May: what the charter's test would read if demand stays at today's level. Uses the invoiced seasonal index from the funnel study (directional, re-fit each January)."
+        />
+        <Tile
           k="Rolling 3-month revenue"
           v={r3 == null ? "n/a" : `${usdK(r3)} / mo`}
-          s={r3 == null ? "" : r3 >= CHARTER_FLOOR ? `${usdK(r3 - CHARTER_FLOOR)} over the $${CHARTER_FLOOR / 1000}k floor` : `${usdK(CHARTER_FLOOR - r3)} under the $${CHARTER_FLOOR / 1000}k floor`}
-          tone={r3 == null ? undefined : r3 >= CHARTER_FLOOR ? "good" : "bad"}
-          def="Average monthly revenue over the last 3 closed months. Revenue = QuickBooks invoice totals by invoice date. This is what the charter measures in Mar-May 2027: $50k floor, $80k target."
+          s={rev.rolling3Floor == null ? "" : `Seasonal floor for these months ${usdK(rev.rolling3Floor)}`}
+          tone={r3 == null || rev.rolling3Floor == null ? undefined : r3 >= rev.rolling3Floor ? "good" : "bad"}
+          def="Average monthly revenue over the last 3 closed months (QuickBooks invoice totals by invoice date), against the charter floor spread by season: the $50k Mar-May average, scaled to each month's share of the year."
         />
         <Tile
           k="Last 12 months"
@@ -107,24 +113,25 @@ export default async function MonthPage() {
         <Tile
           k={`${monthName(cur.month, { month: "long" })} so far`}
           v={usdK(cur.revenue)}
-          s={cur.lastYear != null ? `${usdK(cur.lastYear)} all of ${monthName(cur.month, { month: "short" })} last year` : ""}
-          def="Invoices dated this month so far, beside the whole same month last year."
+          s={`Seasonal floor ${usdK(cur.floor)}${cur.lastYear != null ? `; ${usdK(cur.lastYear)} all of ${monthName(cur.month, { month: "short" })} last year` : ""}`}
+          def="Invoices dated this month so far, against this month's seasonal floor and the whole same month last year."
         />
         <Tile
           k="Take-home, margin, owner hours"
           v="Not built"
-          s="Take-home and margin wait on the 2026 books; hours on your two open decisions"
-          def="The mockup's other three tiles. Owner take-home and gross margin come from the reconciled P&L; owner hours needs a source decision."
+          s="Take-home and margin wait on the 2026 books; hours on three counting questions"
+          def="The mockup's other three tiles. Owner take-home and gross margin come from the reconciled P&L; owner hours needs three answers on what counts (agent harness, campaign time, calls)."
         />
       </div>
 
       <div className="card">
         <h3>Revenue by month, rolling 3-month average</h3>
-        <RevenueChart months={rev.months} floor={CHARTER_FLOOR} target={CHARTER_TARGET} />
+        <RevenueChart months={rev.months} />
         <div className="note">
-          Bars are monthly revenue (QuickBooks invoices by invoice date); the faint bar behind each is the same month a year earlier. The line is the
-          rolling 3-month average the charter judges in March to May 2027. {monthName(cur.month, { month: "long" })} is still open and isn&apos;t in the
-          average.
+          Bars are monthly revenue (QuickBooks invoices by invoice date); the faint bar behind each is the same month a year earlier. The blue line is the
+          rolling 3-month average the charter judges in March to May 2027. The dashed lines are the charter&apos;s $50k floor and $80k target spread by
+          season and rolled the same 3 months, so they reach exactly $50k and $80k in May 2027, when the charter reads the line. {monthName(cur.month, { month: "long" })}{" "}
+          is still open and isn&apos;t in the average.
         </div>
       </div>
 

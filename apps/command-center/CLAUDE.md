@@ -71,8 +71,13 @@ sources. Cells are for reading trends and never become items.
 
 ## This month (`/month`)
 
-The approved mockup's This month: rolling 3-month revenue against the
-charter's \$50k floor and \$80k target, last 12 months, the month so far,
+The approved mockup's This month, with the charter's goals seasonal: the
+\$50k floor and \$80k target are Mar-May 2027 averages, so each month's
+goal is its share of the year (the scorecard's invoiced `SEASONAL_INDEX`),
+and the chart's goal lines roll 3 months like the revenue line, landing on
+\$50k and \$80k in May 2027. Tiles: pace for Mar-May (last 3 closed months,
+season removed), rolling 3-month revenue against its seasonal floor, last
+12 months, the month so far,
 the revenue chart (Jun 2025 to May 2027, bars + last year + the rolling
 line, the Mar-May 2027 decision window) and the tech #2 gates (vaults from
 the Relay registers in the cash card, the winter 1.5x multiplier on closed
