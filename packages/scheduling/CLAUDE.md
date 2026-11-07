@@ -27,6 +27,13 @@ the pipeline; the pipeline does the scheduling work and emits results
 - `dispatch.ts` — `dispatchSchedulingIntent`: classify a Quo text or
   transcript, normalize to directives, write the shadow queue, create
   STUB / HOLD events (create first, enrich after), post the suggestion note.
+  Stubs and holds are for visits to a customer's property only: the
+  site-visit guard (`findSiteVisitEvidence`) sends a manual_schedule for a
+  contact with no PD address, no inbound text, no QB estimate and no QB
+  invoice to pending-review (score capped at
+  `NO_SITE_VISIT_EVIDENCE_SCORE_CAP`). Lookup failures fail open. Fixture:
+  `__tests__/fixtures/paul-sullivan-2026-11-06.json` (radio ad rep's phone
+  call that became an assessment stub).
 - `proposal-builder.ts` — `buildProposalForDirective` plus the shared
   `fetchCustomer` / `fetchBusyEvents` / `buildTravelDeps` helpers.
 - `suggestion-note.ts` — `postSuggestionNoteForDirective` (suggestSlot +

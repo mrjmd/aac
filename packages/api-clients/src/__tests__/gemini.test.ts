@@ -1022,6 +1022,51 @@ describe('GeminiClient', () => {
       expect(promptText).toContain('The speaker is Matt');
     });
 
+    it('Matt prompt limits manual_schedule to on-site visits (Paul Sullivan, 2026-11-06)', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockClassifierResponse({
+        intent: null, confidence: 'high', rationale: '', knownSlot: null, eventClass: null, scopeSummary: '',
+      }));
+
+      await client.classifySchedulingIntent('I probably have some time next week to have a phone call', {
+        speakerRole: 'matt',
+        now: fixedNow,
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      const promptText = body.contents[0].parts[0].text as string;
+      expect(promptText).toContain('ON-SITE VISITS ONLY');
+      expect(promptText).toContain("visit to a customer's property (an assessment, a job, or a callback)");
+      for (const excluded of [
+        'phone calls',
+        'video calls',
+        'vendor or sales meetings',
+        'media and advertising reps',
+        "Matt's own meetings",
+      ]) {
+        expect(promptText).toContain(excluded);
+      }
+      expect(promptText).toContain('radio station ad salesperson');
+    });
+
+    it('customer prompt returns null for vendors and non-site-visit appointments', async () => {
+      const client = makeClient();
+      mockFetch.mockReturnValueOnce(mockClassifierResponse({
+        intent: null, confidence: 'high', rationale: '', knownSlot: null, eventClass: null, scopeSummary: '',
+      }));
+
+      await client.classifySchedulingIntent("I'll talk to you at 9AM on Monday", {
+        speakerRole: 'customer',
+        now: fixedNow,
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      const promptText = body.contents[0].parts[0].text as string;
+      expect(promptText).toContain('ON-SITE VISITS ONLY');
+      expect(promptText).toContain('media or advertising rep');
+      expect(promptText).toContain('phone call, video call, or meeting rather than a site visit');
+    });
+
     it('selects the customer prompt when speakerRole is "customer"', async () => {
       const client = makeClient();
       mockFetch.mockReturnValueOnce(mockClassifierResponse({

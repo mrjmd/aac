@@ -16,8 +16,11 @@
  *        - callback_opened                        → resolveCallbackParent
  *                                                 → normalizeQuoCustomerIntent
  *        - manual_schedule                        → normalizeManualSchedule
- *   4. Writes any resulting directives to the shadow queue
- *   5. Returns a summary the caller can include in the webhook response
+ *   4. Site-visit guard: a manual_schedule for a contact with no address,
+ *      QB quote, invoice or inbound text is capped below the auto-propose
+ *      threshold so it lands on pending-review (no stub, no hold)
+ *   5. Writes any resulting directives to the shadow queue
+ *   6. Returns a summary the caller can include in the webhook response
  *
  * Failures inside the helper never throw to the webhook — they log to
  * `logHealthError` and continue, so the middleware stays alive even when
@@ -197,6 +200,8 @@ export interface SchedulingDispatchSummary {
   stubsCreated: number;
   holdsCreated: number;
   suggestionNotesPosted: number;
+  /** manual_schedule directives sent to pending-review by the site-visit guard. */
+  sentToReview: number;
   errors: number;
 }
 
@@ -218,6 +223,7 @@ export async function dispatchSchedulingIntent(
     stubsCreated: 0,
     holdsCreated: 0,
     suggestionNotesPosted: 0,
+    sentToReview: 0,
     errors: 0,
   };
 
@@ -350,6 +356,24 @@ export async function dispatchSchedulingIntent(
               Math.round((directive.confidence.score + 0.2) * 100) / 100,
             );
           }
+        }
+      }
+
+      // Site-visit guard (Paul Sullivan, 2026-11-06): a radio ad rep's
+      // "phone call Monday at 9" became an assessment STUB with Mike
+      // invited. Stubs and holds are for visits to a customer's property,
+      // so a manual_schedule for a contact with no address, no QB quote
+      // and no history goes to the review queue instead of the calendar.
+      if (directive.intent === 'manual_schedule') {
+        const evidence = await findSiteVisitEvidence(deps, context);
+        if (evidence === 'none') {
+          holdForReview(directive);
+          summary.sentToReview++;
+          log.info('manual_schedule with no site-visit evidence sent to review', {
+            eventId: context.eventId,
+            directiveId: directive.id,
+            pdPersonId: String(context.pdPersonId),
+          });
         }
       }
 
@@ -960,4 +984,68 @@ async function findRecentEstimate(
     });
     return null;
   }
+}
+
+// ── Site-visit guard ──────────────────────────────────────────────
+
+/**
+ * Score a guarded directive is capped at. Anything under
+ * SCHEDULING_AUTO_PROPOSE_THRESHOLD lands on the existing pending-review
+ * list (the store routes by score) and skips the stub, hold and
+ * suggestion-note steps, which all require queue === 'pending'.
+ */
+export const NO_SITE_VISIT_EVIDENCE_SCORE_CAP = 0.5;
+
+export type SiteVisitEvidence = 'found' | 'none' | 'unknown';
+
+/**
+ * Does this contact look like a customer whose property Mike could visit?
+ * Any one of these counts:
+ *   - a PD address
+ *   - a text the contact sent us (a lead describing their problem)
+ *   - a QB estimate (any status, any age)
+ *   - a QB invoice (past work)
+ * Cheapest first; the first hit wins. Returns 'unknown' (treated like
+ * 'found', the pre-guard behavior) when a lookup fails or QB is not wired,
+ * so a vendor outage never strands a real booking in review.
+ */
+export async function findSiteVisitEvidence(
+  deps: Pick<SchedulingDispatchDeps, 'pd' | 'quo' | 'qb' | 'store'>,
+  context: Pick<SchedulingDispatchContext, 'customerPhone' | 'pdPersonId'>,
+): Promise<SiteVisitEvidence> {
+  const info = await fetchPdPersonInfo(deps.pd, deps.store, context.pdPersonId);
+  if (info.address) return 'found';
+  if (!deps.qb) return 'unknown';
+
+  try {
+    const page = await deps.quo.listMessages({
+      participantE164: context.customerPhone,
+      maxResults: 50,
+    });
+    if ((page.data ?? []).some((m) => m.direction === 'incoming')) return 'found';
+
+    // No QB customer link means no estimate or invoice can exist.
+    if (!info.qbCustomerId) return 'none';
+    if (!(await deps.qb.isConnected())) return 'unknown';
+    const estimates = await deps.qb.getEstimatesByCustomer(info.qbCustomerId);
+    if (estimates.length > 0) return 'found';
+    const invoices = await deps.qb.getInvoicesByCustomer(info.qbCustomerId);
+    if (invoices.length > 0) return 'found';
+    return 'none';
+  } catch (err) {
+    log.warn('Site-visit evidence lookup failed, guard skipped', {
+      pdPersonId: String(context.pdPersonId),
+      error: (err as Error).message,
+    });
+    return 'unknown';
+  }
+}
+
+/** Route a directive to pending-review: cap its score and say why. */
+function holdForReview(directive: SchedulingDirective): void {
+  const { confidence } = directive;
+  if (!confidence.signals.includes('no_site_visit_evidence')) {
+    confidence.signals.push('no_site_visit_evidence');
+  }
+  confidence.score = Math.min(confidence.score, NO_SITE_VISIT_EVIDENCE_SCORE_CAP);
 }

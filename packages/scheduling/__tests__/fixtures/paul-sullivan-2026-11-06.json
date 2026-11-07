@@ -1,0 +1,268 @@
+{
+  "_note": "Real inputs, Paul Sullivan (Sports Hub 98.5 / Beasley Media ad sales) call 2026-11-06. Directive 0839495d became an assessment STUB with Mike invited. Read from Quo/PD/QB/Redis read-only on 2026-11-06.",
+  "now": "2026-11-06T17:46:14.000Z",
+  "context": {
+    "eventId": "call-paul-sullivan-2026-11-06",
+    "eventType": "call.transcript.completed",
+    "customerPhone": "+16175844211",
+    "pdPersonId": 6315,
+    "dialogue": [
+      {
+        "content": "Hello?",
+        "isMatt": true
+      },
+      {
+        "content": "This is Attack of Crack.",
+        "isMatt": true
+      },
+      {
+        "content": "Matt speaking.",
+        "isMatt": true
+      },
+      {
+        "content": "Hi, Matt.",
+        "isMatt": false
+      },
+      {
+        "content": "I just have a quick question.",
+        "isMatt": false
+      },
+      {
+        "content": "I was hoping you might be able to point me in the right direction, actually.",
+        "isMatt": false
+      },
+      {
+        "content": "Sure.",
+        "isMatt": true
+      },
+      {
+        "content": "My name is my name is Paul Sullivan.",
+        "isMatt": false
+      },
+      {
+        "content": "I'm calling from the Sports Hub ninety eight point five in Beasley Media.",
+        "isMatt": false
+      },
+      {
+        "content": "I'm just trying to find out I'm just trying to find out who handles the marketing for you guys.",
+        "isMatt": false
+      },
+      {
+        "content": "Is that something you can help me with?",
+        "isMatt": false
+      },
+      {
+        "content": "That would be me.",
+        "isMatt": true
+      },
+      {
+        "content": "Oh, fantastic.",
+        "isMatt": false
+      },
+      {
+        "content": "Well, the reason for the call, I don't know if you're familiar with the station, but we actually work with a number of home improvement companies.",
+        "isMatt": false
+      },
+      {
+        "content": "We've had a lot of success in helping them to increase not just their brand visibility, but really to drive incoming leads.",
+        "isMatt": false
+      },
+      {
+        "content": "We use our broadcast capabilities as well as a digital technology to do that.",
+        "isMatt": false
+      },
+      {
+        "content": "And I was hoping I might be able to schedule a time to connect with you over the phone, via Teams, in person, whatever works for you, find out a little bit about your plans for next year, kinda share with you a little bit about what we do, and see if we'd be a good fit.",
+        "isMatt": false
+      },
+      {
+        "content": "Sure.",
+        "isMatt": true
+      },
+      {
+        "content": "Yeah.",
+        "isMatt": true
+      },
+      {
+        "content": "I probably have some time next week to have a phone call about it in more detail.",
+        "isMatt": true
+      },
+      {
+        "content": "Sure.",
+        "isMatt": false
+      },
+      {
+        "content": "Let me see.",
+        "isMatt": true
+      },
+      {
+        "content": "What's a good day for you next week?",
+        "isMatt": false
+      },
+      {
+        "content": "How about any chance you could do Monday at 10AM?",
+        "isMatt": true
+      },
+      {
+        "content": "I I can't do ten, but I could do eleven or I could do nine.",
+        "isMatt": false
+      },
+      {
+        "content": "Nine would work.",
+        "isMatt": true
+      },
+      {
+        "content": "Yeah.",
+        "isMatt": true
+      },
+      {
+        "content": "Nine works.",
+        "isMatt": true
+      },
+      {
+        "content": "09:00.",
+        "isMatt": false
+      },
+      {
+        "content": "Perfect.",
+        "isMatt": false
+      },
+      {
+        "content": "And you wanna do a phone call?",
+        "isMatt": false
+      },
+      {
+        "content": "Yeah.",
+        "isMatt": true
+      },
+      {
+        "content": "That's perfect.",
+        "isMatt": true
+      },
+      {
+        "content": "Awesome.",
+        "isMatt": false
+      },
+      {
+        "content": "And is this the best number to catch you at?",
+        "isMatt": false
+      },
+      {
+        "content": "This is it.",
+        "isMatt": true
+      },
+      {
+        "content": "Awesome.",
+        "isMatt": false
+      },
+      {
+        "content": "Matt, can I grab an email and I'll?",
+        "isMatt": false
+      },
+      {
+        "content": "An email address, and I'll shoot you a meeting maker?",
+        "isMatt": false
+      },
+      {
+        "content": "Sure.",
+        "isMatt": true
+      },
+      {
+        "content": "It's just matt, matt,@attackercrack.com.",
+        "isMatt": true
+      },
+      {
+        "content": "Dot com.",
+        "isMatt": false
+      },
+      {
+        "content": "Easy enough.",
+        "isMatt": false
+      },
+      {
+        "content": "Awesome, Matt.",
+        "isMatt": false
+      },
+      {
+        "content": "Thanks for the time.",
+        "isMatt": false
+      },
+      {
+        "content": "I will, I'll talk to you at 9AM on Monday.",
+        "isMatt": false
+      },
+      {
+        "content": "Alright.",
+        "isMatt": true
+      },
+      {
+        "content": "Thank you.",
+        "isMatt": true
+      },
+      {
+        "content": "Have a great one.",
+        "isMatt": false
+      },
+      {
+        "content": "Bye.",
+        "isMatt": true
+      },
+      {
+        "content": "Bye",
+        "isMatt": false
+      }
+    ]
+  },
+  "pdPerson": {
+    "id": 6315,
+    "name": "Paul Sullivan",
+    "address": null,
+    "qbCustomerId": "2239"
+  },
+  "qb": {
+    "estimates": [],
+    "invoices": []
+  },
+  "quoMessages": [
+    {
+      "direction": "outgoing",
+      "createdAt": "2026-10-12T16:38:18.709Z",
+      "text": "Thanks for reaching out to Attack A Crack! Apologies for missing your call, we are on the line with another customer.\n\nPlease send us a text with your name and a description of the situation, along with photos of the foundation or bulkhead cracks you’re experiencing. We’ll get back to you as soon as possible.\n\n— Matt at Attack A Crack"
+    }
+  ],
+  "incidentClassification": {
+    "matt": {
+      "intent": "manual_schedule",
+      "score": 0.9,
+      "confidence": "high",
+      "rationale": "",
+      "knownSlot": {
+        "startIso": "2026-11-09T14:00:00Z"
+      },
+      "eventClass": "assessment",
+      "slotCommitment": "booked",
+      "scopeSummary": "phone call about it in more detail"
+    },
+    "customer": {
+      "intent": null,
+      "score": 0,
+      "confidence": "low",
+      "rationale": "",
+      "knownSlot": null,
+      "eventClass": null,
+      "slotCommitment": null,
+      "scopeSummary": ""
+    }
+  },
+  "incidentDirective": {
+    "id": "0839495d-7972-4154-a095-d5f6ede8e08e",
+    "confidence": {
+      "score": 0.88,
+      "signals": [
+        "matt_outbound_intent",
+        "explicit_slot_extracted",
+        "matching_pd_person_found"
+      ]
+    }
+  }
+}

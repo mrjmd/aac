@@ -1067,6 +1067,7 @@ Rules:
 - Asking the business to SEND date options ("throw me some dates", "send me some times", "let me know your next availability") after agreeing to proceed IS quote_approved — the customer is initiating scheduling even though they will confirm the specific date later. A trailing "I'll get back to you" about WHICH date does not cancel the acceptance.
 - CRITICAL: an agreement ("Yes, that will work") given right after a specific date/time was offered is appointment_confirmed, NOT quote_approved — the customer is accepting the time slot, not necessarily the quote.
 - appointment_confirmed requires a concrete date (and ideally time) resolvable from the conversation context or the message itself. A bare "yes" with no offered slot in sight is NOT appointment_confirmed.
+- ON-SITE VISITS ONLY: every intent here is about a visit to the customer's property (an assessment, a job, or a callback). Return null when the speaker is a vendor, salesperson, media or advertising rep (radio, TV, print, online ads, marketing agencies), or anyone else selling to the business rather than seeking foundation or concrete work at a property (homeowners, buyers, realtors, and property managers all count as customers), and when the time being agreed is a phone call, video call, or meeting rather than a site visit.
 - A pure pricing/info question with no schedule request is null.
 - Distinguish assessment_requested (new) from callback_opened (rework of prior AAC work).
 - When torn between two intents, lower confidence rather than guess.
@@ -1104,6 +1105,7 @@ Return ONLY a JSON object:
 
 Rules:
 - Only manual_schedule when Matt explicitly names a date/time.
+- ON-SITE VISITS ONLY: manual_schedule is only for a visit to a customer's property (an assessment, a job, or a callback). Return null for phone calls, video calls (Zoom, Teams, Meet), vendor or sales meetings, media and advertising reps (radio, TV, print, online ads, marketing agencies), errands (picking up checks, materials), and Matt's own meetings, even when Matt names an exact date and time. Example: a radio station ad salesperson asks for a call, Matt says "Monday at 9 works for a phone call" → null.
 - "Let me check my calendar" or "I'll get back to you" → null.
 - Ambiguous day-name ("Tuesday") → assume the NEXT Tuesday from today {{TODAY_DATE_LOCAL}}.
 - Date-only (no time) → set startIso at 08:00 local.
