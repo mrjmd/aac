@@ -1,17 +1,21 @@
+import { easternDate } from "@aac/shared-utils/eastern";
+import { loadObligations } from "@/lib/obligations";
 import { NeedsAttention } from "../components/items";
 import { PageHeader } from "../components/layout-parts";
+import { ImportantDates } from "./important-dates";
 
-export default function AdminPage() {
+export const dynamic = "force-dynamic";
+
+export default async function AdminPage() {
+  const obligations = await loadObligations();
   return (
     <>
       <PageHeader eyebrow="Area" title="Admin" sub="Deadlines, insurance, COIs, documents" />
       <NeedsAttention areas={["admin"]} />
+      <ImportantDates initial={obligations} today={easternDate(new Date())} />
       <div className="card">
         <h3>Not built yet</h3>
-        <div>
-          The obligations calendar, COI requests and the documents vault go here. They need the admin facts (formation
-          date, policy dates, license dates) and a storage pick for the vault.
-        </div>
+        <div>COI requests and the documents vault (policies, certificates, licenses, filing receipts) go here.</div>
       </div>
     </>
   );

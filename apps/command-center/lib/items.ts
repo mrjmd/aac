@@ -1,5 +1,6 @@
 import {
   fromInvoiceNudge,
+  fromObligation,
   fromRuleReview,
   fromTodo,
   ItemStore,
@@ -16,6 +17,7 @@ import { cards, type NudgeRow } from "./cards";
 import { getCanHelpStore } from "./can-help";
 import { getRedis } from "./redis";
 import { readSnapshot } from "./snapshots";
+import { loadObligations } from "./obligations";
 import { loadTodos } from "./todos";
 import { loadSystemCandidates } from "./system-health";
 import { easternDate } from "@aac/shared-utils/eastern";
@@ -34,7 +36,7 @@ export async function loadCandidates(now = new Date()): Promise<{
   detectedAt: string | null;
   source: string | null;
 }> {
-  const [snapshot, todos, nudges, rules, system] = await Promise.all([
+  const [snapshot, todos, nudges, rules, system, obligations] = await Promise.all([
     getItemStore().getCandidates(),
     loadTodos(),
     readSnapshot<NudgeRow[]>(cards.nudges().name),
@@ -43,6 +45,7 @@ export async function loadCandidates(now = new Date()): Promise<{
       .catch(() => []),
     // Jobs not invoiced / CI red, only once ongoing (lib/system-rules.ts). Redis + saved CI snapshot.
     loadSystemCandidates(now),
+    loadObligations(),
   ]);
   const today = easternDate(now);
   // The saved nudge ladder replaces triage's plain overdue items (same d3:
@@ -59,6 +62,10 @@ export async function loadCandidates(now = new Date()): Promise<{
         return c ? [c] : [];
       }),
       ...system,
+      ...obligations.flatMap((o) => {
+        const c = fromObligation(o, today);
+        return c ? [c] : [];
+      }),
     ],
     detectedAt: snapshot?.at ?? null,
     source: snapshot?.source ?? null,

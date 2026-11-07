@@ -154,4 +154,5 @@ export const KIND: Record<string, string> = {
   FUPF: "Funnel flag",
   QD: "Bot quote draft",
   TODO: "Your to-do",
+  DATE: "Important date",
 };

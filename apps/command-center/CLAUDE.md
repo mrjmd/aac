@@ -93,6 +93,18 @@ revenue is QBO invoice totals by invoice date, from the saved card
 `month:invoices` (warm cron, never fetched on load). Take-home, margin and
 owner hours wait on the books and Matt's decisions.
 
+## Important dates (`/admin#dates`)
+
+The obligations registry's first screen: insurance, licenses, filings,
+taxes, memberships and renewals, one JSON list in `cc:obligations`
+(`Obligation` in `@aac/items` obligations.ts; seeded 11/07 from Gmail and
+QBO by a one-off script). Within `leadDays` of its date an entry becomes a
+`DATE` item (`fromObligation`, key `ob:{id}:{due}`, `dueOn` = the date), so
+it pins to its day on This week and turns red on Today when due. Done rolls
+a repeating date forward (`markObligationDone`) and closes a one-off;
+`POST /api/obligations` {op: done | set} is the only write. Dates with no
+due date are listed under "Needs a date" and never become items.
+
 ## Lead leaks (`/sales`)
 
 Sales shows the lead-leak queue: leads we dropped before a quote in the last

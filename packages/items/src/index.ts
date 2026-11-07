@@ -29,3 +29,5 @@ export {
   untag,
 } from './people.js';
 export type { PeopleRedis, Person, PersonEvent, PersonEventKind, Topic, TopicStatus } from './people.js';
+export { DEFAULT_LEAD_DAYS, fromObligation, markObligationDone, nextDue, OBLIGATION_KEY_PREFIX } from './obligations.js';
+export type { Obligation, ObligationCategory, Repeat } from './obligations.js';

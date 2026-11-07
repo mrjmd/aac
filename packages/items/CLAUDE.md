@@ -13,6 +13,8 @@ owner-controlled state. Spec: `docs/plans/command-center/README.md` §4.
 - `rank.ts` — pure: score + reasons, Today suggestions, logged features.
 - `group.ts` — pure: one person = one item.
 - `from-triage.ts` — adapter from today's triage `findings.json`.
+- `obligations.ts` — Important dates: `Obligation`, `fromObligation`
+  (an item inside its lead window, pinned to its day), `markObligationDone`.
 - `store.ts` — Redis persistence (keys from `@aac/shared-utils/redis`).
 - `people.ts` — People (Mike, Ed): agenda topics, past conversations,
   tagged item keys, facts; pure ops + `PeopleStore`. Client-safe, so the

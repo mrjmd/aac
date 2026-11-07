@@ -409,6 +409,10 @@ export const keys = {
   scorecardLastRun: 'scorecard:last-run' as const,
   scorecardRunLock: 'scorecard:run-lock' as const,
 
+  // ── Important dates (command center Admin owns it) ──
+  /** JSON Obligation[] (`@aac/items` obligations.ts): renewals, licenses, filings, memberships, each with its next due date. */
+  ccObligations: 'cc:obligations' as const,
+
   // ── Lead leaks (worker writes nightly, command center Sales reads) ──
   /** JSON LeadLeakSnapshot (`@aac/lead-leaks`): leads we dropped before a quote, last 90 days. */
   leadLeaks: 'lead-leaks:latest' as const,
