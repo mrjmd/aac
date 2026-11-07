@@ -19,3 +19,18 @@ export {
   weekTarget,
 } from './scorecard.js';
 export type { LeadFact, LeadRedis, ScorecardRedis, RowFormat, ScoreRow, Scorecard, ScorecardInput } from './scorecard.js';
+export {
+  BOOKED_WEEKS_GATE,
+  buildMonthlyRevenue,
+  buildTech2Gates,
+  CHARTER_FLOOR,
+  CHARTER_TARGET,
+  CHART_FROM,
+  CHART_TO,
+  DECISION_WINDOW,
+  getMonthInvoices,
+  monthsBetween,
+  winterMonths,
+  WINTER_MULTIPLIER,
+} from './month.js';
+export type { MonthlyRevenue, RevenueMonth, Tech2Gates, WinterGate } from './month.js';

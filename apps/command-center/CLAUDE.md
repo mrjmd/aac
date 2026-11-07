@@ -69,6 +69,19 @@ times `SEASONAL_INDEX` for that month (funnel study §6, re-fit each January,
 payments in half a month late); rates and speeds stay flat. The page never fetches the
 sources. Cells are for reading trends and never become items.
 
+## This month (`/month`)
+
+The approved mockup's This month: rolling 3-month revenue against the
+charter's \$50k floor and \$80k target, last 12 months, the month so far,
+the revenue chart (Jun 2025 to May 2027, bars + last year + the rolling
+line, the Mar-May 2027 decision window) and the tech #2 gates (vaults from
+the Relay registers in the cash card, the winter 1.5x multiplier on closed
+months, weeks booked ahead from the scorecard's `booked` row). Math lives in
+`@aac/metrics` `month.ts` (`buildMonthlyRevenue`, `buildTech2Gates`);
+revenue is QBO invoice totals by invoice date, from the saved card
+`month:invoices` (warm cron, never fetched on load). Take-home, margin and
+owner hours wait on the books and Matt's decisions.
+
 ## Lead leaks (`/sales`)
 
 Sales shows the lead-leak queue: leads we dropped before a quote in the last

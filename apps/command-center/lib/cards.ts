@@ -15,7 +15,7 @@ import {
 } from "@aac/customers";
 import { type InvoiceNudge } from "@aac/items";
 import { easternDate } from "@aac/shared-utils/eastern";
-import { getCashPosition, getTechUtilization, type CashPosition, type TechWeek } from "@aac/metrics";
+import { getCashPosition, getMonthInvoices, getTechUtilization, type CashPosition, type TechWeek } from "@aac/metrics";
 import { getCalendar, technicianEmails } from "./calendar";
 import { getGmail, getQuo } from "./customers";
 import { getQuickBooks } from "./quickbooks";
@@ -77,6 +77,12 @@ export const cards = {
     name: "money:nudges",
     maxAgeMs: 30 * MIN,
     fetch: fetchNudges,
+  }),
+  /** Invoice date and total for every invoice since the chart's year-ago start (This month: revenue, winter gate). */
+  monthInvoices: (): Card<Array<{ TxnDate?: string; TotalAmt?: number }>> => ({
+    name: "month:invoices",
+    maxAgeMs: 60 * MIN,
+    fetch: async () => (await getMonthInvoices(getQuickBooks())).map((i) => ({ TxnDate: i.TxnDate, TotalAmt: i.TotalAmt })),
   }),
   /** CI on main (GitHub Actions "CI" / "check"). Read only by refresh and the warm cron, never on page load. */
   ci: (): Card<CiStatus> => ({
@@ -182,10 +188,13 @@ export async function loadSafe<T>(card: Card<T>): Promise<{ snap: Snapshot<T> | 
 }
 
 /** Resolve a snapshot name from the refresh button back to its card. */
+/** The cards every page shares (not per customer): the warm cron re-reads these, and refresh resolves them by name. */
+export function sharedCards(): Card<unknown>[] {
+  return [cards.cash(), cards.techWeeks(), cards.customerIndex(), cards.calendarIndex(), cards.nudges(), cards.ci(), cards.monthInvoices()] as Card<unknown>[];
+}
+
 export function cardByName(name: string): Card<unknown> | null {
-  const fixed = [cards.cash(), cards.techWeeks(), cards.customerIndex(), cards.calendarIndex(), cards.nudges(), cards.ci()].find(
-    (c) => c.name === name,
-  );
+  const fixed = sharedCards().find((c) => c.name === name);
   if (fixed) return fixed as Card<unknown>;
   const m = /^customer:(\d+):(qbo|quo|email)$/.exec(name);
   if (!m) return null;
