@@ -83,6 +83,8 @@ export const SCORECARD_GOALS: Record<string, number> = {
   collected: 11.5,
   // Matt 11/06: jobs paid within two weeks on average.
   jobpay: 14,
+  // Owed on invoices over 30 days old, in $k.
+  owed30: 10,
 };
 
 const round = (n: number, dp: number) => Math.round(n * 10 ** dp) / 10 ** dp;
