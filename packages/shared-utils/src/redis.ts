@@ -409,6 +409,17 @@ export const keys = {
   scorecardLastRun: 'scorecard:last-run' as const,
   scorecardRunLock: 'scorecard:run-lock' as const,
 
+  // ── Lead leaks (worker writes nightly, command center Sales reads) ──
+  /** JSON LeadLeakSnapshot (`@aac/lead-leaks`): leads we dropped before a quote, last 90 days. */
+  leadLeaks: 'lead-leaks:latest' as const,
+  /** HASH phone (E.164) → JSON cached verdict, keyed by the thread's lastActivityAt (re-read when it moves). */
+  leadLeakVerdicts: 'lead-leaks:verdicts' as const,
+  /** HASH phone (E.164) → the thread's lastActivityAt when Matt marked it handled; it comes back once the thread moves. */
+  leadLeakHandled: 'lead-leaks:handled' as const,
+  /** JSON { day, at, ...counts } of the last run. */
+  leadLeaksLastRun: 'lead-leaks:last-run' as const,
+  leadLeaksRunLock: 'lead-leaks:run-lock' as const,
+
   /** HASH: person id → JSON Person (agenda topics, past conversations, tagged items, facts). No TTL. */
   ccPeople: 'cc:people' as const,
 

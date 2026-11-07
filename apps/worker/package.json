@@ -16,6 +16,7 @@
     "@aac/api-clients": "workspace:*",
     "@aac/grader": "workspace:*",
     "@aac/inbound-router": "workspace:*",
+    "@aac/lead-leaks": "workspace:*",
     "@aac/message-drafts": "workspace:*",
     "@aac/metrics": "workspace:*",
     "@aac/quote-drafter": "workspace:*",

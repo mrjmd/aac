@@ -16,6 +16,7 @@
     "@aac/customers": "workspace:*",
     "@aac/grader": "workspace:*",
     "@aac/items": "workspace:*",
+    "@aac/lead-leaks": "workspace:*",
     "@aac/metrics": "workspace:*",
     "@aac/quoting": "workspace:*",
     "@aac/scheduling": "workspace:*",

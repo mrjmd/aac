@@ -97,6 +97,16 @@ Plain Vercel Serverless Functions (no framework) that run the
   (middleware secret) runs again; 500s budget for the Quo pass, a partial
   pass keeps the old cursor. Needs the Google env; Ads is optional (the
   spend row names the gap). maxDuration 800 / memory 1024.
+- `api/lead-leaks.ts`: nightly lead-leak queue (`@aac/lead-leaks`
+  runLeadLeaks), cron 09:15 UTC with 09:35 and 09:55 slots that finish a
+  run its 600s budget cut short (a partial run leaves the day unset). Every
+  business-line thread with a customer message in the last 90 days: quoted
+  (QBO estimate in the window) and booked (job on the calendar) phones are
+  dropped unread, the rest are read by Gemini once per thread movement
+  (`lead-leaks:verdicts` cache) and sorted into no reply / no quote /
+  assessed, quiet, or not a lead. Saves `lead-leaks:latest` for the command
+  center's Sales page. Reads only; sends nothing. Once per Eastern day,
+  `?force=1` (middleware secret) runs again. maxDuration 800 / memory 1024.
 - `api/health.ts`: for an outside uptime pinger: 200 `{status: 'ok'}`
   only while Redis answers and `health:watchdog:ts` is under 15 min old,
   else 503 `{status: 'down'}`. Unauthenticated, no details. The one alert

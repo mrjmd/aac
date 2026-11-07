@@ -69,6 +69,17 @@ times `SEASONAL_INDEX` for that month (funnel study §6, re-fit each January,
 payments in half a month late); rates and speeds stay flat. The page never fetches the
 sources. Cells are for reading trends and never become items.
 
+## Lead leaks (`/sales`)
+
+Sales shows the lead-leak queue: leads we dropped before a quote in the last
+90 days, by stage (asked and never answered, sent photos or details and no
+quote, assessed and never quoted), each with a \$ value. It reads
+`lead-leaks:latest`, which the worker's nightly `/api/lead-leaks` builds
+with `runLeadLeaks` in `@aac/lead-leaks`; value rules live there
+(`leakValue`). Handled (`POST /api/lead-leaks` {phone, lastActivityAt | null})
+writes `lead-leaks:handled` and hides the row until the thread moves. The
+page never fetches the sources.
+
 ## Day-One Features (Phase 1)
 
 1. **Middleware Heartbeat Monitor** — Green/red status based on Redis timestamp.
