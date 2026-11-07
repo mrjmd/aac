@@ -32,8 +32,11 @@ export function LooksWrong() {
   const place = useCallback((el: HTMLElement | null) => {
     if (!el) return setPos(null);
     const r = el.getBoundingClientRect();
-    // Straddle the top border, clear of the ⓘ and ↻ buttons inside the card.
-    setPos({ top: Math.max(r.top - 11, 2), left: r.right - 18 });
+    // Straddle the top border, clear of the ⓘ and ↻ buttons inside the card;
+    // once that's scrolled under the header, ride just below the header.
+    const floor = (document.querySelector("header.top")?.getBoundingClientRect().bottom ?? 0) + 6;
+    if (r.bottom < floor + 40) return setPos(null);
+    setPos({ top: Math.max(r.top - 11, floor), left: r.right - 18 });
   }, []);
 
   useEffect(() => {
