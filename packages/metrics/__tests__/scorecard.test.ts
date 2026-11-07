@@ -226,3 +226,36 @@ describe('leads', () => {
     expect(store['+16175550003']).toMatchObject({ at: '2026-11-05T09:00:00Z', replyAt: null });
   });
 });
+
+describe('records behind each cell (click-through)', () => {
+  it('lists the quotes, leads, jobs and payments a cell counts, agreeing with its number', () => {
+    const sc = buildScorecard({
+      ...base,
+      leads: {
+        '+16175550101': { at: '2026-10-27T14:00:00Z', replyAt: '2026-10-27T16:00:00Z', checkedAt: '2026-11-06T00:00:00Z' },
+        '+16175550102': { at: '2026-10-28T14:00:00Z', replyAt: null, checkedAt: '2026-11-06T00:00:00Z' },
+      },
+      estimates: [
+        est({ Id: '1', DocNumber: '1590', TxnDate: '2026-10-28', TxnStatus: 'Pending', EmailStatus: 'EmailSent', TotalAmt: 1175, CustomerRef: { value: 'c', name: 'Jane Doe' } }),
+        est({ Id: '2', DocNumber: '1591', TxnDate: '2026-10-29', TxnStatus: 'Accepted', TotalAmt: 2350, CustomerRef: { value: 'd', name: 'Bob Roe' } }),
+      ],
+      events: [ev('2026-10-27T14:00:00Z', '10', 'Jane Doe - crack injection', { end: '2026-10-27T18:00:00Z' })],
+      payments: [{ Id: 'p', SyncToken: '0', TxnDate: '2026-10-30', TotalAmt: 675, CustomerRef: { value: 'c', name: 'Jane Doe' } } as QBPayment],
+    });
+    const k = 12; // week of 10/26
+    const quotes = row(sc, 'quotes');
+    expect(quotes.records![k]!.map((r) => r.label)).toEqual(['#1590 Jane Doe', '#1591 Bob Roe']);
+    expect(quotes.records![k]).toHaveLength(quotes.values[k]!);
+    expect(row(sc, 'quoted').records![k]!.map((r) => r.value)).toEqual(['$1,175', '$2,350']);
+    const leads = row(sc, 'leads').records![k]!;
+    expect(leads.map((r) => [r.label, r.note])).toEqual([
+      ['+16175550101', 'First reply after 2h'],
+      ['+16175550102', 'No reply yet'],
+    ]);
+    expect(row(sc, 'reply').records![k]!.map((r) => r.value)).toEqual(['2h']);
+    const job = row(sc, 'jobs').records![k]![0]!;
+    expect([job.label, job.customer, job.note]).toEqual(['Jane Doe - crack injection', 'Jane Doe', 'No invoice matched']);
+    expect(row(sc, 'collected').records![k]!.map((r) => [r.label, r.value])).toEqual([['Jane Doe', '$675']]);
+    expect(row(sc, 'collected').lastYearRecords).toEqual([]);
+  });
+});

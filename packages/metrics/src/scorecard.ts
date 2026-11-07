@@ -47,7 +47,24 @@ export interface ScoreRow {
   values: Array<number | null>;
   /** The same week a year before the last closed week. */
   lastYear: number | null;
+  /** One per `Scorecard.weeks`: the records behind each value, by day (capped at RECORDS_MAX). Missing on snapshots built before 11/07. */
+  records?: ScoreRecord[][];
+  lastYearRecords?: ScoreRecord[];
 }
+
+/** One record behind a scorecard cell (the click-through): a lead, quote, event, payment or invoice. */
+export interface ScoreRecord {
+  day: string | null;
+  label: string;
+  /** Its share of the number, formatted ("$1,175", "3.5h"). */
+  value?: string;
+  note?: string;
+  /** A name or phone the command center can open a customer page for. */
+  customer?: string;
+}
+
+/** Records kept per cell; the rest are counted, not listed. */
+export const RECORDS_MAX = 150;
 
 export interface Scorecard {
   /** Mondays: 13 closed weeks, then the current week (partial). */
@@ -228,6 +245,11 @@ export function matchJobInvoices(jobs: CalendarEvent[], invoices: QBInvoice[]): 
 
 /** A multi-day job's later days, e.g. "Teddy Watler [cont]". */
 const CONT_RE = /\[cont\]/i;
+const usd = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
+const docLabel = (doc?: string, name?: string) => [doc ? `#${doc}` : '', name ?? ''].filter(Boolean).join(' ') || 'No number';
+/** The customer part of an event title ("Jane Doe - crack injection" → "Jane Doe"). */
+const eventCustomer = (summary: string) => summary.split(/\s[-–(|]\s?|:/)[0]!.replace(/^(STUB|HOLD)\s*/i, '').replace(CONT_RE, '').trim() || summary;
+const sortRecords = (recs: ScoreRecord[]) => recs.sort((a, b) => (a.day ?? '').localeCompare(b.day ?? '')).slice(0, RECORDS_MAX);
 const eventDay = (e: CalendarEvent) => (e.start.length === 10 ? e.start : easternDate(e.start));
 
 /** Pure: every row for the given weeks. */
@@ -236,7 +258,9 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
   const { weeks, lastYear } = scorecardWeeks(today);
   const nowMs = input.now.getTime();
 
-  const leadList = Object.values(input.leads).filter((l): l is LeadFact & { at: string } => !!l.at && !l.existing);
+  const leadList = Object.entries(input.leads)
+    .map(([phone, l]) => ({ ...l, phone }))
+    .filter((l): l is LeadFact & { at: string; phone: string } => !!l.at && !l.existing);
   const sent = input.estimates.map((e) => ({ e, day: quoteSentDay(e) })).filter((q): q is { e: QBEstimate; day: string } => !!q.day);
   const past = input.events.filter((e) => !e.summary.startsWith(HOLD_TITLE_PREFIX) && Date.parse(e.start.length === 10 ? `${e.start}T12:00:00Z` : e.start) <= nowMs);
   const pastJobs = (() => {
@@ -258,20 +282,52 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
     Math.min(inv.TotalAmt ?? Infinity, (inv.Balance ?? 0) + (paidOn.get(inv.Id) ?? []).filter((p) => p.day > day).reduce((n, p) => n + p.amt, 0));
 
   const jobInvoice = matchJobInvoices(pastJobs, input.invoices);
+  /** The week's jobs with an invoice, and days from the job to paid off (or so far, while unpaid). */
   const jobPay = (m: string) =>
     pastJobs
       .filter((j) => inWeek(eventDay(j), m) && jobInvoice.has(j.id))
       .map((j) => {
         const inv = jobInvoice.get(j.id)!;
-        if ((inv.Balance ?? 0) > 0) return Math.max(0, dayDiff(eventDay(j), today));
-        const off = paidOff(inv);
-        return off == null ? null : Math.max(0, dayDiff(eventDay(j), off));
+        const unpaid = (inv.Balance ?? 0) > 0;
+        const off = unpaid ? today : paidOff(inv);
+        return { j, inv, unpaid, days: off == null ? null : Math.max(0, dayDiff(eventDay(j), off)) };
       })
-      .filter((d): d is number => d != null);
+      .filter((r): r is typeof r & { days: number } => r.days != null);
   const shown = [...weeks, lastYear];
   const unmatched = pastJobs.filter((j) => !jobInvoice.has(j.id) && shown.some((m) => inWeek(eventDay(j), m)) && dayDiff(eventDay(j), today) > 7);
 
-  const fns: Array<Omit<ScoreRow, 'values' | 'lastYear' | 'targets' | 'lastYearTarget'> & { week: (m: string) => number | null }> = [
+  // One selector per row, shared by the number and the records behind it.
+  const leadsIn = (m: string) => leadList.filter((l) => inWeek(easternDate(l.at), m));
+  const replyHours = (l: LeadFact & { at: string }) => (Date.parse(l.replyAt!) - Date.parse(l.at)) / 3_600_000;
+  const sentIn = (m: string) => sent.filter((q) => inWeek(q.day, m));
+  const cohort = (m: string) => sent.filter((q) => q.day >= addDays(m, -49) && q.day < addDays(m, -21));
+  const assessIn = (m: string) => past.filter((e) => e.colorId === EVENT_CLASS_COLOR_IDS.assessment && inWeek(eventDay(e), m));
+  const jobsIn = (m: string) => pastJobs.filter((e) => inWeek(eventDay(e), m));
+  const paysIn = (m: string) => input.payments.filter((p) => inWeek(p.TxnDate, m));
+  const spendIn = (m: string) => (input.spend ? input.spend.filter((d) => inWeek(d.date, m)) : null);
+  const bookedFrom = (m: string) => {
+    const cutoff = `${m}T13:00:00Z`;
+    const known = input.events.filter((e) => !e.created || e.created < cutoff);
+    return buildTechUtilization({ events: known, techEmails: input.techEmails, fromWeek: m, weeks: BOOKED_HORIZON_WEEKS, withEvents: true });
+  };
+  const owedOn = (m: string) => {
+    const end = addDays(m, 6) < today ? addDays(m, 6) : today;
+    const cutoff = addDays(end, -30);
+    return input.invoices
+      .filter((i) => i.TxnDate && i.TxnDate <= cutoff)
+      .map((inv) => ({ inv, open: openOn(inv, end) }))
+      .filter((r) => r.open > 0.005);
+  };
+  const quoteRec = (q: { e: QBEstimate; day: string }, note?: string): ScoreRecord => ({
+    day: q.day,
+    label: docLabel(q.e.DocNumber, q.e.CustomerRef?.name),
+    value: usd(q.e.TotalAmt ?? 0),
+    ...(q.e.CustomerRef?.name ? { customer: q.e.CustomerRef.name } : {}),
+    ...(note ? { note } : {}),
+  });
+  const eventRec = (e: CalendarEvent, extra: Partial<ScoreRecord> = {}): ScoreRecord => ({ day: eventDay(e), label: e.summary, customer: eventCustomer(e.summary), ...extra });
+
+  const fns: Array<Omit<ScoreRow, 'values' | 'lastYear' | 'targets' | 'lastYearTarget' | 'records' | 'lastYearRecords'> & { week: (m: string) => number | null; recs: (m: string) => ScoreRecord[] }> = [
     {
       key: 'leads',
       name: 'New contacts in',
@@ -279,7 +335,14 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       dir: 1,
       goal: null,
       info: 'Phones that called or texted the business line for the first time (Quo), by the day of that first contact. Includes solicitations and wrong numbers; existing customers are left out where the funnel study knew them.',
-      week: (m) => leadList.filter((l) => inWeek(easternDate(l.at), m)).length,
+      week: (m) => leadsIn(m).length,
+      recs: (m) =>
+        leadsIn(m).map((l) => ({
+          day: easternDate(l.at),
+          label: l.phone,
+          customer: l.phone,
+          note: l.replyAt ? `First reply after ${round(replyHours(l), 1)}h` : 'No reply yet',
+        })),
     },
     {
       key: 'reply',
@@ -289,13 +352,14 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       goal: null,
       info: "Hours from a new contact's first call or text to our first reply (an answered call, or our first call or text back), 75th percentile, by the week they came in. Only contacts we replied to: solicitations and wrong numbers never get one and would drown it. Leads we dropped show on Sales.",
       week: (m) => {
-        const h = p75(
-          leadList
-            .filter((l) => l.replyAt && inWeek(easternDate(l.at), m))
-            .map((l) => (Date.parse(l.replyAt!) - Date.parse(l.at)) / 3_600_000),
-        );
+        const h = p75(leadsIn(m).filter((l) => l.replyAt).map(replyHours));
         return h == null ? null : round(h, 1);
       },
+      recs: (m) =>
+        leadsIn(m)
+          .filter((l) => l.replyAt)
+          .sort((a, b) => replyHours(b) - replyHours(a))
+          .map((l) => ({ day: easternDate(l.at), label: l.phone, customer: l.phone, value: `${round(replyHours(l), 1)}h` })),
     },
     {
       key: 'assessments',
@@ -304,7 +368,8 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       dir: 1,
       goal: null,
       info: 'Purple (assessment) calendar events, by the day they happened. HOLD placeholders are left out.',
-      week: (m) => past.filter((e) => e.colorId === EVENT_CLASS_COLOR_IDS.assessment && inWeek(eventDay(e), m)).length,
+      week: (m) => assessIn(m).length,
+      recs: (m) => assessIn(m).map((e) => eventRec(e)),
     },
     {
       key: 'quotes',
@@ -313,7 +378,8 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       dir: 1,
       goal: null,
       info: 'QBO estimates by the day they were emailed (or their date when sent another way). Pending estimates never emailed are drafts and left out.',
-      week: (m) => sent.filter((q) => inWeek(q.day, m)).length,
+      week: (m) => sentIn(m).length,
+      recs: (m) => sentIn(m).map((q) => quoteRec(q)),
     },
     {
       key: 'quoted',
@@ -322,7 +388,8 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       dir: 1,
       goal: null,
       info: 'Total of the quotes sent that week (QBO estimate totals), same dating as Quotes sent.',
-      week: (m) => round(sent.filter((q) => inWeek(q.day, m)).reduce((n, q) => n + (q.e.TotalAmt ?? 0), 0) / 1000, 1),
+      week: (m) => round(sentIn(m).reduce((n, q) => n + (q.e.TotalAmt ?? 0), 0) / 1000, 1),
+      recs: (m) => sentIn(m).map((q) => quoteRec(q)),
     },
     {
       key: 'close',
@@ -332,9 +399,10 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       goal: null,
       info: 'Of the quotes sent 4 to 8 weeks before that week ended, the share accepted, converted or invoiced in QBO by now. The lag lets each cohort mature.',
       week: (m) => {
-        const cohort = sent.filter((q) => q.day >= addDays(m, -49) && q.day < addDays(m, -21));
-        return cohort.length ? Math.round((100 * cohort.filter((q) => quoteWon(q.e)).length) / cohort.length) : null;
+        const c = cohort(m);
+        return c.length ? Math.round((100 * c.filter((q) => quoteWon(q.e)).length) / c.length) : null;
       },
+      recs: (m) => cohort(m).map((q) => quoteRec(q, quoteWon(q.e) ? 'Won' : 'Not won')),
     },
     {
       key: 'booked',
@@ -343,12 +411,9 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       dir: 1,
       goal: null,
       info: `As of that Monday morning: Mike's booked hours in the next ${BOOKED_HORIZON_WEEKS} weeks (calendar events he attends, by event length, counting only events created by then), divided by a ${5 * WORKDAY_HOURS}-hour week.`,
-      week: (m) => {
-        const cutoff = `${m}T13:00:00Z`;
-        const known = input.events.filter((e) => !e.created || e.created < cutoff);
-        const tw = buildTechUtilization({ events: known, techEmails: input.techEmails, fromWeek: m, weeks: BOOKED_HORIZON_WEEKS });
-        return round(tw.reduce((n, w) => n + w.bookedHours, 0) / (5 * WORKDAY_HOURS), 1);
-      },
+      week: (m) => round(bookedFrom(m).reduce((n, w) => n + w.bookedHours, 0) / (5 * WORKDAY_HOURS), 1),
+      recs: (m) =>
+        bookedFrom(m).flatMap((w) => (w.events ?? []).map((e) => ({ day: e.day, label: e.summary, customer: eventCustomer(e.summary), value: `${e.hours}h` }))),
     },
     {
       key: 'jobs',
@@ -357,7 +422,12 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       dir: 1,
       goal: null,
       info: 'Green (job) calendar events, by the day they started. Follow-on days of a multi-day job are left out: "[cont]" in the title, or the same surname as a job 1 to 7 days before.',
-      week: (m) => pastJobs.filter((e) => inWeek(eventDay(e), m)).length,
+      week: (m) => jobsIn(m).length,
+      recs: (m) =>
+        jobsIn(m).map((e) => {
+          const inv = jobInvoice.get(e.id);
+          return eventRec(e, inv ? { note: `Invoice ${docLabel(inv.DocNumber)}`, value: usd(inv.TotalAmt ?? 0) } : { note: 'No invoice matched' });
+        }),
     },
     {
       key: 'collected',
@@ -366,7 +436,15 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       dir: 1,
       goal: null,
       info: 'QBO payments received, by payment date. Received is not banked: a check counts the day it was recorded, deposited or not.',
-      week: (m) => round(input.payments.filter((p) => inWeek(p.TxnDate, m)).reduce((n, p) => n + p.TotalAmt, 0) / 1000, 1),
+      week: (m) => round(paysIn(m).reduce((n, p) => n + p.TotalAmt, 0) / 1000, 1),
+      recs: (m) =>
+        paysIn(m).map((p) => ({
+          day: p.TxnDate ?? null,
+          label: p.CustomerRef?.name ?? 'Payment',
+          value: usd(p.TotalAmt),
+          ...(p.CustomerRef?.name ? { customer: p.CustomerRef.name } : {}),
+          ...(p.PaymentRefNum ? { note: `Ref ${p.PaymentRefNum}` } : {}),
+        })),
     },
     {
       key: 'jobpay',
@@ -376,9 +454,11 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       goal: null,
       info: "For the jobs done that week (green calendar events, first day), the average days from the job to its invoice being paid off in QBO. A job still unpaid counts its days so far, so the newest weeks keep growing until they're paid. Each job is matched to its invoice by customer name within 2 weeks before to 60 days after the job; jobs with no match are left out and named above the table. Payments are dated when they were recorded, so a late entry reads as a slow payer until the books are reconciled.",
       week: (m) => {
-        const days = jobPay(m);
-        return days.length ? Math.round(days.reduce((n, d) => n + d, 0) / days.length) : null;
+        const rows = jobPay(m);
+        return rows.length ? Math.round(rows.reduce((n, r) => n + r.days, 0) / rows.length) : null;
       },
+      recs: (m) =>
+        jobPay(m).map((r) => eventRec(r.j, { value: `${r.days}d`, note: `Invoice ${docLabel(r.inv.DocNumber)}${r.unpaid ? ', still unpaid' : ''}` })),
     },
     {
       key: 'owed30',
@@ -387,11 +467,16 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       dir: -1,
       goal: null,
       info: "Unpaid invoice balances more than 30 days past the invoice date, as of the end of that week (today for this week): today's QBO balance plus whatever was paid after that day. Collecting an old debt brings it down.",
-      week: (m) => {
-        const end = addDays(m, 6) < today ? addDays(m, 6) : today;
-        const cutoff = addDays(end, -30);
-        return round(input.invoices.filter((i) => i.TxnDate && i.TxnDate <= cutoff).reduce((n, i) => n + openOn(i, end), 0) / 1000, 1);
-      },
+      week: (m) => round(owedOn(m).reduce((n, r) => n + r.open, 0) / 1000, 1),
+      recs: (m) =>
+        owedOn(m)
+          .sort((a, b) => b.open - a.open)
+          .map(({ inv, open }) => ({
+            day: inv.TxnDate ?? null,
+            label: docLabel(inv.DocNumber, inv.CustomerRef?.name),
+            value: usd(open),
+            ...(inv.CustomerRef?.name ? { customer: inv.CustomerRef.name } : {}),
+          })),
     },
     {
       key: 'spend',
@@ -400,7 +485,11 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
       dir: -1,
       goal: null,
       info: 'Google Ads cost by day (account time zone). Other marketing spend is not included yet.',
-      week: (m) => (input.spend ? Math.round(input.spend.filter((d) => inWeek(d.date, m)).reduce((n, d) => n + d.cost, 0)) : null),
+      week: (m) => {
+        const days = spendIn(m);
+        return days ? Math.round(days.reduce((n, d) => n + d.cost, 0)) : null;
+      },
+      recs: (m) => (spendIn(m) ?? []).map((d) => ({ day: d.date, label: 'Google Ads', value: usd(d.cost) })),
     },
   ];
 
@@ -414,7 +503,7 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
         ? [`no invoice found for ${unmatched.length} job${unmatched.length > 1 ? 's' : ''} (${unmatched.map((j) => `${j.summary} ${eventDay(j).slice(5)}`).join(', ')})`]
         : []),
     ],
-    rows: fns.map(({ week, ...row }) => {
+    rows: fns.map(({ week, recs, ...row }) => {
       const goal = SCORECARD_GOALS[row.key] ?? row.goal;
       return {
         ...row,
@@ -423,6 +512,8 @@ export function buildScorecard(input: ScorecardInput): Scorecard {
         targets: weeks.map((m) => weekTarget(row.key, goal, m, row.fmt)),
         values: weeks.map(week),
         lastYear: week(lastYear),
+        records: weeks.map((m) => sortRecords(recs(m))),
+        lastYearRecords: sortRecords(recs(lastYear)),
         lastYearTarget: weekTarget(row.key, goal, lastYear, row.fmt),
       };
     }),

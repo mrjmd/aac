@@ -18,7 +18,7 @@ export {
   SEASONAL_INDEX,
   weekTarget,
 } from './scorecard.js';
-export type { LeadFact, LeadRedis, ScorecardRedis, RowFormat, ScoreRow, Scorecard, ScorecardInput } from './scorecard.js';
+export type { LeadFact, LeadRedis, ScorecardRedis, RowFormat, ScoreRecord, ScoreRow, Scorecard, ScorecardInput } from './scorecard.js';
 export {
   BOOKED_WEEKS_GATE,
   buildMonthlyRevenue,

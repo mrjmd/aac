@@ -21,6 +21,8 @@ export interface TechWeek {
   capacityHours: number;
   /** booked / capacity, 0-1+ (Saturday work can push it past 1). */
   bookedPct: number | null;
+  /** With `withEvents`: the booked events behind `bookedHours`, each with the hours it was credited. */
+  events?: Array<{ id: string; summary: string; day: string; hours: number }>;
 }
 
 export const WORKDAY_HOURS = 8;
@@ -79,6 +81,8 @@ export function buildTechUtilization(args: {
   /** First Monday (YYYY-MM-DD) and number of weeks. */
   fromWeek: string;
   weeks: number;
+  /** Also list the booked events per week (the scorecard's click-through). */
+  withEvents?: boolean;
 }): TechWeek[] {
   const emails = args.techEmails.map((e) => e.toLowerCase());
   const weeks = new Map<string, TechWeek>();
@@ -91,6 +95,7 @@ export function buildTechUtilization(args: {
       heldHours: 0,
       capacityHours: 5 * WORKDAY_HOURS,
       bookedPct: null,
+      ...(args.withEvents ? { events: [] } : {}),
     });
   }
 
@@ -114,6 +119,7 @@ export function buildTechUtilization(args: {
         const free = claim(covered, start, end) / 60;
         w.bookedHours += free;
         w.byType[typeOf(e)] += free;
+        if (w.events && free > 0) w.events.push({ id: e.id, summary: e.summary, day, hours: round1(free) });
       }
     }
   }

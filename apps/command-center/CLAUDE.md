@@ -67,7 +67,12 @@ row, shown under "How each row is counted"). Volume rows (contacts, quotes,
 \$ quoted, jobs, payments in) are judged per week against `targets`: the average-week goal
 times `SEASONAL_INDEX` for that month (funnel study §6, re-fit each January,
 payments in half a month late); rates and speeds stay flat. The page never fetches the
-sources. Cells are for reading trends and never become items.
+sources. Cells are for reading trends and never become items. Every
+number is a button: the nightly build saves the records behind each cell
+(`ScoreRow.records`, one list per week, capped at `RECORDS_MAX`: the leads,
+quotes, events, payments or invoices it counted, built from the same
+selector as the number). The page strips them (`lib/scorecard-view.ts`) and
+`GET /api/scorecard/records?row&week` returns one cell's list on click.
 
 This week also pins items to the day they come due (`week/due-items.tsx`,
 from the items view): `dueOn` (the start of the event an item is about:

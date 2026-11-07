@@ -6,6 +6,7 @@ import { getRedis } from "@/lib/redis";
 import { fieldDay, techOut, type FieldEvent } from "@/lib/field-events";
 import { Freshness } from "../components/freshness";
 import { Glance, OverviewTabs, PageHeader, SourceError } from "../components/layout-parts";
+import { withoutRecords } from "@/lib/scorecard-view";
 import { ScorecardCard } from "./scorecard";
 import { DayFlags, DueCount, GetAheadOf } from "./due-items";
 
@@ -90,7 +91,7 @@ export default async function WeekPage() {
         ))}
       </div>
       <GetAheadOf from={today} to={days[5]!} />
-      <ScorecardCard card={score} />
+      <ScorecardCard card={withoutRecords(score)} />
       <div className="card">
         <h3>Not built yet</h3>
         <div>
