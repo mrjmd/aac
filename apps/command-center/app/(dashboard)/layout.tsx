@@ -2,6 +2,7 @@ import { loadItemsView } from "@/lib/items";
 import { getCanHelpStore } from "@/lib/can-help";
 import { getPeopleStore } from "@/lib/people";
 import { Drawer, ToastHost } from "./components/items";
+import { LooksWrong } from "./components/looks-wrong";
 import { SignOut } from "./sign-out";
 import { ItemsProvider } from "./items-context";
 import { PeopleProvider } from "./people-context";
@@ -41,6 +42,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </main>
       </div>
       <Drawer />
+      <LooksWrong />
       <ToastHost />
       </PeopleProvider>
     </ItemsProvider>

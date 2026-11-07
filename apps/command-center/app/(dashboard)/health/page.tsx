@@ -11,6 +11,8 @@ import {
 import { Freshness } from "../components/freshness";
 import { NeedsAttention } from "../components/items";
 import { PageHeader, Tile } from "../components/layout-parts";
+import { listCardFlags } from "@/lib/card-flags";
+import { CardFlags } from "./card-flags";
 import { SystemTabs } from "./system-tabs";
 
 export const dynamic = "force-dynamic";
@@ -91,6 +93,7 @@ function overview(h: SystemHealth, now: number): Array<[string, Level, string]> 
 export default async function HealthPage() {
   const header = <PageHeader eyebrow="Area" title="System" sub="Only shows up on Today when something breaks" right={<SystemTabs on="health" />} />;
   let h: SystemHealth;
+  const flags = await listCardFlags().catch(() => []);
   try {
     h = await readSystemHealth();
   } catch (err) {
@@ -112,6 +115,7 @@ export default async function HealthPage() {
     <>
       {header}
       <NeedsAttention areas={["system"]} />
+      {flags.length > 0 && <CardFlags initial={flags} />}
 
       <div className="card">
         <div className="tbl-wrap">

@@ -116,6 +116,17 @@ mute rule with Unmute (`DELETE /api/items/mutes`), the dismissed list
 teaching": the same reason used twice or more on one kind of item in 30
 days (`dismissalPatterns`).
 
+## This looks wrong (every card)
+
+`components/looks-wrong.tsx`, mounted once in the layout: hover or tap any
+`.card` or `.tile` in main and a "Looks wrong?" button sits on its top
+border; it saves the card's heading, its text as shown, the page and
+Matt's note to `cc:card-flags` (`lib/card-flags.ts`,
+`POST /api/card-flags` {op: add | fix}). Nothing notifies anyone. System
+lists them ("You flagged", open first). **Claude: run
+`tools/src/command-center/card-flags.ts` at the start of every session and
+fix open flags first**, then `card-flags.ts fix <id> "<what changed>"`.
+
 ## Lead leaks (`/sales`)
 
 Sales shows the lead-leak queue: leads we dropped before a quote in the last

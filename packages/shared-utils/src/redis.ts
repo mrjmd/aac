@@ -416,6 +416,9 @@ export const keys = {
   /** JSON Obligation[] (`@aac/items` obligations.ts): renewals, licenses, filings, memberships, each with its next due date. */
   ccObligations: 'cc:obligations' as const,
 
+  /** HASH: flag id → JSON CardFlag. Matt's "this looks wrong" taps on a card: the card's text at that moment plus his note. Claude reads open ones at the start of each session. */
+  ccCardFlags: 'cc:card-flags' as const,
+
   // ── Lead leaks (worker writes nightly, command center Sales reads) ──
   /** JSON LeadLeakSnapshot (`@aac/lead-leaks`): leads we dropped before a quote, last 90 days. */
   leadLeaks: 'lead-leaks:latest' as const,
