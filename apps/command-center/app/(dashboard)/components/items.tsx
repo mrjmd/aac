@@ -55,17 +55,17 @@ function Tags({ item, ctx }: { item: Item; ctx: Ctx }) {
       {item.sensitive && <span className="tag sens">{item.sensitive === "money" ? "Money" : "Legal"}</span>}
       {item.detector.startsWith("L") && <span className="tag ai">AI-detected</span>}
       {item.state.reopenedAt && <span className="tag auto">Back: new evidence</span>}
-      {ctx === "area" && item.band === "today" && <span className="tag ontoday">On Today</span>}
+      {(ctx === "area" || ctx === "week") && item.band === "today" && <span className="tag ontoday">On Today</span>}
       {item.suggested && <span className="tag auto">Suggested</span>}
       {item.related?.length ? <span className="tag">+{item.related.length} more for this person</span> : null}
     </>
   );
 }
 
-type Ctx = "today" | "new" | "area";
+type Ctx = "today" | "new" | "area" | "week";
 type Panel = null | "snooze" | "more" | { confirm: "money" | "legal"; mode: "dismiss" | "mute"; reason?: DismissReason };
 
-export function ItemCard({ item, ctx, n }: { item: Item; ctx: Ctx; n?: number }) {
+export function ItemCard({ item, ctx, n, day }: { item: Item; ctx: Ctx; n?: number; day?: string }) {
   const { act, mute, say, setOpen } = useItems();
   const { people, change } = usePeople();
   const [panel, setPanel] = useState<Panel>(null);
@@ -125,7 +125,7 @@ export function ItemCard({ item, ctx, n }: { item: Item; ctx: Ctx; n?: number })
     </button>
   );
   const acts =
-    ctx === "area" ? (
+    ctx === "area" || ctx === "week" ? (
       <>
         {item.band !== "today" && (
           <button className="btn sm primary" type="button" onClick={pin}>
@@ -176,6 +176,7 @@ export function ItemCard({ item, ctx, n }: { item: Item; ctx: Ctx; n?: number })
             ⠿
           </button>
         )}
+        {ctx === "week" && day && <span className="daybadge">{day}</span>}
         <div className="body">
           <div className="title" onClick={() => setOpen(item)}>
             {item.title}
@@ -188,7 +189,7 @@ export function ItemCard({ item, ctx, n }: { item: Item; ctx: Ctx; n?: number })
           )}
           {item.action && <div className="evidence">→ {item.action}</div>}
           <Related item={item} />
-          {ctx !== "area" && (item.band !== "today" || item.suggested) && item.why.length > 0 && (
+          {ctx !== "area" && ctx !== "week" && (item.band !== "today" || item.suggested) && item.why.length > 0 && (
             <div className="why">Why here: {item.why.join(" · ")}</div>
           )}
         </div>

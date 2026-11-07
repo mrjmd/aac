@@ -203,6 +203,13 @@ describe('fromTriageFinding', () => {
     expect(draft.sensitive).toBeUndefined();
   });
 
+  it('carries the event time a finding is about, without touching the fingerprint', () => {
+    const f = { id: 'd10:e1', section: 'stub_review', severity: 'yellow' as const, title: 'Stub needs review', source: 'D10' };
+    const withDay = fromTriageFinding({ ...f, dueOn: '2026-11-12T13:00:00.000Z' });
+    expect(withDay.dueOn).toBe('2026-11-12T13:00:00.000Z');
+    expect(withDay.fingerprint).toBe(fromTriageFinding(f).fingerprint);
+  });
+
   it('keeps the fingerprint stable as ages tick', () => {
     const base = { id: 'd3:2368', section: 'cash_overdue', severity: 'red' as const, amount: 7800, source: 'D3' };
     const day1 = triageFingerprint({ ...base, title: 'Overdue 123d', detail: 'age 123' });

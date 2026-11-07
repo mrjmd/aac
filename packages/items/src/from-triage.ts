@@ -19,6 +19,8 @@ export interface TriageFinding {
   xref?: { phones?: string[]; emails?: string[]; evidenceAt?: string };
   /** A hard time from the thread (ISO). */
   dueAt?: string;
+  /** When the event the finding is about starts (ISO). */
+  dueOn?: string;
 }
 
 /** Detectors where the evidence time is a customer's unanswered inbound. */
@@ -78,6 +80,7 @@ export function fromTriageFinding(f: TriageFinding): ItemCandidate {
   if (f.link) candidate.link = f.link;
   if (area === 'money') candidate.sensitive = 'money';
   if (f.dueAt) candidate.dueAt = f.dueAt;
+  if (f.dueOn) candidate.dueOn = f.dueOn;
   if (f.section === 'solicitation') candidate.solicitation = true;
   else if (WAITING_SOURCES.has(f.source) && f.xref?.evidenceAt) candidate.waitingSince = f.xref.evidenceAt;
   if (f.xref?.phones?.length || f.xref?.emails?.length) {

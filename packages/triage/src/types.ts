@@ -143,6 +143,8 @@ export interface Finding {
   xref?: Xref;
   /** L1/L2: a hard time from the thread (ISO), e.g. "call at 2pm today". Ranks first on Today. */
   dueAt?: string;
+  /** D10/D11/D13: when the event this is about starts (ISO). This week pins the item to that day. */
+  dueOn?: string;
 }
 
 export interface FindingsFile {

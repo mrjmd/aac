@@ -7,6 +7,7 @@ import { fieldDay, techOut, type FieldEvent } from "@/lib/field-events";
 import { Freshness } from "../components/freshness";
 import { Glance, OverviewTabs, PageHeader, SourceError } from "../components/layout-parts";
 import { ScorecardCard } from "./scorecard";
+import { DayFlags, DueCount, GetAheadOf } from "./due-items";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +65,7 @@ export default async function WeekPage() {
         <Glance k="Jobs on the calendar" v={byDay.reduce((n, x) => n + x.ev.filter((e) => e.cls === "job").length, 0)} />
         <Glance k="Mike booked" v={pct == null ? (b?.thisWeek ? "Out" : "?") : `${Math.round(pct * 100)}%`} />
         <Glance k="Open half-days" v={byDay.reduce((n, x) => n + (x.open === "Open all day" ? 2 : x.open ? 1 : 0), 0)} />
+        <Glance k="Due this week" v={<DueCount from={days[0]!} to={days[5]!} />} />
       </div>
       <div className="weekgrid">
         {byDay.map(({ d, ev, out, open }, n) => (
@@ -82,17 +84,19 @@ export default async function WeekPage() {
             ))}
             {out && <div className="flag snz">Mike out of office</div>}
             {open && <div className="slot">{open}</div>}
+            <DayFlags day={d} />
             {!ev.length && !out && n === 5 && <div className="daynote">Off</div>}
           </div>
         ))}
       </div>
+      <GetAheadOf from={today} to={days[5]!} />
       <ScorecardCard card={score} />
       <div className="card">
         <h3>Not built yet</h3>
         <div>
-          The mockup also pins items to the day they come due (quote day-14s, holds to release, deposits) and lists them
-          under &ldquo;Get ahead of&rdquo;. Detectors don&apos;t emit due dates yet, so those flags and the slot
-          suggestions are missing.
+          The mockup&apos;s open-slot suggestions (accepted quotes that could fill an open half-day) and the next-week peek. Items pin to
+          a day when they&apos;re about an event (stubs, holds, incomplete events) or a promised time; quote follow-up days, deposits and
+          invoice nudges don&apos;t carry a day yet.
         </div>
       </div>
     </>

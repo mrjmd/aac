@@ -30,6 +30,8 @@ export interface ItemCandidate {
   sensitive?: 'money' | 'legal';
   /** A hard time: a promise ("I'll call at 2pm") or a customer ask with a time. ISO. Ranks first. */
   dueAt?: string;
+  /** When the event this item is about starts (ISO): a stub to review, a hold to resolve. This week pins it to that day; ranking ignores it. */
+  dueOn?: string;
   /** A customer has been waiting on Matt since this time (their last inbound). ISO. */
   waitingSince?: string;
   /** Someone selling to Matt. Sinks to the bottom and collapses. */

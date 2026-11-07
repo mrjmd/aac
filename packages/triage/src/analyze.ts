@@ -720,6 +720,7 @@ export async function analyze(snapshot: Snapshot, deps: AnalyzeDeps): Promise<Fi
         ? 'Confirm what actually happened, rename the event, and check it got invoiced'
         : `Confirm time/scope/duration, then rename to drop "${STUB_TITLE_PREFIX.trim()}"`,
       source: 'D10',
+      ...(past ? {} : { dueOn: ev.start }),
     });
   }
   stats.stubAwaitingReview = stubAwaitingReview;
@@ -831,6 +832,7 @@ export async function analyze(snapshot: Snapshot, deps: AnalyzeDeps): Promise<Fi
       continue; // young hold, silence is still normal
     }
     if (holdPhone) finding.phone = holdPhone;
+    if (!past) finding.dueOn = ev.start;
     offeredHolds++;
     findings.push(finding);
   }
@@ -983,6 +985,7 @@ export async function analyze(snapshot: Snapshot, deps: AnalyzeDeps): Promise<Fi
       }. Mike needs the full picture before he rolls — fix this in the calendar now.`,
       action: `Fix in calendar: add ${problems.join(' + ')}`,
       source: 'D11',
+      dueOn: ev.start,
     });
   }
   stats.incompleteUpcoming = incompleteUpcoming;

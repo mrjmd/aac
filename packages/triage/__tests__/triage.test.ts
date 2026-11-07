@@ -99,7 +99,7 @@ describe('analyze detectors', () => {
     const d2 = out.findings.find((f) => f.id === 'd2:900');
     expect(d2).toMatchObject({ section: 'cash_not_sent', severity: 'red', amount: 675, ageDays: 5 });
     const d10 = out.findings.find((f) => f.id === 'd10:stub1');
-    expect(d10).toMatchObject({ section: 'stub_review', severity: 'red', customer: 'Jane Roe' });
+    expect(d10).toMatchObject({ section: 'stub_review', severity: 'red', customer: 'Jane Roe', dueOn: iso(NOW + DAY) });
     expect(out.generatedAt).toBe(iso(NOW));
     expect(out.stats.geminiCanaryOk).toBe(1);
     expect(out.pulse.arOpenTotal).toBe(675);

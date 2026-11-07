@@ -69,6 +69,12 @@ times `SEASONAL_INDEX` for that month (funnel study §6, re-fit each January,
 payments in half a month late); rates and speeds stay flat. The page never fetches the
 sources. Cells are for reading trends and never become items.
 
+This week also pins items to the day they come due (`week/due-items.tsx`,
+from the items view): `dueOn` (the start of the event an item is about:
+stubs D10, holds D13, incomplete events D11) or `dueAt` (a promised time).
+Day columns show them as flags that open the drawer; "Get ahead of" lists
+the ones from today through Saturday that aren't on Today, with → Today.
+
 ## This month (`/month`)
 
 The approved mockup's This month, with the charter's goals seasonal: the
