@@ -2,19 +2,11 @@
 
 import Link from "next/link";
 import type { FieldEvent } from "@/lib/field-events";
-import { ago, customerHref, ItemCard, SortableList } from "../components/items";
+import { ago, customerHref, DismissedList, ItemCard, SortableList } from "../components/items";
 import { Glance, OverviewTabs, PageHeader } from "../components/layout-parts";
 import { PersonCard, pendingPeople } from "../components/people";
 import { useItems } from "../items-context";
 import { usePeople } from "../people-context";
-
-const DISMISS_LABEL: Record<string, string> = {
-  "not-real": "Not real",
-  "already-handled": "Handled elsewhere",
-  "not-mine": "Not mine",
-  "wrong-match": "Wrong customer match",
-  other: "Other",
-};
 
 function longDate(day: string): string {
   return new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" });
@@ -240,30 +232,7 @@ export function TodayView({
           <details className="fold">
             <summary>Dismissed, last 30 days · {view.dismissed.length}</summary>
             <div className="list">
-              {view.dismissed.length ? (
-                view.dismissed.map((s) => (
-                  <div key={s.key} className="item">
-                    <div className="row">
-                      <div className="body">
-                        <div className="title">{s.snapshot?.title ?? s.key}</div>
-                        <div className="meta">
-                          <span className="tag">
-                            Dismissed: {DISMISS_LABEL[s.dismissReason ?? "other"] ?? "muted"}
-                            {s.actedAt ? `, ${ago(s.actedAt)}` : ""}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="acts">
-                        <button className="btn sm" type="button" onClick={() => act(s.key, { type: "restore" })}>
-                          Restore
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="empty">Nothing dismissed. Anything you dismiss lands here and can be restored.</div>
-              )}
+              <DismissedList dismissed={view.dismissed} />
             </div>
           </details>
         </>

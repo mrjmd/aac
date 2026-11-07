@@ -1,7 +1,7 @@
 import { daysBetween, easternDate } from '@aac/shared-utils/eastern';
 import { groupByPerson } from './group.js';
-import { rankItem, shouldSuggest, SUGGEST_MAX } from './rank.js';
-import type { HiddenReason, Item, ItemCandidate, ItemState, MuteRule, ReconcileResult } from './types.js';
+import { PROMOTION_DEFAULTS, rankItem, shouldSuggest, SUGGEST_MAX, type Promotion } from './rank.js';
+import type { DismissReason, HiddenReason, Item, ItemCandidate, ItemState, MuteRule, ReconcileResult } from './types.js';
 
 const SEVERITY_ORDER = { red: 0, yellow: 1, info: 2 } as const;
 
@@ -31,6 +31,8 @@ export function isMuted(candidate: ItemCandidate, mutes: MuteRule[]): boolean {
  * States for keys no candidate mentions are carried through untouched
  * (the detector stopped seeing the problem); prune them separately.
  *
+ * `promote`: Matt's Rules-page switches for what may be suggested.
+ *
  * `baseline` (first import): new states start placed, so the "new" band
  * holds only what appears after the system starts tracking.
  */
@@ -39,7 +41,7 @@ export function reconcile(
   stored: Record<string, ItemState>,
   mutes: MuteRule[],
   now: Date,
-  options: { baseline?: boolean } = {},
+  options: { baseline?: boolean; promote?: Promotion } = {},
 ): ReconcileResult {
   const nowIso = now.toISOString();
   const today = easternDate(now);
@@ -86,7 +88,7 @@ export function reconcile(
   }
 
   const suggestable = items
-    .filter((i) => i.band !== 'today' && shouldSuggest(i, i.state, i.score, now))
+    .filter((i) => i.band !== 'today' && shouldSuggest(i, i.state, i.score, now, options.promote ?? PROMOTION_DEFAULTS))
     .sort((a, b) => b.score - a.score)
     .slice(0, SUGGEST_MAX);
   for (const i of suggestable) {
@@ -144,4 +146,25 @@ export function recentlyDismissed(states: Record<string, ItemState>, now: Date, 
   return Object.values(states)
     .filter((s) => s.status === 'dismissed' && (s.actedAt ?? '') >= cutoff)
     .sort((a, b) => (b.actedAt ?? '').localeCompare(a.actedAt ?? ''));
+}
+
+/**
+ * The same dismiss reason used on the same detector at least `min` times
+ * (most first): "Wrong customer match, 3 times on Done, not invoiced" means
+ * that check needs work. Feed it `recentlyDismissed`.
+ */
+export function dismissalPatterns(
+  dismissed: ItemState[],
+  min = 2,
+): Array<{ detector: string; reason: DismissReason; count: number }> {
+  const counts = new Map<string, { detector: string; reason: DismissReason; count: number }>();
+  for (const s of dismissed) {
+    const detector = s.snapshot?.detector;
+    if (!detector || !s.dismissReason) continue;
+    const k = `${detector}|${s.dismissReason}`;
+    const row = counts.get(k) ?? { detector, reason: s.dismissReason, count: 0 };
+    row.count += 1;
+    counts.set(k, row);
+  }
+  return [...counts.values()].filter((r) => r.count >= min).sort((a, b) => b.count - a.count);
 }

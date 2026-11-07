@@ -335,6 +335,9 @@ export const keys = {
   /** HASH: rule id → JSON MuteRule ("this kind is noise"). */
   itemMutes: 'cc:items:mutes' as const,
 
+  /** JSON Promotion: the Rules page's switches for what moves onto Today by itself (missing = on). */
+  itemPromotion: 'cc:items:promotion' as const,
+
   /** LIST (newest first, capped): Matt's drags and verbs with each item's rank features at that moment. Training data for the Today ranking. */
   itemRankLog: 'cc:items:rank-log' as const,
 

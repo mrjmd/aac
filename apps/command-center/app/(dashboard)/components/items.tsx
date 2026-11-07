@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Sortable from "sortablejs";
-import type { DismissReason, Item } from "@aac/items";
+import type { DismissReason, Item, ItemState } from "@aac/items";
 import { AREA_LABEL, KIND, RAIL_AREA, useItems } from "../items-context";
 import { usePeople } from "../people-context";
 
@@ -17,6 +17,10 @@ const DISMISS_REASONS: Array<{ value: DismissReason; label: string }> = [
   { value: "not-mine", label: "Not mine" },
   { value: "wrong-match", label: "Wrong customer match" },
 ];
+export const DISMISS_LABEL: Record<DismissReason, string> = {
+  ...(Object.fromEntries(DISMISS_REASONS.map((r) => [r.value, r.label])) as Record<DismissReason, string>),
+  other: "Other",
+};
 
 const SNOOZE: Array<[string, () => string]> = [
   ["This afternoon", () => at(0, 13)],
@@ -110,7 +114,7 @@ export function ItemCard({ item, ctx, n, day }: { item: Item; ctx: Ctx; n?: numb
       const need = await mute(item, confirmed);
       if (need) return setPanel({ confirm: need, mode: "mute" });
       setPanel(null);
-      say("Muted");
+      say("Muted. Undo it on Rules.");
     });
   const talkTo = (id: string, name: string) =>
     run(async () => {
@@ -498,5 +502,36 @@ export function ToastHost() {
         </button>
       )}
     </div>
+  );
+}
+
+/** Dismissed in the last 30 days, each with Restore (Today's fold and Rules). */
+export function DismissedList({ dismissed }: { dismissed: ItemState[] }) {
+  const { act } = useItems();
+  if (!dismissed.length) return <div className="empty">Nothing dismissed. Anything you dismiss lands here and can be restored.</div>;
+  return (
+    <>
+      {dismissed.map((s) => (
+        <div key={s.key} className="item">
+          <div className="row">
+            <div className="body">
+              <div className="title">{s.snapshot?.title ?? s.key}</div>
+              <div className="meta">
+                {s.snapshot && <span className="tag">{KIND[s.snapshot.detector] ?? s.snapshot.detector}</span>}
+                <span className="tag">
+                  Dismissed: {DISMISS_LABEL[s.dismissReason ?? "other"]}
+                  {s.actedAt ? `, ${ago(s.actedAt)}` : ""}
+                </span>
+              </div>
+            </div>
+            <div className="acts">
+              <button className="btn sm" type="button" onClick={() => act(s.key, { type: "restore" })}>
+                Restore
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </>
   );
 }

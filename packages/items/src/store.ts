@@ -1,5 +1,5 @@
 import { keys } from '@aac/shared-utils/redis';
-import type { RankFeatures } from './rank.js';
+import { PROMOTION_DEFAULTS, type Promotion, type RankFeatures } from './rank.js';
 import type { ItemCandidate, ItemState, MuteRule } from './types.js';
 
 /** One of Matt's drags or verbs, with what the ranking saw at that moment. */
@@ -71,6 +71,15 @@ export class ItemStore {
 
   async deleteMute(id: string): Promise<void> {
     await this.redis.hdel(keys.itemMutes, id);
+  }
+
+  /** The Rules page's promotion switches, defaults filled in. */
+  async getPromotion(): Promise<Promotion> {
+    return { ...PROMOTION_DEFAULTS, ...((await this.redis.get<Partial<Promotion>>(keys.itemPromotion)) ?? {}) };
+  }
+
+  async putPromotion(promote: Promotion): Promise<void> {
+    await this.redis.set(keys.itemPromotion, promote);
   }
 
   /** Append to the ranking's training log (newest first, capped). */

@@ -48,6 +48,7 @@ export function Rail({ referralGaps = 0 }: { referralGaps?: number }) {
       {link("/customers", "Customers", pathname.startsWith("/customers"))}
       {link("/referrals", "Referrals", pathname.startsWith("/referrals"), referralGaps, "amber")}
       {link("/health", "System", pathname.startsWith("/health"), counts.system, reds.system)}
+      {link("/rules", "Rules", pathname.startsWith("/rules"))}
       <div className="sep" />
       <span className="later micro">Customer pages open from any item</span>
     </nav>

@@ -1,7 +1,17 @@
 export * from './types.js';
-export { reconcile, isMuted, staleStateKeys, recentlyDismissed } from './reconcile.js';
-export { rankItem, rankFeatures, shouldSuggest, SUGGEST_MIN_SCORE, SUGGEST_MAX, DEADLINE_WINDOW_H } from './rank.js';
-export type { Rank, RankFeatures } from './rank.js';
+export { reconcile, isMuted, staleStateKeys, recentlyDismissed, dismissalPatterns } from './reconcile.js';
+export {
+  rankItem,
+  rankFeatures,
+  shouldSuggest,
+  SUGGEST_MIN_SCORE,
+  SUGGEST_MAX,
+  DEADLINE_WINDOW_H,
+  DATE_PROMOTE_DAYS,
+  PROMOTION_DEFAULTS,
+  PROMOTION_RULES,
+} from './rank.js';
+export type { Promotion, PromotionRule, Rank, RankFeatures } from './rank.js';
 export { groupByPerson, identityKeys } from './group.js';
 export { applyVerb, reorderToday, ConfirmRequiredError } from './verbs.js';
 export type { Verb } from './verbs.js';
@@ -29,5 +39,5 @@ export {
   untag,
 } from './people.js';
 export type { PeopleRedis, Person, PersonEvent, PersonEventKind, Topic, TopicStatus } from './people.js';
-export { DEFAULT_LEAD_DAYS, fromObligation, markObligationDone, nextDue, OBLIGATION_KEY_PREFIX } from './obligations.js';
+export { DATE_DETECTOR, DEFAULT_LEAD_DAYS, fromObligation, markObligationDone, nextDue, OBLIGATION_KEY_PREFIX } from './obligations.js';
 export type { Obligation, ObligationCategory, Repeat } from './obligations.js';

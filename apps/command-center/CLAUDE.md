@@ -105,6 +105,17 @@ a repeating date forward (`markObligationDone`) and closes a one-off;
 `POST /api/obligations` {op: done | set} is the only write. Dates with no
 due date are listed under "Needs a date" and never become items.
 
+## Rules (`/rules`)
+
+The mockup's Rules page. Three switches for what the ranking may put on
+Today by itself (`PROMOTION_RULES` in `@aac/items`, saved by
+`POST /api/items/promotion`, read in `loadItemsView`): deadlines within
+36h, an Important date 7 days out, anything else scoring 300+. Then every
+mute rule with Unmute (`DELETE /api/items/mutes`), the dismissed list
+(`DismissedList`, shared with Today's fold), and "what your dismissals are
+teaching": the same reason used twice or more on one kind of item in 30
+days (`dismissalPatterns`).
+
 ## Lead leaks (`/sales`)
 
 Sales shows the lead-leak queue: leads we dropped before a quote in the last

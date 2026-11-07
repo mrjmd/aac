@@ -38,6 +38,7 @@ export interface Obligation {
 }
 
 export const OBLIGATION_KEY_PREFIX = 'ob:';
+export const DATE_DETECTOR = 'DATE';
 export const DEFAULT_LEAD_DAYS = 14;
 
 const MONTHS: Record<Repeat, number> = { none: 0, quarterly: 3, yearly: 12, '2-yearly': 24, '4-yearly': 48 };
@@ -72,7 +73,7 @@ export function fromObligation(o: Obligation, today: string): ItemCandidate | nu
   const when = days < 0 ? `${-days}d overdue` : days === 0 ? 'due today' : `due in ${days}d`;
   const candidate: ItemCandidate = {
     key: `${OBLIGATION_KEY_PREFIX}${o.id}:${o.due}`,
-    detector: 'DATE',
+    detector: DATE_DETECTOR,
     area: 'admin',
     lane: 'needs-you',
     severity,

@@ -135,7 +135,7 @@ export function ImportantDates({ initial, today }: { initial: Obligation[]; toda
       )}
       <div className="note">
         Each date shows up as an item in the days before it (two weeks for most, longer for the GL application and the CSL&apos;s CE hours), pinned
-        to its day on This week, and red on Today from the day it&apos;s due. Done moves a repeating date to its next one. When someone else files it
+        to its day on This week, on Today from a week out (a switch on Rules), and red from the day it&apos;s due. Done moves a repeating date to its next one. When someone else files it
         (Datapay, the CPA, Titan), the item asks you to check that it happened.
       </div>
     </div>

@@ -1,5 +1,6 @@
 import type { ItemCandidate, ItemState } from './types.js';
-import { EASTERN_TZ, easternDate } from '@aac/shared-utils/eastern';
+import { daysBetween, EASTERN_TZ, easternDate } from '@aac/shared-utils/eastern';
+import { DATE_DETECTOR } from './obligations.js';
 
 /**
  * The Today ranking (Matt, 2026-11-05): hard deadlines and promises first,
@@ -20,6 +21,35 @@ export const DEADLINE_WINDOW_H = 36;
 export const SUGGEST_MIN_SCORE = 300;
 /** At most this many suggested items on Today at once. */
 export const SUGGEST_MAX = 7;
+
+/** Important dates move onto Today this many days before they're due. */
+export const DATE_PROMOTE_DAYS = 7;
+
+/** Matt's switches (Rules page) for what may move onto Today by itself. Missing = on. */
+export interface Promotion {
+  deadlines: boolean;
+  dates: boolean;
+  ranked: boolean;
+}
+export type PromotionRule = keyof Promotion;
+export const PROMOTION_DEFAULTS: Promotion = { deadlines: true, dates: true, ranked: true };
+export const PROMOTION_RULES: Array<{ id: PromotionRule; label: string; detail: string }> = [
+  {
+    id: 'deadlines',
+    label: `A promise or deadline due within ${DEADLINE_WINDOW_H} hours`,
+    detail: '"I\'ll call Thursday", a scheduling reply, a deposit due. Overdue ones stay up until they\'re done.',
+  },
+  {
+    id: 'dates',
+    label: `An important date ${DATE_PROMOTE_DAYS} days out`,
+    detail: 'Renewals, licenses, filings and memberships from Admin.',
+  },
+  {
+    id: 'ranked',
+    label: 'Anything else that ranks high',
+    detail: `A customer who wrote recently, or a red item with money on it (score ${SUGGEST_MIN_SCORE}+). Once you place one, it comes back only when they write again.`,
+  },
+];
 
 /** Detectors whose items belong to a batch, not to Matt's one-by-one list. */
 const BATCHED = new Set(['D5']); // stale quotes: the follow-up batch owns them
@@ -78,14 +108,22 @@ function dueLabel(iso: string, now: Date): string {
 
 /**
  * Should the ranking put this open, unpinned item on Today? A deadline in
- * the window always qualifies. Otherwise the score must clear the bar and
+ * the window or an important date a week out always qualifies (each can be
+ * switched off on Rules). Otherwise the score must clear the bar and
  * Matt must not have already placed it, unless the customer wrote again
  * after he did.
  */
-export function shouldSuggest(c: ItemCandidate, state: ItemState, score: number, now: Date): boolean {
+export function shouldSuggest(
+  c: ItemCandidate,
+  state: ItemState,
+  score: number,
+  now: Date,
+  promote: Promotion = PROMOTION_DEFAULTS,
+): boolean {
   if (c.lane !== 'needs-you' || c.solicitation || state.pinnedFor) return false;
-  if (c.dueAt && (Date.parse(c.dueAt) - now.getTime()) / HOUR <= DEADLINE_WINDOW_H) return true;
-  if (score < SUGGEST_MIN_SCORE) return false;
+  if (promote.deadlines && c.dueAt && (Date.parse(c.dueAt) - now.getTime()) / HOUR <= DEADLINE_WINDOW_H) return true;
+  if (promote.dates && c.detector === DATE_DETECTOR && c.dueOn && daysBetween(easternDate(now), easternDate(c.dueOn)) <= DATE_PROMOTE_DAYS) return true;
+  if (!promote.ranked || score < SUGGEST_MIN_SCORE) return false;
   if (!state.placedAt) return true;
   return !!c.waitingSince && c.waitingSince > state.placedAt;
 }

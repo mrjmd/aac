@@ -1,4 +1,5 @@
 import {
+  dismissalPatterns,
   fromInvoiceNudge,
   fromObligation,
   fromRuleReview,
@@ -9,6 +10,7 @@ import {
   staleStateKeys,
   type HiddenReason,
   type Item,
+  type DismissReason,
   type ItemCandidate,
   type ItemState,
 } from "@aac/items";
@@ -79,6 +81,8 @@ export interface ItemsView {
   items: Item[];
   hiddenCounts: Record<HiddenReason, number>;
   dismissed: ItemState[];
+  /** The same dismiss reason used on one kind of item 2+ times in 30 days (Rules page). */
+  teaching: Array<{ detector: string; reason: DismissReason; count: number }>;
   /** Snoozed items, soonest back first. */
   snoozed: Array<{ key: string; title: string; customer?: string; until?: string }>;
 }
@@ -86,13 +90,15 @@ export interface ItemsView {
 /** Reconcile the latest candidates with stored state, persist, and return the view. */
 export async function loadItemsView(now = new Date()): Promise<ItemsView> {
   const store = getItemStore();
-  const [{ candidates, detectedAt, source }, stored, mutes] = await Promise.all([
+  const [{ candidates, detectedAt, source }, stored, mutes, promote] = await Promise.all([
     loadCandidates(now),
     store.getStates(),
     store.getMutes(),
+    store.getPromotion(),
   ]);
   const { items, hidden, states } = reconcile(candidates, stored, mutes, now, {
     baseline: Object.keys(stored).length === 0,
+    promote,
   });
   const stale = staleStateKeys(states, now);
   for (const key of stale) delete states[key];
@@ -100,12 +106,14 @@ export async function loadItemsView(now = new Date()): Promise<ItemsView> {
 
   const hiddenCounts: Record<HiddenReason, number> = { done: 0, snoozed: 0, dismissed: 0, muted: 0 };
   for (const h of hidden) hiddenCounts[h.reason] += 1;
+  const dismissed = recentlyDismissed(states, now);
   return {
     detectedAt,
     source,
     items,
     hiddenCounts,
-    dismissed: recentlyDismissed(states, now),
+    dismissed,
+    teaching: dismissalPatterns(dismissed),
     snoozed: hidden
       .filter((h) => h.reason === "snoozed")
       .map((h) => ({ key: h.key, title: h.candidate.title, customer: h.candidate.customer, until: states[h.key]?.snoozeUntil }))

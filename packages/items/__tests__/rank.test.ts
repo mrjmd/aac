@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   applyVerb,
+  dismissalPatterns,
   groupByPerson,
+  PROMOTION_DEFAULTS,
   rankFeatures,
   rankItem,
   reconcile,
+  shouldSuggest,
   SUGGEST_MAX,
   type ItemCandidate,
 } from '../src/index.js';
@@ -154,5 +157,49 @@ describe('rankFeatures', () => {
     const f = rankFeatures(c, states.f, NOW);
     expect(f).toMatchObject({ key: 'f', detector: 'L1', amount: 1900, dueInHours: 2, waitingDays: 1, pinned: false });
     expect(f.score).toBe(rankItem(c, NOW).score);
+  });
+});
+
+describe('promotion switches (Rules page)', () => {
+  const state = { key: 'k', status: 'open' as const, firstSeenAt: daysAgo(1), lastSeenAt: NOW.toISOString() };
+  const date = (due: string) => cand('ob:gl:' + due, { detector: 'DATE', area: 'admin', severity: 'info', customer: undefined, dueOn: `${due}T16:00:00.000Z` });
+
+  it('puts an important date on Today 7 days out, not 8', () => {
+    expect(shouldSuggest(date('2026-11-12'), state, 20, NOW)).toBe(true);
+    expect(shouldSuggest(date('2026-11-13'), state, 20, NOW)).toBe(false);
+    expect(shouldSuggest(date('2026-11-01'), state, 20, NOW)).toBe(true); // overdue
+  });
+
+  it('honors each switch', () => {
+    const off = { ...PROMOTION_DEFAULTS };
+    expect(shouldSuggest(cand('call', { dueAt: hoursFromNow(4) }), state, 1100, NOW, { ...off, deadlines: false, ranked: false })).toBe(false);
+    expect(shouldSuggest(date('2026-11-06'), state, 20, NOW, { ...off, dates: false })).toBe(false);
+    expect(shouldSuggest(cand('wait'), state, 500, NOW, { ...off, ranked: false })).toBe(false);
+    expect(shouldSuggest(cand('wait'), state, 500, NOW)).toBe(true);
+  });
+
+  it('reconcile passes the switches through', () => {
+    const c = [cand('call', { dueAt: hoursFromNow(4) })];
+    expect(reconcile(c, {}, [], NOW).items[0]!.band).toBe('today');
+    expect(reconcile(c, {}, [], NOW, { promote: { deadlines: false, dates: true, ranked: false } }).items[0]!.band).not.toBe('today');
+  });
+});
+
+describe('dismissalPatterns', () => {
+  const d = (key: string, detector: string, reason: 'wrong-match' | 'not-real') => ({
+    key,
+    status: 'dismissed' as const,
+    firstSeenAt: daysAgo(3),
+    lastSeenAt: daysAgo(1),
+    dismissReason: reason,
+    snapshot: { title: key, detector },
+  });
+
+  it('counts a reason repeated on one detector, most first, and drops one-offs', () => {
+    const out = dismissalPatterns([d('a', 'S7', 'wrong-match'), d('b', 'S7', 'wrong-match'), d('c', 'S7', 'wrong-match'), d('e', 'D3', 'not-real'), d('f', 'D3', 'not-real'), d('g', 'L1', 'not-real')]);
+    expect(out).toEqual([
+      { detector: 'S7', reason: 'wrong-match', count: 3 },
+      { detector: 'D3', reason: 'not-real', count: 2 },
+    ]);
   });
 });

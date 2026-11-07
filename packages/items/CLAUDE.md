@@ -28,6 +28,10 @@ owner-controlled state. Spec: `docs/plans/command-center/README.md` §4.
   solicitations sink. The top few are *suggested* onto Today above Matt's
   own order. A drag pins them and from then on his rank wins. An item he
   placed is not re-suggested until the customer writes again.
+- **Matt's switches decide what may be suggested** (Rules page,
+  `keys.itemPromotion`, missing = on): `deadlines` (due within 36h),
+  `dates` (an Important date 7 days out), `ranked` (score 300+). Pass them
+  to `reconcile` as `promote`; `shouldSuggest` honors each one.
 - **Every drag and verb is logged** with `rankFeatures` (`ItemStore.logRank`,
   `keys.itemRankLog`) so the weights can be fit to his corrections.
 - **One person = one item** (`group.ts`): items sharing a phone, email,
