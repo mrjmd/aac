@@ -74,6 +74,7 @@ const NOT_WATCHED: Record<string, string> = {
   // the System health page (SIGNALS in apps/command-center/lib/system-health.ts).
   'worker:/api/grader': 'reporting: Automations readiness numbers',
   'worker:/api/scorecard': 'reporting: the weekly scorecard',
+  'worker:/api/lead-leaks': 'reporting: the lead-leak queue on Sales',
 };
 
 function watched(): Set<string> {
